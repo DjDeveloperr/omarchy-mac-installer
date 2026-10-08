@@ -301,6 +301,36 @@ class CatalogGeneratorTests(unittest.TestCase):
             document["developer_models"][0]["device_identifiers"] = [identifier]
             self.assertRejected(document, fragment, developer=True)
 
+    def test_a_developer_group_can_give_supported_macs_their_own_metadata(self) -> None:
+        document = self.with_neo()
+        airs = ["apple,j613", "apple,j615"]
+        for identifier in airs:
+            document["device_identifiers"].remove(identifier)
+        (self.assets / "installer_data-m3air.json").write_bytes(b"air-metadata" * 8)
+        document["developer_models"].append({
+            "payload_name": self.inputs["payload_name"],
+            "metadata_name": "installer_data-m3air.json",
+            "device_identifiers": airs,
+        })
+        result = self.generate(document, developer=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        models = {
+            m["deviceIdentifier"]: m
+            for m in json.loads((self.directory / "catalog.json").read_text())["models"]
+        }
+        self.assertEqual(len(models), len(self.inputs["device_identifiers"]) + 1)
+        main = models["apple,j293"]
+        for identifier in airs:
+            self.assertEqual(models[identifier]["metadataArtifact"]["fileName"], "installer_data-m3air.json")
+            self.assertEqual(models[identifier]["payloadArtifact"], main["payloadArtifact"])
+            self.assertEqual(models[identifier]["payloadDigest"], main["payloadDigest"])
+        self.assertEqual(main["metadataArtifact"]["fileName"], self.inputs["metadata_name"])
+
+    def test_a_moved_mac_cannot_stay_in_the_main_group(self) -> None:
+        document = self.with_neo()
+        document["developer_models"][0]["device_identifiers"] = ["apple,j613"]
+        self.assertRejected(document, "lists apple,j613 twice", developer=True)
+
     def test_a_developer_group_reuses_no_file_name(self) -> None:
         document = self.with_neo()
         document["developer_models"][0]["metadata_name"] = self.inputs["metadata_name"]

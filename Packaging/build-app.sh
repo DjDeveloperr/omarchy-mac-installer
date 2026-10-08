@@ -46,8 +46,8 @@ helper_identifier="$INSTALLER_HELPER_IDENTIFIER"
 app_name="$INSTALLER_APP_NAME.app"
 app_executable_name="OmarchyAppleInstallerApp"
 daemon_plist_name="$helper_identifier.plist"
-engine_file_name="installer-v0.9.2-omarchy.30.tar.gz"
-engine_digest="2d5a14c3dde7b9ebb7076cd65a6d5a478d7f20b6396fadb52b59532752d12bdc"
+engine_file_name="installer-v0.9.2-omarchy.31.tar.gz"
+engine_digest="d0cded0aa8933173b676b4ba1a32d52d7ff39848943d0904603353a80a36cda2"
 
 if [[ $signing_identity == "-" ]]; then
   client_requirement="identifier \"$app_identifier\""

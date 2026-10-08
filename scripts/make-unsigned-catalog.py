@@ -22,8 +22,10 @@ machine-enforced guard.
 
 `--developer` is for a developer build's sealed catalog only. Its inputs may
 add `developer_models`: groups of boards from the manifest's `developer`
-section, each with its own payload and metadata. The main group still covers
-exactly every M1, M2 and M3 Mac. Channel publishing rejects such a catalog.
+section, or supported Macs moved out of the main group, each group with its
+own metadata and its own or a shared payload. The main group and the moved
+Macs together still cover exactly every M1, M2 and M3 Mac. Channel publishing
+rejects a catalog with a developer board.
 
 Usage:
   make-unsigned-catalog.py --base-url URL --assets-dir DIR --inputs FILE
@@ -171,13 +173,22 @@ def parse_version(value: str) -> tuple[int, int, int]:
     return (int(parts[0]), int(parts[1]), int(parts[2]))
 
 
-def load_developer_models(document: dict) -> list[dict]:
-    """Validate a developer catalog's extra groups, failing closed."""
+def load_developer_models(document: dict) -> list[str]:
+    """Validate a developer catalog's extra groups, failing closed.
+
+    A group may take developer boards, or supported Macs it moves out of the
+    main group (to give them their own metadata). Returns the supported Macs
+    the groups took, which count towards the main group's coverage.
+    """
     groups = document["developer_models"]
     if not isinstance(groups, list) or not groups:
         raise SystemExit("inputs developer_models must be a non-empty list")
-    allowed = supported_models.developer_boards()
-    names = {document["payload_name"], document["metadata_name"], document["engine_name"]}
+    supported, _ = supported_models.load()
+    allowed = set(supported_models.developer_boards()) | set(supported)
+    taken = []
+    # Groups may share a payload; each metadata file belongs to one group.
+    payloads = {document["payload_name"]}
+    metadata = {document["metadata_name"]}
     boards = set(document["device_identifiers"])
     for group in groups:
         if not isinstance(group, dict) or set(group) != DEVELOPER_GROUP_KEYS:
@@ -189,9 +200,12 @@ def load_developer_models(document: dict) -> list[dict]:
             name = group[key]
             if not isinstance(name, str) or not name or "/" in name or name in {".", ".."}:
                 raise SystemExit(f"inputs developer_models {key} must be a plain file name: {name}")
-            if name in names:
-                raise SystemExit(f"inputs developer_models reuses the file name {name}")
-            names.add(name)
+        if group["metadata_name"] in metadata | payloads | {document["engine_name"]}:
+            raise SystemExit(f"inputs developer_models reuses the file name {group['metadata_name']}")
+        if group["payload_name"] in metadata | {document["engine_name"]}:
+            raise SystemExit(f"inputs developer_models reuses the file name {group['payload_name']}")
+        metadata.add(group["metadata_name"])
+        payloads.add(group["payload_name"])
         identifiers = group["device_identifiers"]
         if not isinstance(identifiers, list) or not identifiers:
             raise SystemExit("inputs developer_models device_identifiers must be a non-empty list")
@@ -200,10 +214,13 @@ def load_developer_models(document: dict) -> list[dict]:
                 raise SystemExit(f"inputs developer_models lists {identifier} twice")
             if identifier not in allowed:
                 raise SystemExit(
-                    f"{identifier} is not a developer board in scripts/supported-models.json"
+                    f"{identifier} is not a developer board or a supported Mac "
+                    "in scripts/supported-models.json"
                 )
+            if identifier in supported:
+                taken.append(identifier)
             boards.add(identifier)
-    return groups
+    return taken
 
 
 def load_inputs(path: Path, developer: bool = False) -> dict:
@@ -270,8 +287,10 @@ def load_inputs(path: Path, developer: bool = False) -> dict:
             identifier
         ):
             raise SystemExit(f"invalid device identifier: {identifier}")
-    # Every catalog enables every M1, M2 and M3 Mac (scripts/supported-models.json).
-    coverage = supported_models.coverage_errors(identifiers)
+    # Every catalog enables every M1, M2 and M3 Mac (scripts/supported-models.json):
+    # in the main group, or in a developer group that gives some of them their own metadata.
+    taken = load_developer_models(document) if "developer_models" in document else []
+    coverage = supported_models.coverage_errors(identifiers + taken)
     if coverage:
         raise SystemExit("inputs device_identifiers: " + "; ".join(coverage))
 
@@ -303,8 +322,6 @@ def load_inputs(path: Path, developer: bool = False) -> dict:
     if not isinstance(download_url, str) or not download_url.startswith("https://"):
         raise SystemExit(f"inputs installer.download_url must be https: {download_url}")
 
-    if "developer_models" in document:
-        load_developer_models(document)
     return document
 
 
