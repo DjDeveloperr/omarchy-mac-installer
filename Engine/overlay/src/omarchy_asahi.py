@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 """Concrete stage-1 adapter over pinned upstream Asahi primitives."""
 
+import collections
 import contextlib
 import hashlib
 import io
@@ -385,19 +386,34 @@ def _write_step2(installer):
     with open(installer.step2_sh, "w") as fd:
         fd.write(script)
     os.chmod(installer.step2_sh, 0o755)
-# Aurora's J700 Stage 1 carries one versioned config block that names the ESP
-# and the Stage 2 path; it is filled in place so the image keeps its length
-# and STACKBOT tail (port of aurora-silicon/m1n1 tools/fill_stage1_config.py,
-# MIT).
-J700_STAGE1 = "esp/aurora/stage1-j700.bin"
-J700_STAGE1_MAGIC = b"AURORA-S1-CFG01\0"
-J700_STAGE1_BODY = struct.Struct("<II40s192s")
-J700_STAGE1_BLOCK = len(J700_STAGE1_MAGIC) + J700_STAGE1_BODY.size + 4
-J700_PROXY_WINDOW_MS = 5000
+# Aurora's board Stage 1 images carry one versioned config block that names
+# the ESP and the Stage 2 path; it is filled in place so the image keeps its
+# length and STACKBOT tail (port of aurora-silicon/m1n1
+# tools/fill_stage1_config.py, MIT).
+STAGE1_MAGIC = b"AURORA-S1-CFG01\0"
+STAGE1_BODY = struct.Struct("<II40s192s")
+STAGE1_BLOCK = len(STAGE1_MAGIC) + STAGE1_BODY.size + 4
 CANONICAL_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
+# Checks an image before any disk changes, when there is no ESP yet.
+PLACEHOLDER_UUID = "00000000-0000-0000-0000-000000000000"
+
+BoardStage1 = collections.namedtuple("BoardStage1", "member window_ms os_firmware macs")
+
+# Boards that boot through Aurora's own Stage 1 instead of asahi's. os_firmware
+# is the only OS firmware the image boots, or None for any.
+BOARD_STAGE1 = {
+    "j700ap": BoardStage1("esp/aurora/stage1-j700.bin", 5000, None, "the MacBook Neo"),
+    # The m3next Stage 1 boots only a J613 with 26.6.2 OS firmware and stays in
+    # proxy mode on anything else, so older firmware keeps asahi's. asahi's
+    # Stage 1 makes iBoot panic on 26.6.2 before m1n1 runs.
+    "j613ap": BoardStage1(
+        "esp/aurora/stage1-j613.bin", 0, "26.6.2",
+        "a 13-inch M3 MacBook Air on macOS 26.6.2",
+    ),
+}
 
 
-def fill_j700_stage1(image, uuid, path, window_ms):
+def fill_aurora_stage1(image, uuid, path, window_ms):
     if not CANONICAL_UUID.fullmatch(uuid):
         raise AsahiAdapterError("ESP PARTUUID must be canonical lowercase")
     if not path or any(not 0x20 <= ord(c) < 0x7F or c in ";\\" for c in path) or any(
@@ -410,30 +426,48 @@ def fill_j700_stage1(image, uuid, path, window_ms):
     if not 0 <= window_ms <= 99999:
         raise AsahiAdapterError("proxy window must be 0..99999 ms")
     if not image.endswith(b"STACKBOT"):
-        raise AsahiAdapterError("J700 Stage 1 does not end at STACKBOT")
-    if image.count(J700_STAGE1_MAGIC) != 1:
-        raise AsahiAdapterError("J700 Stage 1 config block must occur exactly once")
-    offset = image.index(J700_STAGE1_MAGIC)
-    if offset + J700_STAGE1_BLOCK > len(image) - 8:
-        raise AsahiAdapterError("J700 Stage 1 config block extends past the image")
-    if struct.unpack_from("<I", image, offset + len(J700_STAGE1_MAGIC))[0] != 1:
-        raise AsahiAdapterError("unsupported J700 Stage 1 config version")
-    body = J700_STAGE1_BODY.pack(
+        raise AsahiAdapterError("Aurora Stage 1 does not end at STACKBOT")
+    if image.count(STAGE1_MAGIC) != 1:
+        raise AsahiAdapterError("Aurora Stage 1 config block must occur exactly once")
+    offset = image.index(STAGE1_MAGIC)
+    if offset + STAGE1_BLOCK > len(image) - 8:
+        raise AsahiAdapterError("Aurora Stage 1 config block extends past the image")
+    if struct.unpack_from("<I", image, offset + len(STAGE1_MAGIC))[0] != 1:
+        raise AsahiAdapterError("unsupported Aurora Stage 1 config version")
+    body = STAGE1_BODY.pack(
         1, window_ms, uuid.encode("ascii").ljust(40, b"\0"), encoded.ljust(192, b"\0")
     )
-    block = J700_STAGE1_MAGIC + body + struct.pack("<I", zlib.crc32(body))
-    return image[:offset] + block + image[offset + J700_STAGE1_BLOCK:]
+    block = STAGE1_MAGIC + body + struct.pack("<I", zlib.crc32(body))
+    return image[:offset] + block + image[offset + STAGE1_BLOCK:]
 
 
-def install_board_stage1(device_class, read_member, esp_uuid, boot_object, next_object="m1n1/boot.bin"):
-    """Replace asahi's Stage 1 on boards that need their own (the J700)."""
-    if device_class != "j700ap":
-        return
+def board_stage1(device_class, os_firmware):
+    """The Aurora Stage 1 this Mac and OS firmware boot through, or None."""
+    board = BOARD_STAGE1.get(device_class)
+    if board is None or board.os_firmware not in (None, os_firmware):
+        return None
+    return board
+
+
+def read_board_stage1(board, read_member, next_object="m1n1/boot.bin"):
+    """The board's Stage 1 image from the payload, refused unless fillable."""
     try:
-        image = read_member(J700_STAGE1)
+        image = read_member(board.member)
     except KeyError as error:
-        raise AsahiAdapterError(f"this image has no {J700_STAGE1} for the MacBook Neo") from error
-    filled = fill_j700_stage1(image, esp_uuid.lower(), next_object, J700_PROXY_WINDOW_MS)
+        raise AsahiAdapterError(f"this image has no {board.member} for {board.macs}") from error
+    fill_aurora_stage1(image, PLACEHOLDER_UUID, next_object, board.window_ms)
+    return image
+
+
+def install_board_stage1(
+    device_class, os_firmware, read_member, esp_uuid, boot_object, next_object="m1n1/boot.bin"
+):
+    """Replace asahi's Stage 1 on boards that need Aurora's own."""
+    board = board_stage1(device_class, os_firmware)
+    if board is None:
+        return
+    image = read_board_stage1(board, read_member, next_object)
+    filled = fill_aurora_stage1(image, esp_uuid.lower(), next_object, board.window_ms)
     with open(boot_object, "wb") as fd:
         fd.write(filled)
 
@@ -924,6 +958,7 @@ class AsahiStage1Adapter:
         self.full_readback = full_readback
         self.template = None
         self.osins = None
+        self.os_firmware = None
         self.target_part = None
         self.preflight_complete = False
 
@@ -976,6 +1011,10 @@ class AsahiStage1Adapter:
             self.installer.osinfo,
         )
         self.installer.ins.load_ipsw(ipsw)
+        self.os_firmware = ipsw.version.split(maxsplit=1)[0]
+        board = board_stage1(self.installer.sysinfo.device_class, self.os_firmware)
+        if board is not None:
+            read_board_stage1(board, self.osins.pkg.read, self.template["next_object"])
         self.installer.osins = self.osins
         self.preflight_complete = True
 
@@ -1118,6 +1157,7 @@ class AsahiStage1Adapter:
         self.osins.install(self.installer.ins)
         install_board_stage1(
             self.installer.sysinfo.device_class,
+            self.os_firmware,
             self.osins.pkg.read,
             self.osins.efi_part.uuid,
             self.installer.ins.boot_obj_path,

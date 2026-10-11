@@ -116,7 +116,7 @@ from omarchy_asahi import (  # noqa: E402
     AsahiAdapterError,
     AsahiInPlaceRepairAdapter,
     AsahiStage1Adapter,
-    fill_j700_stage1,
+    fill_aurora_stage1,
     install_board_stage1,
     stub_installer,
 )
@@ -192,6 +192,43 @@ class AsahiStage1AdapterTests(unittest.TestCase):
         ):
             adapter.preflight(self.plan)
 
+    def _on_26_6_2(self):
+        installer = FakeInstaller(FakeDiskUtil([[self.free]]))
+        installer.ipsw = SimpleNamespace(version="26.6.2")
+        return installer
+
+    def test_a_26_6_2_air_payload_without_the_j613_stage1_is_refused_before_disk_changes(self):
+        installer = self._on_26_6_2()
+        adapter = self._adapter(installer)
+
+        with self.assertRaisesRegex(AsahiAdapterError, "stage1-j613.bin"):
+            adapter.preflight(self.plan)
+
+        self.assertFalse(adapter.preflight_complete)
+        self.assertEqual(installer.dutil.add_calls, [])
+
+    def test_a_26_6_2_air_boots_through_the_filled_j613_stage1(self):
+        with zipfile.ZipFile(self.payload, "a") as archive:
+            archive.writestr("esp/aurora/stage1-j613.bin", j700_stage1())
+        (self.installed_esp / "aurora").mkdir()
+        (self.installed_esp / "aurora/stage1-j613.bin").write_bytes(j700_stage1())
+        installer = self._on_26_6_2()
+        adapter = self._adapter(installer)
+
+        adapter.preflight(self.plan)
+        adapter.prepare_target(self.plan)
+        partition_disk = adapter.osins.partition_disk
+        def with_a_real_esp_uuid(name, size):
+            partition_disk(name, size)
+            adapter.osins.efi_part.uuid = "180190F8-0000-4000-8000-000000000000"
+        adapter.osins.partition_disk = with_a_real_esp_uuid
+        adapter.install_stub_and_esp(self.plan)
+
+        boot_object = Path(installer.ins.boot_obj_path).read_bytes()
+        self.assertTrue(boot_object.startswith(b"m1n1 j700 stage 1"))
+        self.assertIn(b"180190f8-0000-4000-8000-000000000000", boot_object)
+        self.assertIn(b";m1n1/boot.bin", boot_object)
+
     def test_free_extent_runs_exact_upstream_stage_one_primitives(self):
         dutil = FakeDiskUtil([[self.free]])
         installer = FakeInstaller(dutil)
@@ -218,7 +255,7 @@ class AsahiStage1AdapterTests(unittest.TestCase):
         self.assertEqual(installer.chosen_firmware, None)
         self.assertEqual(
             installer.ins.calls[0],
-            ("load_ipsw", "ipsw-image"),
+            ("load_ipsw", installer.ipsw),
         )
         self.assertEqual(
             dutil.add_calls,
@@ -826,6 +863,7 @@ class FakeInstaller:
         self.sys_disk = "disk0"
         # An M3 Air: asahi's own Stage 1 stays the boot object.
         self.sysinfo = SimpleNamespace(device_class="j613ap")
+        self.ipsw = SimpleNamespace(version="14.8.3")
         self.osinfo = object()
         self.cur_os = "current-os"
         self.chosen_firmware = "unset"
@@ -833,7 +871,7 @@ class FakeInstaller:
 
     def choose_ipsw(self, supported_firmware):
         self.chosen_firmware = supported_firmware
-        return "ipsw-image"
+        return self.ipsw
 
     def check_cur_os(self):
         self.check_cur_os_calls += 1
@@ -1488,14 +1526,14 @@ def j700_stage1(path=b"", window=0, uuid=b""):
     return b"m1n1 j700 stage 1" + block + b"\0" * 64 + b"STACKBOT"
 
 
-class J700Stage1Tests(unittest.TestCase):
+class BoardStage1Tests(unittest.TestCase):
     UUID = "97c92d03-2cb3-461f-9134-134a58cc9fdc"
 
     def test_the_block_is_filled_in_place(self):
         import struct as _struct
         import zlib as _zlib
         image = j700_stage1()
-        filled = fill_j700_stage1(image, self.UUID, "m1n1/boot.bin", 5000)
+        filled = fill_aurora_stage1(image, self.UUID, "m1n1/boot.bin", 5000)
         self.assertEqual(len(filled), len(image))
         self.assertTrue(filled.endswith(b"STACKBOT"))
         offset = filled.index(b"AURORA-S1-CFG01\0") + 16
@@ -1517,7 +1555,7 @@ class J700Stage1Tests(unittest.TestCase):
             (image + image, self.UUID, "m1n1/boot.bin", 0),
         ):
             with self.assertRaises(AsahiAdapterError):
-                fill_j700_stage1(*args)
+                fill_aurora_stage1(*args)
 
     def write_generic(self, root):
         target = Path(root) / "boot.bin"
@@ -1528,23 +1566,55 @@ class J700Stage1Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             target = self.write_generic(root)
             package = {"esp/aurora/stage1-j700.bin": j700_stage1()}
-            install_board_stage1("j700ap", package.__getitem__, self.UUID.upper(), str(target))
+            install_board_stage1("j700ap", "14.8.3", package.__getitem__, self.UUID.upper(), str(target))
             data = target.read_bytes()
             self.assertTrue(data.startswith(b"m1n1 j700 stage 1"))
             self.assertIn(b";m1n1/boot.bin", data)
             self.assertIn(self.UUID.encode(), data)
 
-    def test_other_macs_keep_the_asahi_stage1(self):
+    def test_a_13_inch_m3_air_on_26_6_2_gets_the_filled_j613_stage1(self):
+        import struct as _struct
         with tempfile.TemporaryDirectory() as root:
             target = self.write_generic(root)
-            install_board_stage1("j613ap", {}.__getitem__, self.UUID, str(target))
-            self.assertEqual(target.read_bytes(), b"asahi stage 1")
+            package = {"esp/aurora/stage1-j613.bin": j700_stage1(window=1234)}
+            install_board_stage1("j613ap", "26.6.2", package.__getitem__, self.UUID, str(target))
+            data = target.read_bytes()
+            offset = data.index(b"AURORA-S1-CFG01\0") + 16
+            _, window, uuid, path = _struct.unpack_from("<II40s192s", data, offset)
+            self.assertEqual(window, 0)
+            self.assertEqual(uuid.rstrip(b"\0"), self.UUID.encode())
+            self.assertEqual(path.rstrip(b"\0"), b";m1n1/boot.bin")
+
+    def test_other_macs_and_older_firmware_keep_the_asahi_stage1(self):
+        package = {
+            "esp/aurora/stage1-j613.bin": j700_stage1(),
+            "esp/aurora/stage1-j700.bin": j700_stage1(),
+        }
+        for device_class, firmware in (
+            ("j613ap", "14.8.3"),
+            ("j613ap", "26.6"),
+            ("j615ap", "26.6.2"),
+            ("j413ap", "26.6.2"),
+        ):
+            with self.subTest(device_class=device_class, firmware=firmware), \
+                    tempfile.TemporaryDirectory() as root:
+                target = self.write_generic(root)
+                install_board_stage1(device_class, firmware, package.__getitem__, self.UUID, str(target))
+                self.assertEqual(target.read_bytes(), b"asahi stage 1")
+
+    def test_a_26_6_2_air_image_without_the_j613_stage1_is_refused(self):
+        for package in ({}, {"esp/aurora/stage1-j613.bin": b"not a stage 1"}):
+            with self.subTest(package=package), tempfile.TemporaryDirectory() as root:
+                target = self.write_generic(root)
+                with self.assertRaises(AsahiAdapterError):
+                    install_board_stage1("j613ap", "26.6.2", package.__getitem__, self.UUID, str(target))
+                self.assertEqual(target.read_bytes(), b"asahi stage 1")
 
     def test_a_neo_image_without_the_j700_stage1_is_refused(self):
         with tempfile.TemporaryDirectory() as root:
             target = self.write_generic(root)
             with self.assertRaisesRegex(AsahiAdapterError, "stage1-j700.bin"):
-                install_board_stage1("j700ap", {}.__getitem__, self.UUID, str(target))
+                install_board_stage1("j700ap", "14.8.3", {}.__getitem__, self.UUID, str(target))
             self.assertEqual(target.read_bytes(), b"asahi stage 1")
 
 
