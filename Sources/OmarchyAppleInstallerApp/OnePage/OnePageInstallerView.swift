@@ -140,6 +140,7 @@ struct OnePageInstallerView: View {
   /// Inspects the Mac, then re-reads what each channel offers it.
   private func recheck() async {
     await session.inspect()
+    await session.refreshTryExports()
     await session.refreshChannelAvailability()
   }
 
@@ -193,6 +194,13 @@ struct OnePageInstallerView: View {
         .multilineTextAlignment(.center)
         .frame(maxWidth: .infinity)
         .padding(.top, 6)
+      TryExportPanel(
+        exports: session.tryExports,
+        chosenID: session.chosenTryExportID,
+        check: session.tryExportCheck,
+        enabled: session.canChooseTryExport,
+        onChoose: { id in Task { await session.chooseTryExport(id) } }
+      )
 
     case .existingInstallRefused:
       existingInstallRefusedPanel()
@@ -657,6 +665,96 @@ private struct EncryptDiskToggle: View {
     }
     .padding(.horizontal, 4)
     .padding(.top, 4)
+  }
+}
+
+// MARK: - Try Omarchy export
+
+/// Offers the newest Try Omarchy export (or any other one found) and shows
+/// its check. Nothing here ever asks for the transfer passphrase.
+private struct TryExportPanel: View {
+  let exports: TryOmarchyExportsDisplay
+  let chosenID: String?
+  let check: TryOmarchyExportCheck
+  let enabled: Bool
+  let onChoose: (String?) -> Void
+
+  var body: some View {
+    switch exports {
+    case .notChecked:
+      EmptyView()
+    case .unavailable:
+      Text(PlainLanguage.tryExportUnavailable).omarchyHelpText()
+    case .found(let found, let unusable):
+      if let newest = found.first {
+        Panel {
+          VStack(alignment: .leading, spacing: 8) {
+            Text(PlainLanguage.tryExportHeading)
+              .font(OmarchyTheme.eyebrow)
+              .textCase(.uppercase)
+              .foregroundStyle(OmarchyTheme.accent)
+            Toggle(
+              PlainLanguage.tryExportChoice,
+              isOn: Binding(
+                get: { chosenID != nil },
+                set: { onChoose($0 ? (chosenID ?? newest.id) : nil) }
+              )
+            )
+            .toggleStyle(.checkbox)
+            .controlSize(.large)
+            .tint(OmarchyTheme.accent)
+            .disabled(!enabled)
+            if found.count > 1 {
+              Picker(
+                "Export",
+                selection: Binding(
+                  get: { chosenID ?? newest.id },
+                  set: { onChoose($0) }
+                )
+              ) {
+                ForEach(found) { export in
+                  Text(PlainLanguage.tryExportSummary(export)).tag(export.id)
+                }
+              }
+              .labelsHidden()
+              .disabled(!enabled || chosenID == nil)
+            } else {
+              Text(PlainLanguage.tryExportSummary(newest)).omarchyHelpText()
+            }
+            if chosenID != nil {
+              status
+              Text(PlainLanguage.tryExportNotYet).omarchyHelpText()
+            }
+            if let note = PlainLanguage.tryExportUnusable(unusable) {
+              Text(note).omarchyHelpText()
+            }
+          }
+        }
+      } else if let note = PlainLanguage.tryExportUnusable(unusable) {
+        Text(note).omarchyHelpText()
+      }
+    }
+  }
+
+  @ViewBuilder
+  private var status: some View {
+    switch check {
+    case .idle:
+      EmptyView()
+    case .checking:
+      HStack(spacing: 8) {
+        ProgressView().controlSize(.small)
+        Text(PlainLanguage.tryExportChecking).omarchyHelpText()
+      }
+    case .verified:
+      Text(PlainLanguage.tryExportVerified)
+        .font(OmarchyTheme.body)
+        .foregroundStyle(OmarchyTheme.secondaryText)
+    case .failed(let message):
+      Text(message)
+        .font(OmarchyTheme.body)
+        .foregroundStyle(OmarchyTheme.caution)
+    }
   }
 }
 

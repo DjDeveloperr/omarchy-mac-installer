@@ -586,6 +586,12 @@
     /// What each release channel's verified catalog offers this Mac. Read
     /// only: it never records a catalog or starts a download.
     func channelAvailability() async -> [ReleaseChannel: ReleaseChannelAvailability]
+    /// Looks for Try Omarchy migration exports and checks each one's layout,
+    /// receipt, size and header. Never reads past the ciphertext's header.
+    func tryOmarchyExports() async -> TryOmarchyExportsDisplay
+    /// Hashes the chosen export's ciphertext against its receipt. Returns
+    /// `.verified` or `.failed`; the passphrase is never involved.
+    func verifyTryOmarchyExport(id: String) async -> TryOmarchyExportCheck
   }
 
   extension InstallerEnvironment {
@@ -604,6 +610,10 @@
     public func restartPayloadPrefetch() {}
     public func channelAvailability() async -> [ReleaseChannel: ReleaseChannelAvailability] {
       [:]
+    }
+    public func tryOmarchyExports() async -> TryOmarchyExportsDisplay { .none }
+    public func verifyTryOmarchyExport(id: String) async -> TryOmarchyExportCheck {
+      .failed(PlainLanguage.tryExportMissing)
     }
   }
 #endif
