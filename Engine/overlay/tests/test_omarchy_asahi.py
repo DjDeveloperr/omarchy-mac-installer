@@ -116,8 +116,10 @@ from omarchy_asahi import (  # noqa: E402
     AsahiAdapterError,
     AsahiInPlaceRepairAdapter,
     AsahiStage1Adapter,
+    esp_board_layout,
     fill_aurora_stage1,
     install_board_stage1,
+    install_esp_board_layout,
     stub_installer,
 )
 
@@ -228,6 +230,114 @@ class AsahiStage1AdapterTests(unittest.TestCase):
         self.assertTrue(boot_object.startswith(b"m1n1 j700 stage 1"))
         self.assertIn(b"180190f8-0000-4000-8000-000000000000", boot_object)
         self.assertIn(b";m1n1/boot.bin", boot_object)
+
+    def _neo_payload(self, stage2=b"m1n1 neo"):
+        with zipfile.ZipFile(self.payload, "a") as archive:
+            archive.writestr("esp/aurora/stage1-j700.bin", j700_stage1())
+            if stage2 is not None:
+                archive.writestr("esp/m1n1/boot-j700.bin", stage2)
+        # As extract_tree leaves the ESP: every payload member under its own name.
+        (self.installed_esp / "aurora").mkdir()
+        (self.installed_esp / "aurora/stage1-j700.bin").write_bytes(j700_stage1())
+        if stage2 is not None:
+            (self.installed_esp / "m1n1/boot-j700.bin").write_bytes(stage2)
+
+    def _install_on(self, device_class):
+        installer = FakeInstaller(FakeDiskUtil([[self.free]]))
+        installer.sysinfo.device_class = device_class
+        adapter = self._adapter(installer)
+        adapter.preflight(self.plan)
+        target = adapter.prepare_target(self.plan)
+        partition_disk = adapter.osins.partition_disk
+        def with_a_real_esp_uuid(name, size):
+            partition_disk(name, size)
+            adapter.osins.efi_part.uuid = "180190F8-0000-4000-8000-000000000000"
+        adapter.osins.partition_disk = with_a_real_esp_uuid
+        return target, adapter.install_stub_and_esp(self.plan)
+
+    def _retry_on(self, device_class, target, evidence):
+        retry = self._retry_adapter(target, evidence)
+        retry.installer.sysinfo.device_class = device_class
+        retry.preflight(self.plan)
+        return retry
+
+    def test_a_neo_payload_without_its_stage2_is_refused_before_disk_changes(self):
+        self._neo_payload(stage2=None)
+        installer = FakeInstaller(FakeDiskUtil([[self.free]]))
+        installer.sysinfo.device_class = "j700ap"
+        adapter = self._adapter(installer)
+
+        with self.assertRaisesRegex(AsahiAdapterError, "no esp/m1n1/boot-j700.bin for the MacBook Neo"):
+            adapter.preflight(self.plan)
+
+        self.assertFalse(adapter.preflight_complete)
+        self.assertEqual(installer.dutil.add_calls, [])
+        self.assertEqual(installer.dutil.resize_calls, [])
+
+    def test_a_neo_payload_with_an_empty_stage2_is_refused_before_disk_changes(self):
+        self._neo_payload(stage2=b"")
+        installer = FakeInstaller(FakeDiskUtil([[self.free]]))
+        installer.sysinfo.device_class = "j700ap"
+        adapter = self._adapter(installer)
+
+        with self.assertRaisesRegex(AsahiAdapterError, "empty esp/m1n1/boot-j700.bin"):
+            adapter.preflight(self.plan)
+
+        self.assertEqual(installer.dutil.add_calls, [])
+
+    def test_a_neo_boots_its_own_stage2_as_m1n1_boot_bin(self):
+        self._neo_payload()
+
+        target, evidence = self._install_on("j700ap")
+
+        self.assertEqual((self.installed_esp / "m1n1/boot.bin").read_bytes(), b"m1n1 neo")
+        self.assertFalse((self.installed_esp / "m1n1/boot-j700.bin").exists())
+        retry = self._retry_on("j700ap", target, evidence)
+        retry.validate_installed_checkpoint(self.plan, target, evidence)
+
+    def test_the_neo_esp_recheck_rejects_the_generic_stage2(self):
+        self._neo_payload()
+        target, evidence = self._install_on("j700ap")
+        # Same size as the Neo's, so only the content comparison can tell.
+        (self.installed_esp / "m1n1/boot.bin").write_bytes(b"m1n1 m13")
+
+        retry = self._retry_on("j700ap", target, evidence)
+        with self.assertRaisesRegex(AsahiAdapterError, "differs from payload"):
+            retry.validate_installed_checkpoint(self.plan, target, evidence)
+
+    def test_the_neo_esp_recheck_rejects_a_leftover_neo_stage2(self):
+        self._neo_payload()
+        target, evidence = self._install_on("j700ap")
+        (self.installed_esp / "m1n1/boot-j700.bin").write_bytes(b"m1n1 neo")
+
+        retry = self._retry_on("j700ap", target, evidence)
+        with self.assertRaisesRegex(AsahiAdapterError, "dropped member"):
+            retry.validate_installed_checkpoint(self.plan, target, evidence)
+
+    def test_other_macs_drop_the_neo_stage2_from_the_esp(self):
+        self._neo_payload()
+
+        target, evidence = self._install_on("j613ap")
+
+        self.assertEqual((self.installed_esp / "m1n1/boot.bin").read_bytes(), b"m1n1")
+        self.assertFalse((self.installed_esp / "m1n1/boot-j700.bin").exists())
+        retry = self._retry_on("j613ap", target, evidence)
+        retry.validate_installed_checkpoint(self.plan, target, evidence)
+        (self.installed_esp / "m1n1/boot-j700.bin").write_bytes(b"m1n1 neo")
+        with self.assertRaisesRegex(AsahiAdapterError, "dropped member"):
+            retry.validate_installed_checkpoint(self.plan, target, evidence)
+
+    def test_a_payload_without_the_neo_stage2_installs_unchanged_on_other_macs(self):
+        for device_class in ("j613ap", "j314s"):
+            with self.subTest(device_class=device_class):
+                target, evidence = self._install_on(device_class)
+
+                self.assertEqual(
+                    sorted(str(path.relative_to(self.installed_esp))
+                           for path in self.installed_esp.rglob("*") if path.is_file()),
+                    ["EFI/BOOT/BOOTAA64.EFI", "m1n1/boot.bin"],
+                )
+                self.assertEqual(json.loads(evidence)["populated_partitions"][0]["installed_bytes"], 8)
 
     def test_free_extent_runs_exact_upstream_stage_one_primitives(self):
         dutil = FakeDiskUtil([[self.free]])
@@ -1616,6 +1726,80 @@ class BoardStage1Tests(unittest.TestCase):
             with self.assertRaisesRegex(AsahiAdapterError, "stage1-j700.bin"):
                 install_board_stage1("j700ap", "14.8.3", {}.__getitem__, self.UUID, str(target))
             self.assertEqual(target.read_bytes(), b"asahi stage 1")
+
+
+class EspBoardLayoutTests(unittest.TestCase):
+    MEMBERS = [
+        "esp/EFI/BOOT/BOOTAA64.EFI",
+        "esp/aurora/stage1-j700.bin",
+        "esp/m1n1/boot.bin",
+        "esp/m1n1/boot-j700.bin",
+    ]
+
+    def test_a_neo_installs_its_stage2_as_m1n1_boot_bin(self):
+        self.assertEqual(esp_board_layout("j700ap", self.MEMBERS), {
+            "esp/EFI/BOOT/BOOTAA64.EFI": "EFI/BOOT/BOOTAA64.EFI",
+            "esp/aurora/stage1-j700.bin": "aurora/stage1-j700.bin",
+            "esp/m1n1/boot-j700.bin": "m1n1/boot.bin",
+        })
+
+    def test_other_macs_drop_the_neo_stage2(self):
+        for device_class in ("j613ap", "j314s"):
+            with self.subTest(device_class=device_class):
+                self.assertEqual(esp_board_layout(device_class, self.MEMBERS), {
+                    "esp/EFI/BOOT/BOOTAA64.EFI": "EFI/BOOT/BOOTAA64.EFI",
+                    "esp/aurora/stage1-j700.bin": "aurora/stage1-j700.bin",
+                    "esp/m1n1/boot.bin": "m1n1/boot.bin",
+                })
+
+    def test_a_payload_without_the_neo_stage2_is_unchanged_on_other_macs(self):
+        members = ["esp/EFI/BOOT/BOOTAA64.EFI", "esp/m1n1/boot.bin"]
+        for device_class in ("j613ap", "j314s"):
+            with self.subTest(device_class=device_class):
+                self.assertEqual(esp_board_layout(device_class, members), {
+                    "esp/EFI/BOOT/BOOTAA64.EFI": "EFI/BOOT/BOOTAA64.EFI",
+                    "esp/m1n1/boot.bin": "m1n1/boot.bin",
+                })
+
+    def test_a_neo_payload_without_its_stage2_is_refused(self):
+        with self.assertRaisesRegex(AsahiAdapterError, "no esp/m1n1/boot-j700.bin for the MacBook Neo"):
+            esp_board_layout("j700ap", ["esp/m1n1/boot.bin"])
+
+    def test_a_member_outside_the_esp_is_refused(self):
+        with self.assertRaises(AsahiAdapterError):
+            esp_board_layout("j613ap", ["root.img"])
+
+    def copied_esp(self, root):
+        for member in self.MEMBERS:
+            path = Path(root, *member.split("/")[1:])
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(member.encode())
+
+    def files(self, root):
+        return {
+            str(path.relative_to(root)): path.read_bytes()
+            for path in Path(root).rglob("*") if path.is_file()
+        }
+
+    def test_the_copied_esp_becomes_the_neo_layout(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.copied_esp(root)
+            install_esp_board_layout("j700ap", self.MEMBERS, root)
+            self.assertEqual(self.files(root), {
+                "EFI/BOOT/BOOTAA64.EFI": b"esp/EFI/BOOT/BOOTAA64.EFI",
+                "aurora/stage1-j700.bin": b"esp/aurora/stage1-j700.bin",
+                "m1n1/boot.bin": b"esp/m1n1/boot-j700.bin",
+            })
+
+    def test_the_copied_esp_loses_the_neo_stage2_elsewhere(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.copied_esp(root)
+            install_esp_board_layout("j314s", self.MEMBERS, root)
+            self.assertEqual(self.files(root), {
+                "EFI/BOOT/BOOTAA64.EFI": b"esp/EFI/BOOT/BOOTAA64.EFI",
+                "aurora/stage1-j700.bin": b"esp/aurora/stage1-j700.bin",
+                "m1n1/boot.bin": b"esp/m1n1/boot.bin",
+            })
 
 
 class NewerTrackpadKeyTests(unittest.TestCase):

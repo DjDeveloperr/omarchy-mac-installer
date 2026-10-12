@@ -472,6 +472,55 @@ def install_board_stage1(
         fd.write(filled)
 
 
+ESP_SOURCE = "esp"
+ESP_STAGE2 = "esp/m1n1/boot.bin"
+
+# Boards whose Stage 2 is not the image's generic m1n1/boot.bin. One image
+# carries every board's prebuilt Stage 2: on its own board the file replaces
+# m1n1/boot.bin, and every other board drops it, so no ESP ever holds another
+# board's Stage 2.
+BOARD_STAGE2 = {"j700ap": "esp/m1n1/boot-j700.bin"}
+
+
+def esp_board_layout(device_class, members):
+    """Each payload ESP member's path on this board's ESP; absent ones are not installed."""
+    members = set(members)
+    own = BOARD_STAGE2.get(device_class)
+    if own is not None and own not in members:
+        board = BOARD_STAGE1.get(device_class)
+        macs = board.macs if board is not None else device_class
+        raise AsahiAdapterError(f"this image has no {own} for {macs}")
+    prefix = ESP_SOURCE + "/"
+    layout = {}
+    for member in members:
+        if not member.startswith(prefix):
+            raise AsahiAdapterError("ESP member is outside the ESP source")
+        if member == own:
+            layout[member] = ESP_STAGE2[len(prefix):]
+        elif member in BOARD_STAGE2.values() or (own is not None and member == ESP_STAGE2):
+            continue
+        else:
+            layout[member] = member[len(prefix):]
+    return layout
+
+
+def install_esp_board_layout(device_class, members, esp_root):
+    """Turn the copied payload ESP into this board's ESP."""
+    layout = esp_board_layout(device_class, members)
+    prefix = ESP_SOURCE + "/"
+    installed = set(layout.values())
+    for member in sorted(set(members)):
+        copied = member[len(prefix):]
+        target = layout.get(member)
+        if target == copied:
+            continue
+        copied_path = os.path.join(esp_root, *PurePosixPath(copied).parts)
+        if target is not None:
+            os.replace(copied_path, os.path.join(esp_root, *PurePosixPath(target).parts))
+        elif copied not in installed:
+            os.unlink(copied_path)
+
+
 class _WithoutRecoveryMount:
     """subprocess for stub, minus attaching or detaching its recovery image."""
 
@@ -1015,6 +1064,11 @@ class AsahiStage1Adapter:
         board = board_stage1(self.installer.sysinfo.device_class, self.os_firmware)
         if board is not None:
             read_board_stage1(board, self.osins.pkg.read, self.template["next_object"])
+        device_class = self.installer.sysinfo.device_class
+        esp_board_layout(device_class, self._esp_members())
+        stage2 = BOARD_STAGE2.get(device_class)
+        if stage2 is not None and self.osins.pkg.getinfo(stage2).file_size <= 0:
+            raise AsahiAdapterError(f"this image has an empty {stage2}")
         self.installer.osins = self.osins
         self.preflight_complete = True
 
@@ -1162,6 +1216,11 @@ class AsahiStage1Adapter:
             self.osins.efi_part.uuid,
             self.installer.ins.boot_obj_path,
             self.template.get("next_object", "m1n1/boot.bin"),
+        )
+        install_esp_board_layout(
+            self.installer.sysinfo.device_class,
+            self._esp_members(),
+            self.installer.dutil.mount(self.osins.efi_part.name),
         )
         for target in self.osins.idata_targets:
             self.installer.ins.collect_installer_data(target)
@@ -1591,10 +1650,34 @@ class AsahiStage1Adapter:
         )
         if not members:
             raise AsahiAdapterError("installed tree source is empty")
+        # The ESP holds this board's layout of the payload tree, so the
+        # install step and every later recheck expect the same files.
+        if source == ESP_SOURCE:
+            layout = esp_board_layout(
+                self.installer.sysinfo.device_class,
+                (member.filename for member in members),
+            )
+        else:
+            layout = {
+                member.filename: member.filename[len(prefix) :] for member in members
+            }
+        for member in members:
+            relative = member.filename[len(prefix) :]
+            if relative in layout.values():
+                continue
+            # A dropped or moved member must leave no copy behind.
+            try:
+                os.lstat(os.path.join(mountpoint, *PurePosixPath(relative).parts))
+            except FileNotFoundError:
+                continue
+            except OSError as error:
+                raise AsahiAdapterError("installed tree read-back failed") from error
+            raise AsahiAdapterError("installed tree holds a dropped member")
+        members = [member for member in members if member.filename in layout]
         tree_digest = hashlib.sha256()
         installed_bytes = 0
         for member in members:
-            relative = member.filename[len(prefix) :]
+            relative = layout[member.filename]
             target_path = os.path.join(mountpoint, *PurePosixPath(relative).parts)
             try:
                 target_status = os.lstat(target_path)
@@ -1733,6 +1816,14 @@ class AsahiStage1Adapter:
         for name in ("boot.img", "root.img"):
             if members[name].file_size % 4096 != 0:
                 raise AsahiAdapterError("Omarchy image size is not 4KiB aligned")
+
+    def _esp_members(self):
+        prefix = ESP_SOURCE + "/"
+        return [
+            member.filename
+            for member in self.osins.pkg.infolist()
+            if not member.is_dir() and member.filename.startswith(prefix)
+        ]
 
     def _require_preflight(self):
         if not self.preflight_complete:
