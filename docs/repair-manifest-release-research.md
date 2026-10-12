@@ -46,9 +46,11 @@ The published [`v0.8.0-m1` engine archive](https://github.com/maralcbr/omarchy-m
 
 PR #29's review and comment endpoints were also rechecked. Marcelo's review still requires a producer or real shipped manifest and supplies no artifact location; no issue comments were present and Scott's four inline comments do not supply one. The next evidence source needs to be supplied by the producer owner or a release custodian. Contacting them has not been authorized, and no message was posted.
 
-## Remaining evidence needed
+## Resolution
 
-Marcelo's compatibility request remains open. Closing it requires either an exact released repair manifest with provenance to the release that distributed it, or the actual repair-manifest producer at an identifiable revision with representative inputs and generated output. The output must let a test check both `existing_content[role].size_bytes` and `replacement_content[role].size_bytes` for rewritten roles against their partition capacity and 4096 alignment, plus replacement image length. A fresh-install catalog, image-builder arithmetic, or a newly invented manifest cannot establish that contract for existing repair output.
+Marcelo accepted this evidence in the PR #45 review. No released repair manifest has ever shipped and repair has only run in canaries, so there is no producer to test against. The checksum-pinned canary fixture and the consumer contract in [engine-hardening.md](engine-hardening.md) close the request, and that contract is what any future producer must meet.
+
+Stronger evidence would require either an exact released repair manifest with provenance to the release that distributed it, or the actual repair-manifest producer at an identifiable revision with representative inputs and generated output. The output must let a test check both `existing_content[role].size_bytes` and `replacement_content[role].size_bytes` for rewritten roles against their partition capacity and 4096 alignment, plus replacement image length. A fresh-install catalog, image-builder arithmetic, or a newly invented manifest cannot establish that contract for existing repair output.
 
 The existing checksum-pinned physical canary fixture remains the only real repair manifest obtained in this investigation. Its explicitly non-release provenance prevents treating it as a released compatibility sample. No change to the consumer's safety checks or additional synthetic fixture is justified by the evidence found here.
 
