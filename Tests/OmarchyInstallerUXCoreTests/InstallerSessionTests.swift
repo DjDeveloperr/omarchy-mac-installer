@@ -1709,6 +1709,28 @@
       return check < availabilityAnswers.count ? availabilityAnswers[check] : [:]
     }
 
+    /// One answer per look in Try Omarchy's folder; the last one repeats.
+    var tryExportAnswers = [TryOmarchyExportsDisplay]()
+    private(set) var tryExportLooks = 0
+    /// Each export check's answer by id, defaulting to verified; a gate holds
+    /// the check with that position open.
+    var tryExportChecks = [String: TryOmarchyExportCheck]()
+    var tryExportCheckGates = [OperationGate?]()
+    private(set) var checkedTryExports = [String]()
+
+    func tryOmarchyExports() async -> TryOmarchyExportsDisplay {
+      let look = tryExportLooks
+      tryExportLooks += 1
+      return look < tryExportAnswers.count ? tryExportAnswers[look] : tryExportAnswers.last ?? .none
+    }
+
+    func verifyTryOmarchyExport(id: String) async -> TryOmarchyExportCheck {
+      let check = checkedTryExports.count
+      checkedTryExports.append(id)
+      if check < tryExportCheckGates.count { await tryExportCheckGates[check]?.wait() }
+      return tryExportChecks[id] ?? .verified
+    }
+
     func inspect() async throws -> HostDisplay {
       await inspectGate?.wait()
       approved = false
