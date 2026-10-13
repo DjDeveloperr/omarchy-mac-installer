@@ -124,6 +124,26 @@
       XCTAssertEqual(transcript.completion, .awaitingRecovery)
     }
 
+    func testTryExportScenarioOffersOneIntactAndOneTamperedExport() async {
+      let environment = InstallerSimulationEnvironment(scenario: .tryExport, delay: .zero)
+      let session = InstallerSession(environment: environment)
+      await session.inspect()
+      await session.refreshTryExports()
+      let exports = InstallerSimulationEnvironment.simulatedTryExports
+      XCTAssertEqual(session.tryExports, .found(exports, unusable: 1))
+      await session.chooseTryExport(exports[0].id)
+      XCTAssertEqual(session.tryExportCheck, .verified)
+      await session.chooseTryExport(exports[1].id)
+      XCTAssertEqual(
+        session.tryExportCheck, .failed(PlainLanguage.tryExportFailure(.digestMismatch)))
+
+      let other = InstallerSimulationEnvironment(scenario: .success, delay: .zero)
+      let plain = InstallerSession(environment: other)
+      await plain.inspect()
+      await plain.refreshTryExports()
+      XCTAssertEqual(plain.tryExports, .none)
+    }
+
     func testEveryScenarioReachesItsExpectedOutcome() async throws {
       for scenario in InstallerSimulationScenario.allCases {
         let environment = InstallerSimulationEnvironment(scenario: scenario, delay: .zero)

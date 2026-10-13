@@ -9,7 +9,7 @@
     case noMacRelease, modelNotOnChannel, channelUnreachable
     case allocationClamped, allocationAligned, approvalChanged, credentialsRejected, connectionLost
     case emptyReply, helperFailure, degradedProgress, recoveryRetry, manualRecovery
-    case shutdownFailure, completed, installationMedia, spaceChanged, preparedResumeMismatch
+    case shutdownFailure, completed, installationMedia, spaceChanged, preparedResumeMismatch, tryExport
 
     public var id: String { rawValue }
     public var title: String {
@@ -46,6 +46,7 @@
       case .installationMedia: "Installation media required"
       case .spaceChanged: "Space shrinks before install · engine refuses plan"
       case .preparedResumeMismatch: "Prepared resume target changed"
+      case .tryExport: "Try Omarchy exports found · one intact, one tampered"
       }
     }
 
@@ -77,6 +78,8 @@
         "The test channel's signed catalog lists no Mac. Its channel label says No Mac release yet, and Continue explains the channel has nothing to install, not a network or verification problem."
       case .modelNotOnChannel:
         "The test channel's signed catalog lists other Macs only. Its channel label says Not available for this Mac, and Continue names this Mac and the models the channel supports."
+      case .tryExport:
+        "Two test exports and one incomplete folder. Tick Bring it to this Omarchy install: the newest export checks out. Choose the older one: it doesn't match its receipt. The card stays on the first page only."
       case .channelUnreachable:
         "The test channel's catalog address returns 404. Its channel label says Couldn’t load, and Continue reports a server problem, never a missing Mac release."
       default:
@@ -169,6 +172,36 @@
       "apple,j434", "apple,j504", "apple,j613", "apple,j615", "apple,j514s", "apple,j514c",
       "apple,j514m", "apple,j516s", "apple,j516c", "apple,j516m", "apple,j700",
     ]
+
+    /// Two exports for the Try Omarchy card: the newer one checks out and
+    /// the older one fails its receipt, beside one incomplete folder.
+    public static let simulatedTryExports = [
+      TryOmarchyExportDisplay(
+        id: "6022f2ec-746c-4636-b786-2240103a7efb",
+        publishedAt: Date(timeIntervalSince1970: 1_791_590_400),
+        entries: 862, expandedBytes: 28_680_598, bundleBytes: 29_365_414),
+      TryOmarchyExportDisplay(
+        id: "c4e6a8b0-2d4f-4a6c-9e8f-0a1b2c3d4e03",
+        publishedAt: Date(timeIntervalSince1970: 1_790_380_800),
+        entries: 640, expandedBytes: 21_004_288, bundleBytes: 21_530_112),
+    ]
+
+    public func tryOmarchyExports() async -> TryOmarchyExportsDisplay {
+      guard scenario == .tryExport else { return .none }
+      return .found(Self.simulatedTryExports, unusable: 1)
+    }
+
+    public func verifyTryOmarchyExport(id: String) async -> TryOmarchyExportCheck {
+      guard scenario == .tryExport, (try? await tick()) != nil else {
+        return .failed(PlainLanguage.tryExportMissing)
+      }
+      switch id {
+      case Self.simulatedTryExports[0].id: return .verified
+      case Self.simulatedTryExports[1].id:
+        return .failed(PlainLanguage.tryExportFailure(.digestMismatch))
+      default: return .failed(PlainLanguage.tryExportMissing)
+      }
+    }
 
     private var refusedOnce: Bool {
       scenario == .spaceChanged && lock.withLock { attempts > 0 }
