@@ -31,8 +31,9 @@ jobs:
       - name: Live host - promote refuses with no published edge catalog
         run: |
           set -uo pipefail
+          status=0
           out=$(python3 scripts/catalog_release.py promote --channel rc --source edge --verify-remote --check-live \
-            --host github-release --out "$RUNNER_TEMP/live" 2>&1); status=$?
+            --host github-release --out "$RUNNER_TEMP/live" 2>&1) || status=$?
           echo "$out"
           [[ $status == 1 && $out == *"no edge catalog is published at https://github.com/omacom/omarchy-mac-installer/releases/download/catalog-edge/catalog-edge.signed.json"* ]]
           [[ ! -e $RUNNER_TEMP/live ]]
@@ -41,8 +42,9 @@ jobs:
         run: |
           set -uo pipefail
           for confirm in "" promote-stable; do
+            status=0
             out=$(python3 scripts/catalog_release.py promote --channel rc --source edge --real --confirm "$confirm" \
-              --source-sha256 "$(printf '0%.0s' {1..64})" --host github-release --out "$RUNNER_TEMP/real" 2>&1); status=$?
+              --source-sha256 "$(printf '0%.0s' {1..64})" --host github-release --out "$RUNNER_TEMP/real" 2>&1) || status=$?
             echo "$out"
             [[ $status == 1 && $out == *"promotion is parked"* ]]
           done
