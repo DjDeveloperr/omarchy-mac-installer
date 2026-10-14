@@ -1,0 +1,103 @@
+name: Mac promote branch probe (temporary)
+
+# Temporary, on the scratch branch mac-promote-dryrun only; never merged.
+# Runs the parts of mac-promote.yml that need no environment: the catalog
+# tests, the live host refusals, and a full dry run with a throwaway key.
+
+on:
+  push:
+    branches: [mac-promote-dryrun]
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Run the catalog checks
+        run: python3 -m unittest discover -v -s scripts/tests -p 'test_catalog_release.py' 2>&1 | tail -45
+
+      - name: Live host - promote refuses with no published edge catalog
+        run: |
+          set -uo pipefail
+          out=$(python3 scripts/catalog_release.py promote --channel rc --source edge --verify-remote --check-live \
+            --host github-release --out "$RUNNER_TEMP/live" 2>&1); status=$?
+          echo "$out"
+          [[ $status == 1 && $out == *"no edge catalog is published at https://github.com/omacom/omarchy-mac-installer/releases/download/catalog-edge/catalog-edge.signed.json"* ]]
+          [[ ! -e $RUNNER_TEMP/live ]]
+
+      - name: Real mode without the explicit input is refused
+        run: |
+          set -uo pipefail
+          for confirm in "" promote-stable; do
+            out=$(python3 scripts/catalog_release.py promote --channel rc --source edge --real --confirm "$confirm" \
+              --source-sha256 "$(printf '0%.0s' {1..64})" --host github-release --out "$RUNNER_TEMP/real" 2>&1); status=$?
+            echo "$out"
+            [[ $status == 1 && $out == *"promotion is parked"* ]]
+          done
+          [[ ! -e $RUNNER_TEMP/real ]]
+
+      - name: Dry run edge to rc to stable with a throwaway key, scratch host only
+        run: |
+          set -euo pipefail
+          work=$RUNNER_TEMP/dry; mkdir -p "$work/bin"
+          for tool in gh curl aws wget; do
+            printf '#!/bin/bash\necho "%s called" >&2\nexit 97\n' "$tool" >"$work/bin/$tool"; chmod +x "$work/bin/$tool"
+          done
+          export PATH=$work/bin:$PATH
+          seed=$(openssl genpkey -algorithm ed25519 -outform DER | tail -c 32 | base64)
+          CATALOG_SIGNING_KEY=$seed python3 scripts/catalog_release.py public-key --key-env CATALOG_SIGNING_KEY --output "$work/trust-root.pub"
+          base=https://github.com/omacom/omarchy-mac-installer/releases/download
+          image=omarchy-mac-edge-2026.10.14-0123456789ab
+          zero=$(printf '1%.0s' {1..64})
+          printf '{"url":"%s/%s/%s.zip","fileName":"%s.zip","sizeBytes":4000000000,"sha256":"%s"}' "$base" "$image" "$image" "$image" "$zero" >"$work/payload.json"
+          printf '{"url":"%s/engine-v0.9.2-omarchy.28/installer-v0.9.2-omarchy.28.tar.gz","fileName":"installer-v0.9.2-omarchy.28.tar.gz","sizeBytes":1000,"sha256":"0cf1aa87760f90a545298b7cef737c9b497f2cad421d79ac59f557a81f2eb146","version":"v0.9.2-omarchy.28","downstreamRevision":"%s"}' "$base" "$(printf 'a%.0s' {1..40})" >"$work/engine.json"
+          printf '{"url":"%s/%s/installer_data.json","fileName":"installer_data.json","sizeBytes":100,"sha256":"%s"}' "$base" "$image" "$(printf '2%.0s' {1..64})" >"$work/data.json"
+          printf '{"image_sha256":"%s","result":"pass","scenarios":[{"name":"first-boot","result":"pass"},{"name":"conversion","result":"pass"},{"name":"second-boot","result":"pass"}],"harness_commit":"%s","runner":"fixture","run_url":"https://github.com/x/y/actions/runs/1"}' "$zero" "$(printf '3%.0s' {1..40})" >"$work/evidence.json"
+          printf '{"minimumVersion":"2.1.0","latestVersion":"2.1.0","downloadURL":"%s/app-v2.1.0/Omarchy-Installer.dmg"}' "$base" >"$work/installer.json"
+          host=scratch:$work/host
+          python3 scripts/catalog_release.py prepare --channel edge --image "$image" --payload "$work/payload.json" \
+            --engine "$work/engine.json" --installer-data "$work/data.json" --evidence "$work/evidence.json" \
+            --installer "$work/installer.json" --now 2026-10-14T00:00:00Z --out "$work/edge"
+          CATALOG_SIGNING_KEY=$seed python3 scripts/catalog_release.py sign --key-env CATALOG_SIGNING_KEY \
+            --catalog "$work/edge/catalog-edge.json" --trust-root "$work/trust-root.pub" --out "$work/edge-signed"
+          python3 scripts/catalog_release.py publish --channel edge --envelope "$work/edge-signed/catalog-edge.signed.json" \
+            --host "$host" --trust-root "$work/trust-root.pub"
+          for pair in edge:rc rc:stable; do
+            source=${pair%%:*} channel=${pair##*:}
+            python3 scripts/catalog_release.py promote --channel "$channel" --source "$source" --check-live \
+              --host "$host" --trust-root "$work/trust-root.pub" --out "$work/$channel" | tee "$work/$channel.log"
+            python3 scripts/catalog_release.py check-promotion --channel "$channel" --source-channel "$source" \
+              --catalog "$work/$channel/catalog-$channel.json" --source "$work/$channel/source.signed.json" \
+              --trust-root "$work/trust-root.pub" --source-sha256 "$(sed -n 's/^source_catalog_sha256=//p' "$work/$channel.log")"
+            CATALOG_SIGNING_KEY=$seed python3 scripts/catalog_release.py sign --key-env CATALOG_SIGNING_KEY \
+              --catalog "$work/$channel/catalog-$channel.json" --trust-root "$work/trust-root.pub" --out "$work/$channel-signed"
+            python3 scripts/catalog_release.py publish --channel "$channel" \
+              --envelope "$work/$channel-signed/catalog-$channel.signed.json" --host "$host" --trust-root "$work/trust-root.pub"
+            sleep 1
+          done
+          python3 - "$work/host" <<'PY'
+          import base64, json, sys
+          from pathlib import Path
+          host = Path(sys.argv[1])
+          docs = {c: json.loads(base64.b64decode(json.loads((host / f"catalog-{c}.signed.json").read_text())["catalog"]))
+                  for c in ("edge", "rc", "stable")}
+          strip = lambda d: {k: v for k, v in d.items() if k not in ("sequence", "issuedAt")}
+          assert strip(docs["rc"]) == strip(docs["edge"]) == strip(docs["stable"])
+          assert docs["edge"]["sequence"] < docs["rc"]["sequence"] < docs["stable"]["sequence"]
+          m = docs["stable"]["models"][0]
+          print("same pins in edge, rc, stable:", m["payloadDigest"], m["engineDigest"], m["metadataDigest"])
+          print("sequences:", [docs[c]["sequence"] for c in ("edge", "rc", "stable")])
+          print("host files:", sorted(p.name for p in host.iterdir()))
+          PY
