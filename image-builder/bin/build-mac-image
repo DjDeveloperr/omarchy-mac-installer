@@ -542,8 +542,10 @@ create_images() {
   local root_loop top=$work/build-top subvolume
   truncate -s 20G "$work/root-build.img"
   truncate -s "$BOOT_SIZE" "$work/boot-build.img"
+  truncate -s "$ESP_SIZE" "$work/esp-build.img"
   make_root_fs "$work/root-build.img"
   make_boot_fs "$work/boot-build.img"
+  mkfs.vfat -F 32 -n OMARCHYESP -i "${ESP_VOLUME_ID#0x}" "$work/esp-build.img" >/dev/null
   mkdir -p "$top" "$target"
   mount_image "$work/root-build.img" "$top"
   root_loop=$attached
@@ -556,12 +558,17 @@ create_images() {
   mount -o subvol=@log,compress=zstd "$root_loop" "$target/var/log"
   mount -o subvol=@pkg,compress=zstd "$root_loop" "$target/var/cache/pacman/pkg"
   mount_image "$work/boot-build.img" "$target/boot"
-  # The image ships the ESP as a tree, which the installer copies onto the FAT
-  # partition it creates. The build stages it on a tmpfs the partition's size,
-  # so no kernel FAT driver is needed, and prove_esp_on_fat checks the result
-  # on a real FAT32 file system.
   mkdir -p "$target/boot/efi"
-  mount -t tmpfs -o size="$ESP_SIZE",mode=0755 omarchy-esp "$target/boot/efi" || fail "could not mount the ESP staging tmpfs"
+  # The image ships the ESP as a tree, which the installer copies onto the FAT
+  # partition it creates. A host kernel without a FAT driver (Namespace's
+  # Apple-backed runner) stages it on a tmpfs the partition's size instead;
+  # prove_esp_on_fat checks the tree on a real FAT32 file system either way.
+  if ! mount -o loop "$work/esp-build.img" "$target/boot/efi" 2>/dev/null; then
+    ! grep -qw vfat /proc/filesystems || fail "could not mount $work/esp-build.img"
+    mount -t tmpfs -o size="$ESP_SIZE",mode=0755 omarchy-esp "$target/boot/efi" ||
+      fail "could not mount the ESP staging tmpfs"
+    echo "the kernel has no FAT driver: staging the ESP on a tmpfs" >>"$logs/esp-fat.log"
+  fi
   # asahi-scripts' builder marker keeps update-m1n1 on this ESP, which needs m1n1/.
   # /boot/omarchy holds the encryption transaction state and throwaway key.
   mkdir -p "$target/boot/efi/m1n1" "$target/boot/efi/omarchy" "$target/boot/omarchy"
@@ -1350,6 +1357,32 @@ boot_setup_mode() {
   echo leaves
 }
 
+# limine-entry-tool refuses an ESP that findmnt does not call vfat. On a staged
+# tmpfs ESP (see create_images), a findmnt ahead of the real one in the
+# target's PATH answers vfat for /boot/efi's type alone, for the Limine
+# activation only; the image never ships it.
+esp_type_shim() {
+  local shim=$target/usr/local/sbin/findmnt
+  if [[ $1 == off ]]; then
+    rm -f "$shim"
+    return
+  fi
+  [[ $(findmnt -n -o FSTYPE "$target/boot/efi") == tmpfs ]] || return 0
+  [[ ! -e $shim ]] || fail "the image already has $shim"
+  mkdir -p "${shim%/*}"
+  cat >"$shim" <<'SHIM'
+#!/bin/bash
+# build-mac-image's stand-in while the ESP is staged on a tmpfs; removed after the Limine activation.
+if [[ " $* " == *FSTYPE* && ${!#} == /boot/efi ]]; then
+  echo vfat
+  exit 0
+fi
+exec /usr/bin/findmnt "$@"
+SHIM
+  chmod 755 "$shim"
+  echo "the ESP is a staged tmpfs: findmnt answers vfat for /boot/efi during the Limine activation" >>"$logs/limine-boot.log"
+}
+
 activate_limine() {
   local root_device identity mode
   root_device=$(findmnt -n -o SOURCE --target "$target" | sed 's/\[.*//')
@@ -1358,6 +1391,7 @@ activate_limine() {
   [[ ! -e $target/var/lib/omarchy/limine.enabled ]] || fail "the Limine gate is set before the boot setup ran"
   mode=$(boot_setup_mode) || exit 1
   echo "boot setup: $mode" >>"$logs/limine-boot.log"
+  esp_type_shim on
   isolated_chroot "$target" env -i PATH=/usr/share/omarchy/bin:/usr/local/sbin:/usr/local/bin:/usr/bin \
     HOME=/root TERM=dumb LANG=C.UTF-8 OMARCHY_PATH=/usr/share/omarchy BOOT_PART=/boot EFI_PART=/boot/efi \
     /bin/bash -eE -s -- "$root_device" "$ROOT_UUID" "$mode" >>"$logs/limine-boot.log" 2>&1 <<'SCRIPT' ||
@@ -1383,6 +1417,7 @@ else
 fi
 SCRIPT
     fail "the Limine activation failed (logs/limine-boot.log)"
+  esp_type_shim off
   unmount_api
   [[ -s $target/boot/efi/limine.conf ]] || fail "the image has no Limine menu (logs/limine-boot.log)"
   [[ -s $target/boot/efi/EFI/Linux/omarchy_$KERNEL.efi ]] ||
@@ -1432,7 +1467,6 @@ prove_esp_on_fat() {
   truncate -s "$ESP_SIZE" "$image"
   mkfs.vfat -F 32 -n OMARCHYESP -i "${ESP_VOLUME_ID#0x}" "$image" >/dev/null
   mapfile -t entries < <(find "$tree" -mindepth 1 -maxdepth 1)
-  : >"$logs/esp-fat.log"
   if ((${#entries[@]})); then
     MTOOLS_SKIP_CHECK=1 mcopy -s -m -D s -i "$image" "${entries[@]}" ::/ 2>>"$logs/esp-fat.log" ||
       fail "the ESP tree does not go onto FAT32 (logs/esp-fat.log)"
