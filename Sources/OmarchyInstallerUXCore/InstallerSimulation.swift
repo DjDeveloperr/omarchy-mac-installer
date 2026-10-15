@@ -9,7 +9,8 @@
     case noMacRelease, modelNotOnChannel, channelUnreachable
     case allocationClamped, allocationAligned, approvalChanged, credentialsRejected, connectionLost
     case emptyReply, helperFailure, degradedProgress, recoveryRetry, manualRecovery
-    case shutdownFailure, completed, installationMedia, spaceChanged, tryExport
+    case shutdownFailure, completed, installationMedia, spaceChanged, tryExport,
+      tryExportOnThisMac
 
     public var id: String { rawValue }
     public var title: String {
@@ -46,6 +47,7 @@
       case .installationMedia: "Installation media required"
       case .spaceChanged: "Space shrinks before install · engine refuses plan"
       case .tryExport: "Try Omarchy exports found · one intact, one tampered"
+      case .tryExportOnThisMac: "Try Omarchy exports on this Mac · real check, read-only"
       }
     }
 
@@ -77,6 +79,8 @@
         "The test channel's signed catalog lists other Macs only. Its channel label says Not available for this Mac, and Continue names this Mac and the models the channel supports."
       case .tryExport:
         "Two test exports and one incomplete folder. Tick Bring it to this Omarchy install: the newest export checks out. Choose the older one: it doesn't match its receipt. The card stays on the first page only."
+      case .tryExportOnThisMac:
+        "Reads this Mac's real Try Omarchy Exports folder, read-only, and checks each export you choose against its receipt. Nothing is copied or decrypted, and the rest of the installer stays simulated."
       case .channelUnreachable:
         "The test channel's catalog address returns 404. Its channel label says Couldn’t load, and Continue reports a server problem, never a missing Mac release."
       default:
@@ -87,6 +91,8 @@
 
   /// An in-memory environment. It never constructs a live adapter, reads the
   /// host, opens a socket, invokes XPC, downloads files, or requests OS shutdown.
+  /// The one exception is `tryExportOnThisMac`, which reads Try Omarchy's
+  /// Exports folder through the real, read-only discovery.
   /// Synthetic transcripts still pass through the real journal decoder.
   public final class InstallerSimulationEnvironment: InstallerEnvironment, @unchecked Sendable {
     public let scenario: InstallerSimulationScenario
@@ -96,14 +102,19 @@
     private var attempts = 0
     private var cancelled = false
     public let channel: ReleaseChannel
+    private let tryExportShelf: TryOmarchyExportShelf?
 
+    /// `tryExportShelf` replaces the home Exports folder for
+    /// `tryExportOnThisMac`; other scenarios never read one.
     public init(
       scenario: InstallerSimulationScenario, channel: ReleaseChannel = .edge,
-      delay: Duration = .milliseconds(600)
+      delay: Duration = .milliseconds(600), tryExportShelf: TryOmarchyExportShelf? = nil
     ) {
       self.scenario = scenario
       self.channel = channel
       self.delay = delay
+      self.tryExportShelf =
+        scenario == .tryExportOnThisMac ? tryExportShelf ?? .home() : nil
     }
 
     public var isSimulation: Bool { true }
@@ -183,11 +194,13 @@
     ]
 
     public func tryOmarchyExports() async -> TryOmarchyExportsDisplay {
+      if let tryExportShelf { return await tryExportShelf.look() }
       guard scenario == .tryExport else { return .none }
       return .found(Self.simulatedTryExports, unusable: 1)
     }
 
     public func verifyTryOmarchyExport(id: String) async -> TryOmarchyExportCheck {
+      if let tryExportShelf { return await tryExportShelf.verify(id: id) }
       guard scenario == .tryExport, (try? await tick()) != nil else {
         return .failed(PlainLanguage.tryExportMissing)
       }

@@ -144,6 +144,26 @@
       XCTAssertEqual(plain.tryExports, .none)
     }
 
+    func testOnlyTheThisMacScenarioReadsAnExportsFolder() async {
+      let missing = FileManager.default.temporaryDirectory
+        .appendingPathComponent("try-export-sim-\(UUID().uuidString)", isDirectory: true)
+      let shelf = TryOmarchyExportShelf(discovery: TryOmarchyExportDiscovery(directory: missing))
+      let environment = InstallerSimulationEnvironment(
+        scenario: .tryExportOnThisMac, delay: .zero, tryExportShelf: shelf)
+      let session = InstallerSession(environment: environment)
+      await session.inspect()
+      await session.refreshTryExports()
+      XCTAssertEqual(session.tryExports, .none)
+      let check = await environment.verifyTryOmarchyExport(
+        id: InstallerSimulationEnvironment.simulatedTryExports[0].id)
+      XCTAssertEqual(check, .failed(PlainLanguage.tryExportMissing))
+
+      let ignored = InstallerSimulationEnvironment(
+        scenario: .tryExport, delay: .zero, tryExportShelf: shelf)
+      let exports = await ignored.tryOmarchyExports()
+      XCTAssertEqual(exports.exports, InstallerSimulationEnvironment.simulatedTryExports)
+    }
+
     func testEveryScenarioReachesItsExpectedOutcome() async throws {
       for scenario in InstallerSimulationScenario.allCases {
         let environment = InstallerSimulationEnvironment(scenario: scenario, delay: .zero)
