@@ -61,7 +61,7 @@ PLATFORM_PACKAGES=(mkinitcpio limine limine-snapper-sync asahi-scripts asahi-fwe
 # the default sink is stereo-fallback, not the model's convolver; the runtime's
 # audio leaf, deferred to first boot, may find no network to fetch them.
 APPLE_AUDIO=(alsa-ucm-conf-asahi asahi-audio)
-TOOLCHAIN=(pacman arch-install-scripts btrfs-progs e2fsprogs dosfstools libarchive util-linux systemd jq python gnupg)
+TOOLCHAIN=(pacman arch-install-scripts btrfs-progs e2fsprogs dosfstools mtools libarchive util-linux systemd jq python gnupg)
 
 usage() {
   cat <<'USAGE'
@@ -468,7 +468,7 @@ prepare_toolchain() {
   done
   pacman-key --init >>"$logs/toolchain.log" 2>&1 && pacman-key --populate archlinuxarm >>"$logs/toolchain.log" 2>&1 ||
     fail "could not set up the build keyring (logs/toolchain.log)"
-  pacman -Su --noconfirm --needed arch-install-scripts btrfs-progs dosfstools e2fsprogs gnupg jq python \
+  pacman -Su --noconfirm --needed arch-install-scripts btrfs-progs dosfstools e2fsprogs gnupg jq mtools python \
     >>"$logs/toolchain.log" 2>&1 || fail "could not install the build tools (logs/toolchain.log)"
 
   curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 --retry 3 \
@@ -542,10 +542,8 @@ create_images() {
   local root_loop top=$work/build-top subvolume
   truncate -s 20G "$work/root-build.img"
   truncate -s "$BOOT_SIZE" "$work/boot-build.img"
-  truncate -s "$ESP_SIZE" "$work/esp-build.img"
   make_root_fs "$work/root-build.img"
   make_boot_fs "$work/boot-build.img"
-  mkfs.vfat -F 32 -n OMARCHYESP -i "${ESP_VOLUME_ID#0x}" "$work/esp-build.img" >/dev/null
   mkdir -p "$top" "$target"
   mount_image "$work/root-build.img" "$top"
   root_loop=$attached
@@ -558,8 +556,12 @@ create_images() {
   mount -o subvol=@log,compress=zstd "$root_loop" "$target/var/log"
   mount -o subvol=@pkg,compress=zstd "$root_loop" "$target/var/cache/pacman/pkg"
   mount_image "$work/boot-build.img" "$target/boot"
+  # The image ships the ESP as a tree, which the installer copies onto the FAT
+  # partition it creates. The build stages it on a tmpfs the partition's size,
+  # so no kernel FAT driver is needed, and prove_esp_on_fat checks the result
+  # on a real FAT32 file system.
   mkdir -p "$target/boot/efi"
-  mount_image "$work/esp-build.img" "$target/boot/efi"
+  mount -t tmpfs -o size="$ESP_SIZE",mode=0755 omarchy-esp "$target/boot/efi" || fail "could not mount the ESP staging tmpfs"
   # asahi-scripts' builder marker keeps update-m1n1 on this ESP, which needs m1n1/.
   # /boot/omarchy holds the encryption transaction state and throwaway key.
   mkdir -p "$target/boot/efi/m1n1" "$target/boot/efi/omarchy" "$target/boot/omarchy"
@@ -1415,6 +1417,40 @@ record_packages() {
     fail "a package from the Omarchy channel is not signed by the Omarchy package key (logs/packages.log)"
 }
 
+# Writes the ESP tree onto a FAT32 file system made as the installer makes the
+# partition, reads it back and requires the same tree: FAT has no links or
+# special files, folds case and refuses some names, and the tree must fit.
+# Modes are set as a FAT mount shows them.
+prove_esp_on_fat() {
+  local tree=$1 image=$work/esp-check.img back=$work/esp-check odd
+  local -a entries
+  odd=$(find "$tree" -mindepth 1 ! -type f ! -type d -printf '%P\n' | head -5)
+  [[ -z $odd ]] || fail "the ESP has entries FAT cannot hold: $(paste -sd' ' - <<<"$odd")"
+  odd=$(find "$tree" -mindepth 1 -printf '%P\n' | sort -f | uniq -di | head -5)
+  [[ -z $odd ]] || fail "the ESP has names that differ only in case: $(paste -sd' ' - <<<"$odd")"
+  rm -rf "$image" "$back"
+  truncate -s "$ESP_SIZE" "$image"
+  mkfs.vfat -F 32 -n OMARCHYESP -i "${ESP_VOLUME_ID#0x}" "$image" >/dev/null
+  mapfile -t entries < <(find "$tree" -mindepth 1 -maxdepth 1)
+  : >"$logs/esp-fat.log"
+  if ((${#entries[@]})); then
+    MTOOLS_SKIP_CHECK=1 mcopy -s -m -D s -i "$image" "${entries[@]}" ::/ 2>>"$logs/esp-fat.log" ||
+      fail "the ESP tree does not go onto FAT32 (logs/esp-fat.log)"
+  fi
+  fsck.fat -n "$image" >>"$logs/esp-fat.log" 2>&1 || fail "the FAT32 ESP does not check clean (logs/esp-fat.log)"
+  mkdir -p "$back"
+  MTOOLS_SKIP_CHECK=1 mcopy -s -n -i "$image" '::/*' "$back/" 2>>"$logs/esp-fat.log" ||
+    fail "the FAT32 ESP does not read back (logs/esp-fat.log)"
+  [[ $(tree_digest "$tree") == "$(tree_digest "$back")" ]] || fail "the ESP tree changes on FAT32"
+  rm -rf "$image" "$back"
+  find "$tree" -exec chmod 0755 {} +
+}
+
+# Every directory and file under DIR with each file's sha256, in one stable list.
+tree_digest() {
+  (cd "$1" && find . -mindepth 1 -type d -printf 'dir %P\n' && find . -type f -exec sha256sum {} +) | LC_ALL=C sort
+}
+
 # The finished root is copied into a fresh image sized to its content, so
 # nothing deleted during the build is left in its free space; growfs fills the
 # partition on first boot.
@@ -1479,6 +1515,7 @@ cleanup_target() {
   cp -a "$target/boot/efi/." "$work/final/esp/"
   mkdir -p "$work/final/esp/omarchy"
   umount "$target/boot/efi"
+  prove_esp_on_fat "$work/final/esp"
   cp -a "$target/boot/." "$work/boot-tree/"
   umount -R "$target"
 }
