@@ -26,13 +26,7 @@ final class LiveInstallerEnvironment: InstallerEnvironment, @unchecked Sendable 
   private var selectedLane = ReleaseChannel.stable.rawValue
   private let prefetch = PayloadPrefetchOrchestrator()
   private var plannedPayload: StagedInstallerArtifact?
-  /// The checked Try Omarchy exports from the latest look, by export id.
-  private var tryExports: [String: TryOmarchyExport] = [:]
-  private let tryExportDiscovery = TryOmarchyExportDiscovery(
-    directory: TryOmarchyExportDiscovery.exportsDirectory(
-      home: FileManager.default.homeDirectoryForCurrentUser
-    )
-  )
+  private let tryExportShelf = TryOmarchyExportShelf.home()
 
   private func accountClient() throws -> AuthenticatedEngineXPCSubmitter {
     let configuration = try InstallerReleaseConfigurationLocator().loadFromMainBundle()
@@ -179,53 +173,11 @@ final class LiveInstallerEnvironment: InstallerEnvironment, @unchecked Sendable 
   }
 
   func tryOmarchyExports() async -> TryOmarchyExportsDisplay {
-    let discovery = tryExportDiscovery
-    let result = await Self.offCooperativePool { discovery.discover() }
-    switch result {
-    case .success(let found):
-      lock.withLock {
-        tryExports = Dictionary(
-          uniqueKeysWithValues: found.exports.map { ($0.receipt.exportID, $0) }
-        )
-      }
-      return .found(found.exports.map(TryOmarchyExportDisplay.init), unusable: found.rejected.count)
-    case .failure:
-      lock.withLock { tryExports = [:] }
-      return .unavailable
-    }
+    await tryExportShelf.look()
   }
 
-  /// Hashes the export discovery saw; a replaced or changed file fails.
   func verifyTryOmarchyExport(id: String) async -> TryOmarchyExportCheck {
-    guard let export = lock.withLock({ tryExports[id] }) else {
-      return .failed(PlainLanguage.tryExportMissing)
-    }
-    let discovery = tryExportDiscovery
-    let result = await Self.offCooperativePool {
-      Result { try discovery.verify(export) }
-    }
-    switch result {
-    case .success(let verified):
-      lock.withLock {
-        if tryExports[id] == export { tryExports[id] = verified }
-      }
-      return .verified
-    case .failure(let problem as TryOmarchyExportProblem):
-      return .failed(PlainLanguage.tryExportFailure(problem))
-    case .failure:
-      return .failed(PlainLanguage.tryExportMissing)
-    }
-  }
-
-  /// File reads and hashing can take a while; keep them off the shared pool.
-  private static func offCooperativePool<T: Sendable>(
-    _ work: @escaping @Sendable () -> T
-  ) async -> T {
-    await withCheckedContinuation { continuation in
-      DispatchQueue.global(qos: .userInitiated).async {
-        continuation.resume(returning: work())
-      }
-    }
+    await tryExportShelf.verify(id: id)
   }
 
   /// Every channel's catalog, checked side by side for this Mac. A channel
