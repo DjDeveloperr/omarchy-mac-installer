@@ -96,6 +96,9 @@ struct TryOmarchyExportDiscoveryTests {
     let id = "6022f2ec-746c-4636-b786-2240103a7efb"
     try folder.publish(id: id)
     try Data().write(to: folder.exports.appendingPathComponent(".DS_Store"))
+    let assembling = folder.exports.appendingPathComponent(".\(id).Ab12Cd", isDirectory: true)
+    try FileManager.default.createDirectory(at: assembling, withIntermediateDirectories: false)
+    try Data("partial".utf8).write(to: assembling.appendingPathComponent("bundle.age"))
     try Data().write(to: folder.exports.appendingPathComponent("\(id)/.DS_Store"))
 
     let result = try folder.found()

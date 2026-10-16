@@ -98,7 +98,9 @@ public struct TryOmarchyExportDiscovery: Sendable {
     }
     var exports: [TryOmarchyExport] = []
     var rejected: [String: TryOmarchyExportProblem] = [:]
-    for name in names.sorted() where name != Self.finderMetadataName {
+    // Hidden entries are Finder's or an export Try Omarchy is still
+    // assembling before renaming it into place; neither is an export yet.
+    for name in names.sorted() where !name.hasPrefix(".") {
       switch inspect(name) {
       case .success(let export): exports.append(export)
       case .failure(let problem): rejected[name] = problem
