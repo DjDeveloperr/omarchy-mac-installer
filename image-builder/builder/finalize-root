@@ -101,9 +101,9 @@ configure_grub_defaults() {
   set_assignment "$grub" GRUB_TIMEOUT 1
   set_assignment "$grub" GRUB_TIMEOUT_STYLE hidden
   set_assignment "$grub" GRUB_VIDEO_BACKEND efi_gop
-  # T8140's DT requests this until the kernel handles its WFxT quirk itself.
-  # EFI load options replace /chosen/bootargs, so keep it in the persistent
-  # defaults used to generate both the UKI and later Limine/kernel updates.
+  # Keep T8140's requested WFxT override: __delay() can use raw timed waits
+  # outside the register-saving WFI idle path. EFI load options replace
+  # /chosen/bootargs, so preserve it for UKI and later kernel updates.
   [[ $hardware_profile != neo ]] || cmdline+=" arm64.nowfxt"
   set_assignment "$grub" GRUB_CMDLINE_LINUX "$cmdline"
   # The Mac's device tree registers a serial console, and Plymouth drops to its
