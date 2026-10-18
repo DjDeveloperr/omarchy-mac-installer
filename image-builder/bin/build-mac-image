@@ -1098,7 +1098,9 @@ apply_presets() {
 }
 
 finalize_root() {
-  bash "$ROOT/builder/finalize-root" --root "$target" >>"$logs/finalize.log" 2>&1 ||
+  bash "$ROOT/builder/finalize-root" --root "$target" \
+    --hardware-profile "$(jq -r '.hardware_profile // "legacy"' "$candidates/import.json")" \
+    >>"$logs/finalize.log" 2>&1 ||
     fail "could not finalize the image root (logs/finalize.log)"
 }
 

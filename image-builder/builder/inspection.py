@@ -400,11 +400,18 @@ def check_supported_models(root: Path, candidates: Candidates, report: dict) -> 
 
 def check_limine(root: Path, candidates: Candidates, report: dict) -> str:
     sections = limine.validate_artifacts(root, KERNEL)
+    cmdline = sections[".cmdline"].rstrip(b"\0 \n").decode(errors="replace")
+    if candidates.hardware_profile == "neo":
+        require("arm64.nowfxt" in cmdline.split(), "the Neo kernel command line lacks arm64.nowfxt")
+        grub = limine.regular(root / "etc/default/grub").decode()
+        persistent = re.findall(r'^GRUB_CMDLINE_LINUX="([^"\n]*)"$', grub, re.M)
+        require(len(persistent) == 1 and "arm64.nowfxt" in persistent[0].split(),
+                "the Neo persistent GRUB defaults lack arm64.nowfxt")
     release = candidates.kernel_release()
     require(sections[".linux"] == candidates.member(KERNEL, f"usr/lib/modules/{release}/vmlinuz"),
             "the UKI's kernel is not the set's")
     report["uki"] = {"release": release, "initramfs_bytes": len(sections[".initrd"]),
-                     "cmdline": sections[".cmdline"].rstrip(b"\0 \n").decode(errors="replace")}
+                     "cmdline": cmdline}
     return f"Limine at BOOTAA64.EFI boots omarchy_{KERNEL}.efi ({release}) with the set's kernel"
 
 

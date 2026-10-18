@@ -881,6 +881,22 @@ class ChannelImageInspectionTest(unittest.TestCase):
 class NeoChannelImageInspectionTest(ChannelImageInspectionTest):
     hardware_profile = "neo"
 
+    def test_neo_requires_nowfxt_in_the_persistent_update_source(self):
+        path = self.root / "etc/default/grub"
+        original = path.read_text()
+        for replacement in ("", "arm64.nowfxt=0", "prefix.arm64.nowfxt"):
+            with self.subTest(replacement=replacement):
+                path.write_text(original.replace("arm64.nowfxt", replacement))
+                self.assertFails("limine-uki", "Neo persistent GRUB defaults lack arm64.nowfxt")
+
+    def test_neo_requires_nowfxt_even_when_all_boot_command_lines_agree(self):
+        uki = self.root / "boot/efi/EFI/Linux/omarchy_linux-aurora.efi"
+        cmdline = inspection.limine.pe_sections(uki)[".cmdline"].rstrip(b"\0 \n").decode()
+        for replacement in ("", "arm64.nowfxt=0", "prefix.arm64.nowfxt"):
+            with self.subTest(replacement=replacement):
+                InspectionTest.replace_uki(self, cmdline=cmdline.replace("arm64.nowfxt", replacement))
+                self.assertFails("limine-uki", "Neo kernel command line lacks arm64.nowfxt")
+
     def test_supported_models_remain_neo_only(self):
         report = self.inspect()
         self.assertEqual(report["hardware_profile"], "neo")

@@ -535,6 +535,9 @@ def make_root(root: Path, candidates: Path, layout: str | None = None) -> None:
                         "--exclude", ".PKGINFO", "--exclude", ".MTREE"], check=True)
     uuid = "4f4d5801-524f-4f54-8000-000000000001"
     cmdline = f"root=UUID={uuid} rootflags=subvol=@ rw rootfstype=btrfs {SPLASH}"
+    if summary.get("hardware_profile") == "neo":
+        cmdline += " arm64.nowfxt"
+        write(root, "etc/default/grub", 'GRUB_CMDLINE_LINUX="zswap.enabled=0 rootfstype=btrfs arm64.nowfxt"\n')
     write(root, "etc/fstab", f"UUID={uuid} / btrfs noatime,subvol=@ 0 0\n")
     write(root, "etc/default/limine", f'KERNEL_CMDLINE[default]="{cmdline}"\n')
     write(root, "usr/lib/os-release", b'NAME="Arch Linux ARM"\nVERSION_ID=rolling\n')

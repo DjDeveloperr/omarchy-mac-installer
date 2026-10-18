@@ -923,3 +923,18 @@ pass "Neo base and Apple runtime requests use the reviewed Mesa, Vulkan and bles
   [[ $(<"$scratch/neo-runtime-transaction") == "-S omarchy-candidates/omarchy-dev hyprland" ]]
 ) || fail "the Neo runtime transaction does not carry the reviewed Mesa, or legacy's does"
 pass "Neo installs the reviewed Mesa and Vulkan with the runtime; legacy's runtime is unchanged"
+
+(
+  candidates=$scratch/finalize-profile-inputs
+  logs=$scratch/finalize-profile-logs
+  target=$scratch/finalize-profile-target
+  mkdir -p "$candidates" "$logs" "$target"
+  bash() { printf '%s\n' "$*" >"$scratch/finalize-profile-command"; }
+  echo '{"hardware_profile":"neo"}' >"$candidates/import.json"
+  finalize_root
+  [[ $(<"$scratch/finalize-profile-command") == "$ROOT/builder/finalize-root --root $target --hardware-profile neo" ]] || exit 1
+  echo '{}' >"$candidates/import.json"
+  finalize_root
+  [[ $(<"$scratch/finalize-profile-command") == "$ROOT/builder/finalize-root --root $target --hardware-profile legacy" ]]
+) || fail "root finalization did not receive the authenticated hardware profile"
+pass "root finalization receives the Neo profile and defaults existing sets to legacy"

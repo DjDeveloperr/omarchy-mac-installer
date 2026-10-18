@@ -15,11 +15,12 @@ fail() {
 }
 
 usage() {
-  echo "Usage: finalize-root --root DIR" >&2
+  echo "Usage: finalize-root --root DIR [--hardware-profile legacy|neo]" >&2
   exit 64
 }
 
 root=""
+hardware_profile=legacy
 while (($#)); do
   case $1 in
     --root)
@@ -27,10 +28,16 @@ while (($#)); do
       root=$2
       shift
       ;;
+    --hardware-profile)
+      (($# > 1)) || usage
+      hardware_profile=$2
+      shift
+      ;;
     *) usage ;;
   esac
   shift
 done
+[[ $hardware_profile == legacy || $hardware_profile == neo ]] || fail "unknown hardware profile: $hardware_profile"
 [[ -n $root ]] || usage
 [[ -d $root ]] || fail "$root is not a directory"
 root=$(cd -- "$root" && pwd -P)
@@ -84,7 +91,7 @@ set_assignment() {
 }
 
 configure_grub_defaults() {
-  local grub
+  local grub cmdline="zswap.enabled=0 rootfstype=btrfs"
   grub=$(path etc/default/grub)
   mkdir -p -- "${grub%/*}"
   [[ -e $grub ]] || : >"$grub"
@@ -94,7 +101,11 @@ configure_grub_defaults() {
   set_assignment "$grub" GRUB_TIMEOUT 1
   set_assignment "$grub" GRUB_TIMEOUT_STYLE hidden
   set_assignment "$grub" GRUB_VIDEO_BACKEND efi_gop
-  set_assignment "$grub" GRUB_CMDLINE_LINUX "zswap.enabled=0 rootfstype=btrfs"
+  # T8140's DT requests this until the kernel handles its WFxT quirk itself.
+  # EFI load options replace /chosen/bootargs, so keep it in the persistent
+  # defaults used to generate both the UKI and later Limine/kernel updates.
+  [[ $hardware_profile != neo ]] || cmdline+=" arm64.nowfxt"
+  set_assignment "$grub" GRUB_CMDLINE_LINUX "$cmdline"
   # The Mac's device tree registers a serial console, and Plymouth drops to its
   # text view while one is active: mx-mac's qualified boot line ignores it.
   set_assignment "$grub" GRUB_CMDLINE_LINUX_DEFAULT "quiet splash loglevel=0 systemd.show_status=false rd.udev.log_level=0 vt.global_cursor_default=0 plymouth.ignore-serial-consoles"
