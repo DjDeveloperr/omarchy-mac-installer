@@ -10,7 +10,8 @@ old = '''  serial_expect 'conversion finished' "conversion: conversion"
 '''
 new = '''  attach -P -r "$disk"; dev=$ATTACHED
   local probe=0 pending=0
-  while (( probe < 60 )); do
+  while (( probe < 600 )); do
+    ! grep -aq 'conversion finished' "$log" || fail "interruption missed the conversion window"
     if sudo -n cryptsetup luksDump --dump-json-metadata "${dev}p3" >"$work/probe.json" 2>/dev/null &&
        python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); sys.exit(not any(s.get("type")=="reencrypt" for s in m["keyslots"].values()))' "$work/probe.json"; then
       pending=1
