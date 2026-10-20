@@ -66,4 +66,24 @@ if len(sys.argv) == 3:
     installs = "\n".join(f'  sudo -n install -m 755 "{fix / original}" "$work/fix-root/{target}"' for original, target in replacements)
     patch = '\n  attach -P "$disk"; local patched=$ATTACHED\n  mkdir -p "$work/fix-root"\n  mount_tracked -o subvol=@ "${patched}p3" "$work/fix-root"\n' + installs + '\n  umount_last\n  detach_last\n'
     source = source.replace(needle, needle[:-2] + patch + "}")
+if len(sys.argv) == 3:
+    needle = '  first_boot_finished conversion'
+    assert source.count(needle) == 1
+    stale = '''  stop_guest
+  attach -P "$disk"; dev=$ATTACHED
+  mkdir -p "$work/boot"
+  mount_tracked "${dev}p2" "$work/boot"
+  sudo -n grep -qx 'phase=configured' "$work/boot/omarchy/encrypt.state" || fail "resume did not durably configure boot"
+  sudo -n test ! -e "$work/boot/omarchy/luks-header-before-repair" || fail "completed recovery retained obsolete header"
+  sudo -n sed -i 's/^phase=configured$/phase=reencrypting/' "$work/boot/omarchy/encrypt.state"
+  sudo -n sync
+  umount_last
+  detach_last
+  ok "stale journal: completed conversion with saved key and phase=reencrypting prepared"
+  log=$evidence_dir/completed-journal-serial.log
+  boot_guest "$disk" "$log" "$(limine_cmdline "$work/payload/esp/limine.conf")"
+  serial_expect 'conversion already complete; finishing the saved boot transaction' "stale journal: completed conversion recognized"
+  serial_expect 'sysroot.mount drop-in What=/dev/mapper/root' "stale journal: boot continued"
+  first_boot_finished conversion'''
+    source = source.replace(needle, stale)
 path.write_text(source)

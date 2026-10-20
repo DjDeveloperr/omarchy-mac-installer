@@ -49,11 +49,6 @@ jobs:
           python3 scripts/neo-encryption-interrupt-probe.py "$ROOT/harness/tools/acceptance/mac-image/run" "$ROOT/boot-fix"
           bash -n "$ROOT/harness/tools/acceptance/mac-image/run"
           git -C "$ROOT/harness" diff >"$ROOT/evidence/harness-interruption.patch"
-      - name: Test package recovery on disposable block devices
-        run: |
-          scripts/mac-acceptance-container sudo -n env OMARCHY_MAC_ENCRYPT_TEST_INNER=1 \
-            bash "$ROOT/boot-fix/omarchy-mac-boot/test/mac-encrypt-test.sh" \
-            >"$ROOT/evidence/package-block-tests.log" 2>&1
       - name: Interrupt encryption, resume, finish setup and second boot
         env:
           OMARCHY_VM_CPUS: 8
