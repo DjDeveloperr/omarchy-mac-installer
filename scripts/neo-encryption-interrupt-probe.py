@@ -7,7 +7,20 @@ path = pathlib.Path(sys.argv[1])
 source = path.read_text()
 old = '''  serial_expect 'conversion finished' "conversion: conversion"
 '''
-new = '''  sleep 5
+new = '''  attach -P -r "$disk"; dev=$ATTACHED
+  local probe=0 pending=0
+  while (( probe < 60 )); do
+    if sudo -n cryptsetup luksDump --dump-json-metadata "${dev}p3" >"$work/probe.json" 2>/dev/null &&
+       python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); sys.exit(not any(s.get("type")=="reencrypt" for s in m["keyslots"].values()))' "$work/probe.json"; then
+      pending=1
+      break
+    fi
+    sleep 1
+    probe=$((probe + 1))
+  done
+  detach_last
+  (( pending == 1 )) || fail "no pending reencryption observed before interruption"
+  sleep 2
   ! grep -aq 'conversion finished' "$log" || fail "interruption missed the conversion window"
   stop_guest
   attach -P "$disk"; dev=$ATTACHED
