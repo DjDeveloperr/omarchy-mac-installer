@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Add an explicit interrupted-conversion case to the pinned disposable VM run."""
 import pathlib
+import re
 import sys
 
 path = pathlib.Path(sys.argv[1])
@@ -49,4 +50,20 @@ source = source.replace(
     "conversion=$(grep -a -o 'conversion finished in [0-9]*s ([0-9]* MiB/s)' \"$log\" | tail -n 1)",
     "conversion=$(grep -a -o 'resume finished in [0-9]*s' \"$log\" | tail -n 1)",
 )
+if len(sys.argv) == 3:
+    fix = pathlib.Path(sys.argv[2]).resolve()
+    assert re.fullmatch(r"[A-Za-z0-9/_-]+", str(fix))
+    replacements = [
+        ("omarchy-mac-boot/files/usr/lib/omarchy/initcpio/omarchy-mac-encrypt", "usr/lib/omarchy/initcpio/omarchy-mac-encrypt"),
+        ("omarchy-mac-boot/files/usr/lib/initcpio/install/omarchy-mac-encrypt", "usr/lib/initcpio/install/omarchy-mac-encrypt"),
+    ]
+    needle = '    chroot "$merged" bash -euo pipefail -c "$5" bash "$4"'
+    assert source.count(needle) == 1
+    installs = "\n".join(f'    install -m 755 "{fix / original}" "$merged/{target}"' for original, target in replacements)
+    source = source.replace(needle, installs + "\n" + needle)
+    needle = '      fail "dd ${part#*:}"\n  done\n}'
+    assert source.count(needle) == 1
+    installs = "\n".join(f'  sudo -n install -m 755 "{fix / original}" "$work/fix-root/{target}"' for original, target in replacements)
+    patch = '\n  attach -P "$disk"; local patched=$ATTACHED\n  mkdir -p "$work/fix-root"\n  mount_tracked -o subvol=@ "${patched}p3" "$work/fix-root"\n' + installs + '\n  umount_last\n  detach_last\n'
+    source = source.replace(needle, needle[:-2] + patch + "}")
 path.write_text(source)

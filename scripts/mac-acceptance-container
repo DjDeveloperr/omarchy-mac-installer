@@ -40,7 +40,7 @@ exec "${docker[@]}" run --rm --privileged -v /dev:/dev -v "$ROOT:$ROOT" "${env_a
     pacman-key --init >/dev/null 2>&1 && pacman-key --populate archlinuxarm >/dev/null 2>&1
     for attempt in 1 2 3; do
       pacman -Syu --noconfirm --needed qemu-system-aarch64 qemu-img dtc socat gptfdisk dosfstools mtools \
-        btrfs-progs cryptsetup mkinitcpio libarchive gnupg curl python sudo util-linux git >/dev/null && break
+        btrfs-progs cryptsetup mkinitcpio libarchive gnupg curl python sudo util-linux git multipath-tools >/dev/null && break
       [ "$attempt" -lt 3 ] || { echo "mac-acceptance-container: could not install the harness tools" >&2; exit 1; }
       sleep 15
     done

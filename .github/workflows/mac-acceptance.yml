@@ -16,6 +16,7 @@ jobs:
       PAYLOAD: omarchy-2026.10.20-aarch64-apple-silicon-mac-edge-os-package.zip
       DIGEST: 4a05573a4503656f5a8f58cfdb390c2b4d01be37d34a20ab22ce3ee1202d9856
       HARNESS: d846557b2405f9dc0bc774bef03656f3a1dcd0a6
+      BOOT_FIX: 7010762941b652c24540498499d9866e809c4ffc
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -41,9 +42,18 @@ jobs:
           git init -q "$ROOT/harness"
           git -C "$ROOT/harness" fetch -q --depth=1 https://github.com/omacom/omarchy-mac-pkgs "$HARNESS"
           git -C "$ROOT/harness" checkout -q FETCH_HEAD
-          python3 scripts/neo-encryption-interrupt-probe.py "$ROOT/harness/tools/acceptance/mac-image/run"
+          git init -q "$ROOT/boot-fix"
+          git -C "$ROOT/boot-fix" fetch -q --depth=1 https://github.com/aurora-silicon/omarchy-mac-pkgs "$BOOT_FIX"
+          git -C "$ROOT/boot-fix" checkout -q FETCH_HEAD
+          git -C "$ROOT/boot-fix" rev-parse HEAD >"$ROOT/evidence/boot-fix-commit.txt"
+          python3 scripts/neo-encryption-interrupt-probe.py "$ROOT/harness/tools/acceptance/mac-image/run" "$ROOT/boot-fix"
           bash -n "$ROOT/harness/tools/acceptance/mac-image/run"
           git -C "$ROOT/harness" diff >"$ROOT/evidence/harness-interruption.patch"
+      - name: Test package recovery on disposable block devices
+        run: |
+          scripts/mac-acceptance-container sudo -n env OMARCHY_MAC_ENCRYPT_TEST_INNER=1 \
+            bash "$ROOT/boot-fix/omarchy-mac-boot/test/mac-encrypt-test.sh" \
+            >"$ROOT/evidence/package-block-tests.log" 2>&1
       - name: Interrupt encryption, resume, finish setup and second boot
         env:
           OMARCHY_VM_CPUS: 8
