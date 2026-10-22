@@ -288,12 +288,13 @@
       phase = readyPhase()
     }
 
-    /// Back: from a failure to the Try page, and from the Try page to the
-    /// choice page when there is one.
+    /// Back: from a failure to the Try page, or to the installer's page when
+    /// it needs the floor, and from the Try page to the choice page when there
+    /// is one.
     public func dismiss() {
       switch phase {
       case .failed:
-        phase = readyPhase()
+        phase = installerNeedsPage ? .hidden : readyPhase()
       case .ready where canGoBack:
         phase = .hidden
       default:
@@ -446,6 +447,12 @@
       case .finishingInstall, .installerPage: return .hidden
       case .supported, .checking: return hasVM ? ready : .hidden
       }
+    }
+
+    /// The Recovery steps of an unfinished install, or the installer's plan,
+    /// take the page whenever Omarchy isn't running.
+    private var installerNeedsPage: Bool {
+      installStatus == .finishingInstall || installStatus == .installerPage
     }
 
     static func failure(for error: Error) -> TrialFailure {

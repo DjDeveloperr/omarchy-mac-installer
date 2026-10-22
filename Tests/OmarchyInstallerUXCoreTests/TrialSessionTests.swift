@@ -282,6 +282,24 @@
       XCTAssertFalse(trial.finishInstallAfterShutDown)
     }
 
+    /// A failure while the Recovery steps wait must not strand the person on
+    /// the Try page: Back leads to the steps.
+    func testAFailureWhileRecoveryWaitsLeadsBackToTheSteps() throws {
+      let environment = FakeTrialEnvironment()
+      environment.makeVM()
+      let trial = TrialSession(environment: environment)
+      trial.openAtLaunch()
+      let send = try XCTUnwrap(environment.onEvent)
+      send(.ready)
+      trial.follow(.finishingInstall)
+      send(.error(VMRunError(code: .qemuExited, message: "QEMU stopped")))
+      send(.exited(status: 1))
+      guard case .failed(let failure) = trial.phase else { return XCTFail("Expected a failure") }
+      XCTAssertEqual(failure.code, .qemuExited)
+      trial.dismiss()
+      XCTAssertEqual(trial.phase, .hidden)
+    }
+
     func testTheInstallersPageWaitsForOmarchyToShutDown() throws {
       let environment = FakeTrialEnvironment()
       environment.makeVM()
