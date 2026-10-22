@@ -86,6 +86,9 @@
 
     /// The launcher holds `shell/lock` with lockf while the VM runs.
     func testAVMOpenElsewhereIsRefused() throws {
+      try XCTSkipUnless(
+        FileManager.default.isExecutableFile(atPath: "/usr/bin/lockf"),
+        "/usr/bin/lockf, which the launcher holds the lock with, is missing on this Mac")
       try Data().write(to: lock)
       let holder = Process()
       let output = Pipe()
