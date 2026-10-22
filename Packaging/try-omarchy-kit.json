@@ -2,9 +2,9 @@
   "format": 1,
   "client": {
     "repository": "omacom/try-omarchy",
-    "revision": "621669d7915f007ec7e386b7a285f2e100954a97",
+    "revision": "3dba18846ac3c832fefede58004fa6b9408fa80a",
     "path": "macos/Sources/TryOmarchyKitClient",
-    "sha256": "bdfa4eb126a4a5e525436f0afe723672cef8bc8641f766bf5280d8760cd4c3ca"
+    "sha256": "43b5115c19ffa56ce7ecd2648d11bffdcaf4ad4c0e10276b799958f02b1ff103"
   },
   "kit": null
 }
