@@ -65,11 +65,13 @@ final class LiveTrialEnvironment: TrialEnvironment {
   func shutDown() { client.shutDown() }
 
   func deleteVM() throws {
-    guard let root = TryOmarchyStorage.defaultRoot(),
+    guard
       let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-        .first
+        .first,
+      TrialVMFolder.root(under: support).standardizedFileURL
+        == TryOmarchyStorage.defaultRoot()?.standardizedFileURL
     else { throw TrialVMFolder.Refusal.notTheDefaultFolder }
-    try TrialVMFolder.trash(defaultRoot: root, under: support)
+    try TrialVMFolder.trash(under: support)
   }
 
   private static func state(_ status: AVAuthorizationStatus) -> TrialPermissionState {
