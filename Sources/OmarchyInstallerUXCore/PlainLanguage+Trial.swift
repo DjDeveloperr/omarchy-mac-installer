@@ -15,6 +15,8 @@
     public static let trialMicrophone = "Microphone"
     public static let trialCamera = "Camera"
     public static let trialAllow = "Allow"
+    public static let trialFinishInstall =
+      "Omarchy’s installation on this Mac isn’t finished. Shut Omarchy down to see the steps to finish it in Recovery."
     public static let trialAllowed = "Allowed"
     public static let trialOpenSettings = "Open Settings"
     public static let trialDownloadAndStart = "Download and start"
@@ -39,7 +41,7 @@
     // MARK: Try — the Installation menu
 
     public static let trialInstallMenuItem = "Install on this Mac…"
-    public static let trialCheckAgainMenuItem = "Check Again"
+    public static let trialCheckAgainMenuItem = checkAgain
     public static let trialDeleteMenuItem = "Delete Virtual Machine…"
     public static let trialDeleteTitle = "Delete the virtual machine?"
     public static let trialDeleteAction = "Move to Trash"
@@ -48,7 +50,7 @@
     public static func trialDeleteMessage(bytes: Int64) -> String {
       let frees =
         bytes >= 100_000_000
-        ? " Emptying the Trash frees \(gigabytes(bytes))." : ""
+        ? " Emptying the Trash frees up to \(gigabytes(bytes))." : ""
       return
         "Omarchy’s virtual machine, with everything saved in it, moves to the Trash.\(frees) The next start downloads Omarchy again."
     }
@@ -64,7 +66,7 @@
         return failure.headline
       case .installed:
         return trialInstalledLine
-      case .checking, .supported, .installerPage:
+      case .checking, .supported, .finishingInstall, .installerPage:
         return nil
       }
     }
@@ -75,7 +77,7 @@
         return "Omarchy needs \(required) of free space."
       }
       return space.hasVM
-        ? "Your Omarchy VM is ready to start. \(gigabytes(free)) is free."
+        ? "Omarchy’s virtual machine is ready to start. \(gigabytes(free)) is free."
         : "Omarchy needs \(required) of free space for its download and disk. \(gigabytes(free)) is free."
     }
 
@@ -88,7 +90,7 @@
     public static func trialDiskNotice(bytes: Int64) -> String? {
       guard bytes >= 100_000_000 else { return nil }
       return
-        "Omarchy’s VM uses \(gigabytes(bytes)) of macOS’s space, already counted above. Installing keeps it, in Application Support › Try Omarchy."
+        "Omarchy’s virtual machine uses up to \(gigabytes(bytes)) of macOS’s space, already counted above. Installing keeps it, in Application Support › Try Omarchy."
     }
 
     public static func trialProgressTitle(_ phase: VMRunPhase) -> String {
@@ -98,7 +100,7 @@
       case .reconnecting: "Reconnecting"
       case .paused: "Waiting for Wi-Fi or Ethernet"
       case .verifyingDownload: "Verifying the download"
-      case .checking: "Checking the VM"
+      case .checking: "Checking the virtual machine"
       case .verifying: "Verifying the Omarchy image"
       case .preparing: "Unpacking Omarchy"
       case .finishing: "Compacting the disk"
@@ -114,12 +116,12 @@
           "Or in another copy of \(windowTitle). Shut it down there, then try again here."
         )
       case .volumeNotAPFS:
-        ("Omarchy’s folder isn’t on an APFS disk", "The VM needs APFS for its disk.")
+        ("Omarchy’s folder isn’t on an APFS disk", "The virtual machine needs APFS for its disk.")
       case .macOSTooOld:
-        ("This Mac needs a newer macOS", "Omarchy in a VM needs macOS 15 or newer.")
+        ("This Mac needs a newer macOS", "Omarchy’s virtual machine needs macOS 15 or newer.")
       case .hypervisorUnavailable:
         (
-          "This Mac can’t run Omarchy in a VM",
+          "This Mac can’t run Omarchy in a virtual machine",
           "It does not offer the virtualization Omarchy needs."
         )
       case .notEnoughSpace:
@@ -135,7 +137,7 @@
         ("Omarchy’s folder isn’t available", "Reconnect its drive, then try again.")
       case .storageLayoutUnknown:
         (
-          "This VM was made by a newer version",
+          "This virtual machine was made by a newer version",
           "Update \(windowTitle) to start it."
         )
       case .hostSleepUnavailable, .hostWakeFailed:

@@ -105,8 +105,10 @@
     case unsupported(FailureDisplay)
     /// Omarchy is installed natively, and Try is the only mode.
     case installed
-    /// The installer's own page has the floor: the plan, the install, a
-    /// failure, or the Recovery steps of an unfinished install.
+    /// An install waits for its Recovery step, whose steps take the page.
+    case finishingInstall
+    /// The installer's own page has the floor: the plan, the install or a
+    /// failure.
     case installerPage
 
     public init(_ phase: InstallerSessionPhase, isBusy: Bool, pendingRecovery: Bool) {
@@ -122,7 +124,7 @@
         if isBusy {
           self = .checking
         } else {
-          self = pendingRecovery ? .installerPage : .installed
+          self = pendingRecovery ? .finishingInstall : .installed
         }
       default:
         self = .installerPage
@@ -166,6 +168,7 @@
     private var shutdownRequested = false
     private var afterExit: [() -> Void] = []
     private var launched = false
+    private var vmBytesRefresh: Task<Void, Never>?
     /// Try opened on its own because the Mac can't install, so it steps
     /// aside if a new check finds that it can.
     private var openedAsOnlyMode = false
@@ -214,9 +217,15 @@
     /// The line under the Mac's name while Try is the only mode.
     public var installLine: String? { PlainLanguage.trialInstallLine(installStatus) }
 
+    /// Omarchy started before the inspection found an install waiting for its
+    /// Recovery step. The steps appear once Omarchy shuts down.
+    public var finishInstallAfterShutDown: Bool {
+      installStatus == .finishingInstall && isActive
+    }
+
     public var installMenuAction: TrialInstallMenuAction {
       switch installStatus {
-      case .checking, .installerPage: .unavailable
+      case .checking, .finishingInstall, .installerPage: .unavailable
       case .supported: .install
       case .unsupported(let failure):
         .explain(
@@ -241,7 +250,7 @@
       launched = true
       guard environment.isAvailable, phase == .hidden else { return }
       let space = environment.space()
-      hasVM = space.hasVM
+      noteVM(space.hasVM)
       guard space.hasVM else { return }
       phase = .ready(space, environment.permissions())
       start()
@@ -263,7 +272,7 @@
           openedAsOnlyMode = false
           phase = .hidden
         }
-      case .installerPage:
+      case .finishingInstall, .installerPage:
         if phase != .hidden {
           openedAsOnlyMode = false
           phase = .hidden
@@ -301,12 +310,23 @@
       case .running:
         phase = .running(environment.permissions())
       default:
-        if !isActive { hasVM = environment.isAvailable && environment.space().hasVM }
+        if !isActive { noteVM(environment.isAvailable && environment.space().hasVM) }
       }
     }
 
     public func refreshVMBytes() async {
       vmBytes = await environment.vmBytes()
+    }
+
+    /// Waits for the last refresh of the VM's size, for tests.
+    func settled() async {
+      await vmBytesRefresh?.value
+    }
+
+    private func noteVM(_ exists: Bool) {
+      hasVM = exists
+      guard exists else { return }
+      vmBytesRefresh = Task { await refreshVMBytes() }
     }
 
     public func requestAccessibility() {
@@ -407,13 +427,13 @@
         let completions = afterExit
         afterExit = []
         for completion in completions { completion() }
-        Task { await refreshVMBytes() }
+        vmBytesRefresh = Task { await refreshVMBytes() }
       }
     }
 
     private func readyPhase() -> TrialPhase {
       let space = environment.space()
-      hasVM = space.hasVM
+      noteVM(space.hasVM)
       return .ready(space, environment.permissions())
     }
 
@@ -423,7 +443,7 @@
       let ready = readyPhase()
       switch installStatus {
       case .unsupported, .installed: return ready
-      case .installerPage: return .hidden
+      case .finishingInstall, .installerPage: return .hidden
       case .supported, .checking: return hasVM ? ready : .hidden
       }
     }

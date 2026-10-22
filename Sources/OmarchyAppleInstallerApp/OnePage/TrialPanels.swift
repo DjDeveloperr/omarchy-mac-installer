@@ -56,6 +56,12 @@ struct TrialStage: View {
           .font(OmarchyTheme.body)
           .foregroundStyle(OmarchyTheme.secondaryText)
           .fixedSize(horizontal: false, vertical: true)
+        if trial.finishInstallAfterShutDown {
+          Text(PlainLanguage.trialFinishInstall)
+            .font(OmarchyTheme.body)
+            .foregroundStyle(OmarchyTheme.caution)
+            .fixedSize(horizontal: false, vertical: true)
+        }
       }
       if !permissions.allAllowed {
         Panel {

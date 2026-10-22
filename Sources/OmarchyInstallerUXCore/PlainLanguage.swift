@@ -16,7 +16,6 @@
 
     public static let checkSubheadline =
       "Omarchy installs next to macOS. You can select either one by holding the power button when the Mac starts."
-    public static let checkContinue = "Continue"
     public static let checkAgain = "Check again"
     public static let inspectingHeadline = "Checking this Mac…"
     public static let inspectingSubheadline =

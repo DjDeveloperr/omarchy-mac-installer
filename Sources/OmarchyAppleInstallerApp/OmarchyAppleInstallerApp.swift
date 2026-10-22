@@ -85,7 +85,6 @@ struct OmarchyAppleInstallerApp: App {
   @State private var generation = UUID()
   @State private var trial = TrialSession(environment: LiveTrialEnvironment())
   @State private var installReason: TrialInstallReason?
-  @State private var deletionMessage: String?
   @State private var deletionFailure: String?
 
   private var isSimulation: Bool {
@@ -171,20 +170,11 @@ struct OmarchyAppleInstallerApp: App {
         presenting: installReason
       ) { reason in
         if reason.canCheckAgain {
-          Button(PlainLanguage.checkAgain) { checkAgain() }
+          Button(PlainLanguage.trialCheckAgainMenuItem) { checkAgain() }
         }
         Button("OK", role: .cancel) {}
       } message: { reason in
         Text(reason.detail)
-      }
-      .alert(
-        PlainLanguage.trialDeleteTitle, isPresented: presented($deletionMessage),
-        presenting: deletionMessage
-      ) { _ in
-        Button(PlainLanguage.trialDeleteAction, role: .destructive) { deleteVM() }
-        Button("Cancel", role: .cancel) {}
-      } message: { message in
-        Text(message)
       }
       .alert(
         PlainLanguage.trialDeleteFailed, isPresented: presented($deletionFailure),
@@ -254,7 +244,7 @@ struct OmarchyAppleInstallerApp: App {
         if trial.isAvailable {
           Divider()
           Button(PlainLanguage.trialDeleteMenuItem) {
-            Task { deletionMessage = await trial.deletionMessage() }
+            Task { confirmDeletion(await trial.deletionMessage()) }
           }
           .disabled(isSimulation || removalNeedsReview || showsRemoval || !trial.canDeleteVM)
         }
@@ -312,6 +302,18 @@ struct OmarchyAppleInstallerApp: App {
       await session.inspect()
       await session.refreshChannelAvailability()
     }
+  }
+
+  /// Cancel is the default button, so Return never moves the VM to the Trash.
+  private func confirmDeletion(_ message: String) {
+    let alert = NSAlert()
+    alert.messageText = PlainLanguage.trialDeleteTitle
+    alert.informativeText = message
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: "Cancel")
+    alert.addButton(withTitle: PlainLanguage.trialDeleteAction).hasDestructiveAction = true
+    guard alert.runModal() == .alertSecondButtonReturn, trial.canDeleteVM else { return }
+    deleteVM()
   }
 
   private func deleteVM() {

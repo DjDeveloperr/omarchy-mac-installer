@@ -249,6 +249,54 @@
       XCTAssertEqual(trial.installMenuAction, .unavailable)
     }
 
+    func testCheckAgainOnAMacWithAVMKeepsTheTryPage() {
+      let environment = FakeTrialEnvironment()
+      environment.makeVM()
+      let trial = TrialSession(environment: environment)
+      trial.follow(.unsupported(tooLittleSpace))
+      guard case .ready = trial.phase else { return XCTFail("Expected the Try page") }
+      trial.follow(.checking)
+      trial.follow(.supported)
+      guard case .ready = trial.phase else { return XCTFail("A VM keeps the Try page") }
+      XCTAssertFalse(trial.canGoBack)
+      XCTAssertTrue(trial.canInstall)
+    }
+
+    /// Omarchy starts before the inspection finds an install waiting for its
+    /// Recovery step; the steps take the page once Omarchy shuts down.
+    func testRecoveryStepsWaitForOmarchyToShutDown() throws {
+      let environment = FakeTrialEnvironment()
+      environment.makeVM()
+      let trial = TrialSession(environment: environment)
+      trial.openAtLaunch()
+      let send = try XCTUnwrap(environment.onEvent)
+      send(.ready)
+      trial.follow(.finishingInstall)
+      XCTAssertEqual(trial.phase, .running(environment.permissionState))
+      XCTAssertTrue(trial.finishInstallAfterShutDown)
+      XCTAssertNil(trial.installLine)
+      XCTAssertEqual(trial.installMenuAction, .unavailable)
+      trial.shutDown()
+      send(.exited(status: 0))
+      XCTAssertEqual(trial.phase, .hidden)
+      XCTAssertFalse(trial.finishInstallAfterShutDown)
+    }
+
+    func testTheInstallersPageWaitsForOmarchyToShutDown() throws {
+      let environment = FakeTrialEnvironment()
+      environment.makeVM()
+      let trial = TrialSession(environment: environment)
+      trial.openAtLaunch()
+      let send = try XCTUnwrap(environment.onEvent)
+      send(.ready)
+      trial.follow(.installerPage)
+      XCTAssertEqual(trial.phase, .running(environment.permissionState))
+      XCTAssertFalse(trial.finishInstallAfterShutDown)
+      trial.shutDown()
+      send(.exited(status: 0))
+      XCTAssertEqual(trial.phase, .hidden)
+    }
+
     func testTheInstallerPhaseDecidesWhereTrySits() {
       let host = HostDisplay(chipAndSpace: "", supported: true)
       XCTAssertEqual(
@@ -270,7 +318,7 @@
       XCTAssertEqual(
         TrialInstallStatus(
           .existingInstallRefused(host: host), isBusy: false, pendingRecovery: true),
-        .installerPage)
+        .finishingInstall)
       XCTAssertEqual(
         TrialInstallStatus(.failed(tooLittleSpace), isBusy: false, pendingRecovery: false),
         .installerPage)
@@ -324,6 +372,43 @@
       guard case .ready = trial.phase else { return XCTFail("A VM keeps the Try page") }
       XCTAssertFalse(trial.canGoBack)
       XCTAssertEqual(trial.startTitle, "Start")
+    }
+
+    func testAnAutoStartThatFailsBeforeTheInspectionKeepsTheVM() async {
+      let environment = FakeTrialEnvironment()
+      environment.makeVM()
+      environment.startError = VMRunError(code: .launchFailed, message: "kit missing")
+      let trial = TrialSession(environment: environment)
+      trial.openAtLaunch()
+      guard case .failed(let failure) = trial.phase else { return XCTFail("Expected a failure") }
+      XCTAssertEqual(failure.code, .launchFailed)
+      await trial.settled()
+      XCTAssertEqual(trial.vmBytes, 9_400_000_000, "The plan review still sees the VM")
+      XCTAssertTrue(trial.canDeleteVM)
+
+      trial.follow(.checking)
+      trial.follow(.supported)
+      guard case .failed = trial.phase else { return XCTFail("The failure stays on the page") }
+      trial.dismiss()
+      guard case .ready = trial.phase else { return XCTFail("Back leads to the Try page") }
+      XCTAssertFalse(trial.canGoBack)
+      XCTAssertEqual(trial.startTitle, "Start")
+    }
+
+    func testInstallContinuesWhenOmarchyStopsWithAFailure() throws {
+      let environment = FakeTrialEnvironment()
+      environment.makeVM()
+      let trial = TrialSession(environment: environment)
+      trial.follow(.supported)
+      trial.openAtLaunch()
+      let send = try XCTUnwrap(environment.onEvent)
+      send(.ready)
+      var installs = 0
+      trial.leaveForInstall { installs += 1 }
+      send(.error(VMRunError(code: .qemuExited, message: "QEMU stopped")))
+      send(.exited(status: 1))
+      XCTAssertEqual(trial.phase, .hidden)
+      XCTAssertEqual(installs, 1)
     }
 
     func testInstallOnThisMacShutsOmarchyDownFirst() throws {
@@ -392,7 +477,7 @@
       let message = await trial.deletionMessage()
       XCTAssertEqual(
         message,
-        "Omarchy’s virtual machine, with everything saved in it, moves to the Trash. Emptying the Trash frees 9 GB. The next start downloads Omarchy again."
+        "Omarchy’s virtual machine, with everything saved in it, moves to the Trash. Emptying the Trash frees up to 9 GB. The next start downloads Omarchy again."
       )
       try trial.deleteVM()
       XCTAssertEqual(environment.deletions, 1)
@@ -438,7 +523,7 @@
       XCTAssertNil(PlainLanguage.trialDiskNotice(bytes: 0))
       XCTAssertEqual(
         PlainLanguage.trialDiskNotice(bytes: 9_400_000_000),
-        "Omarchy’s VM uses 9 GB of macOS’s space, already counted above. Installing keeps it, in Application Support › Try Omarchy."
+        "Omarchy’s virtual machine uses up to 9 GB of macOS’s space, already counted above. Installing keeps it, in Application Support › Try Omarchy."
       )
     }
   }

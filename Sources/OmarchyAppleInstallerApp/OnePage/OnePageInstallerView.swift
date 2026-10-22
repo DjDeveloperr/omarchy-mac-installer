@@ -28,7 +28,7 @@ struct OnePageInstallerView: View {
   /// names the channel the next preparation will actually fetch; `nil` when
   /// the bundle has no release descriptor to fetch from.
   let channel: ReleaseChannel?
-  /// Omarchy in a window, when this build embeds the Try Omarchy kit.
+  /// Try, when this build embeds the Try Omarchy kit.
   let trial: TrialSession?
   let onChannelAvailability: (Bool) -> Void
   let onSessionAvailable: (InstallerSession) -> Void
@@ -244,6 +244,7 @@ struct OnePageInstallerView: View {
 
     case .planReview(let plan, let acknowledged):
       planIdentity(plan)
+        .task { await trial?.refreshVMBytes() }
       DiskSplitPanel(
         plan: plan,
         editable: plan.isResizable,
@@ -278,7 +279,6 @@ struct OnePageInstallerView: View {
           .font(OmarchyTheme.body)
           .foregroundStyle(OmarchyTheme.secondaryText)
           .fixedSize(horizontal: false, vertical: true)
-          .task { await trial.refreshVMBytes() }
       }
       acknowledgement(acknowledged, resizesMacOS: plan.fixedMacOSBytes == nil)
 
