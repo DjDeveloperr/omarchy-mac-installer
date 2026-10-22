@@ -7,11 +7,17 @@ import SwiftUI
 private final class InstallerApplicationDelegate: NSObject, NSApplicationDelegate {
   static var removalInProgress = false
   static weak var session: InstallerSession?
+  static weak var trial: TrialSession?
 
   func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
     if Self.removalInProgress || Self.session?.isExecutionInProgress == true {
       NSSound.beep()
       return .terminateCancel
+    }
+    // Quitting shuts Omarchy down first; the page shows it until it has.
+    if let trial = Self.trial, trial.isActive {
+      trial.shutDown { NSApp.reply(toApplicationShouldTerminate: true) }
+      return .terminateLater
     }
     return .terminateNow
   }
@@ -77,6 +83,7 @@ struct OmarchyAppleInstallerApp: App {
     @State private var simulation = SimulationControls()
   #endif
   @State private var generation = UUID()
+  @State private var trial = TrialSession(environment: LiveTrialEnvironment())
 
   private var isSimulation: Bool {
     #if DEBUG
@@ -106,13 +113,14 @@ struct OmarchyAppleInstallerApp: App {
 
   private var liveContent: some View {
     OnePageInstallerView(
-      environment: InstallerEnvironmentFactory.make(), channel: channel,
+      environment: InstallerEnvironmentFactory.make(), channel: channel, trial: trial,
       onSessionAvailable: rememberSession)
   }
 
   private func rememberSession(_ session: InstallerSession) {
     liveSession = session
     InstallerApplicationDelegate.session = session
+    InstallerApplicationDelegate.trial = trial
   }
 
   @State private var channel = ReleaseChannelPreference().resolveFromMainBundle()
@@ -140,7 +148,8 @@ struct OmarchyAppleInstallerApp: App {
       }
       .disabled(showsRemoval)
       .windowDismissBehavior(
-        removalInProgress || liveSession?.isExecutionInProgress == true ? .disabled : .enabled
+        removalInProgress || liveSession?.isExecutionInProgress == true || trial.isActive
+          ? .disabled : .enabled
       )
       .sheet(isPresented: $showsRemoval, onDismiss: { generation = UUID() }) {
         OmarchyRemovalSheet(

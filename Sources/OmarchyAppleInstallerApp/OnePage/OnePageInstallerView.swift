@@ -28,12 +28,15 @@ struct OnePageInstallerView: View {
   /// names the channel the next preparation will actually fetch; `nil` when
   /// the bundle has no release descriptor to fetch from.
   let channel: ReleaseChannel?
+  /// Omarchy in a window, when this build embeds the Try Omarchy kit.
+  let trial: TrialSession?
   let onChannelAvailability: (Bool) -> Void
   let onSessionAvailable: (InstallerSession) -> Void
 
   init(
     environment: any InstallerEnvironment,
     channel: ReleaseChannel?,
+    trial: TrialSession? = nil,
     onChannelAvailability: @escaping (Bool) -> Void = { _ in },
     onSessionAvailable: @escaping (InstallerSession) -> Void = { _ in }
   ) {
@@ -43,6 +46,7 @@ struct OnePageInstallerView: View {
         allowsEncryption: InstallerBuildProfile.current.allowsEncryption
       ))
     self.channel = channel
+    self.trial = trial
     self.onChannelAvailability = onChannelAvailability
     self.onSessionAvailable = onSessionAvailable
   }
@@ -55,11 +59,25 @@ struct OnePageInstallerView: View {
           .padding(.top, 24)
           .padding(.bottom, 16)
         header.padding(.bottom, 20)
-        VStack(alignment: .leading, spacing: 14) { stage }
-          .frame(maxWidth: 560)
-        HStack(spacing: 16) { actions }
-          .padding(.top, 24)
-          .padding(.bottom, 24)
+        VStack(alignment: .leading, spacing: 14) {
+          if let trial, trial.phase != .hidden {
+            TrialStage(trial: trial)
+          } else {
+            stage
+          }
+        }
+        .frame(maxWidth: 560)
+        HStack(spacing: 16) {
+          if let trial, trial.phase != .hidden {
+            TrialActions(
+              trial: trial, canInstall: canInstallAfterTrial,
+              onInstall: { Task { await session.continueToPlan() } })
+          } else {
+            actions
+          }
+        }
+        .padding(.top, 24)
+        .padding(.bottom, 24)
       }
       .frame(maxWidth: .infinity)
       .padding(.horizontal, 40)
@@ -90,6 +108,7 @@ struct OnePageInstallerView: View {
     .onChange(of: scenePhase) { _, phase in
       if phase == .active {
         session.refreshHelperStatus()
+        trial?.refresh()
       }
     }
     .onChange(of: session.phase, initial: true) { _, phase in
@@ -239,6 +258,13 @@ struct OnePageInstallerView: View {
       if let notice = session.allocationNotice {
         Text(notice).font(OmarchyTheme.body).foregroundStyle(OmarchyTheme.caution)
       }
+      if let trial, let notice = PlainLanguage.trialDiskNotice(bytes: trial.vmBytes) {
+        Text(notice)
+          .font(OmarchyTheme.body)
+          .foregroundStyle(OmarchyTheme.secondaryText)
+          .fixedSize(horizontal: false, vertical: true)
+          .task { await trial.refreshVMBytes() }
+      }
       acknowledgement(acknowledged, resizesMacOS: plan.fixedMacOSBytes == nil)
 
     case .awaitingInstall(let plan, let helper, _):
@@ -294,8 +320,10 @@ struct OnePageInstallerView: View {
       Button(PlainLanguage.checkAgain) { Task { await recheck() } }
         .omarchySecondaryButton()
         .disabled(session.isBusy)
+      trialEntryButton
 
     case .welcome:
+      trialEntryButton
       Button(PlainLanguage.checkContinue) { Task { await session.continueToPlan() } }
         .omarchyPrimaryButton()
         .disabled(session.isBusy)
@@ -373,6 +401,22 @@ struct OnePageInstallerView: View {
   }
 
   // MARK: Pieces
+
+  /// Beside Continue, and the only way forward on a Mac Omarchy can't be
+  /// installed on.
+  @ViewBuilder
+  private var trialEntryButton: some View {
+    if let trial, trial.isAvailable {
+      Button(trial.entryTitle) { trial.present() }
+        .omarchySecondaryButton()
+        .disabled(session.isBusy)
+    }
+  }
+
+  private var canInstallAfterTrial: Bool {
+    if case .welcome = session.phase { return true }
+    return false
+  }
 
   private func statusPanel(title: String) -> some View {
     Panel {
