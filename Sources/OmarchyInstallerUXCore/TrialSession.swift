@@ -8,10 +8,6 @@
   public protocol TrialEnvironment: AnyObject {
     /// Whether this build embeds the kit. Without it there is no trial.
     var isAvailable: Bool { get }
-    /// Once the full app is installed it owns the VM, and the installer opens
-    /// it instead of running a trial.
-    func fullAppInstalled() -> Bool
-    func openFullApp() -> Bool
     func space() -> TrialSpace
     /// The space the trial VM's folder takes on disk, or zero without one.
     func vmBytes() async -> Int64
@@ -110,11 +106,7 @@
 
     public var isAvailable: Bool { environment.isAvailable }
 
-    /// The button on the installer's first page: Try it in a window, or
-    /// Open in Try Omarchy once the full app is installed.
-    public var entryTitle: String {
-      environment.fullAppInstalled() ? PlainLanguage.trialOpenFullApp : PlainLanguage.trialEntry
-    }
+    public var entryTitle: String { PlainLanguage.trialEntry }
 
     /// Omarchy is starting, running or shutting down.
     public var isActive: Bool {
@@ -138,10 +130,6 @@
 
     public func present() {
       guard environment.isAvailable, phase == .hidden else { return }
-      if environment.fullAppInstalled() {
-        _ = environment.openFullApp()
-        return
-      }
       phase = .ready(environment.space(), environment.permissions())
     }
 

@@ -6,7 +6,6 @@
     // MARK: Try — Omarchy in a VM
 
     public static let trialEntry = "Try in a VM"
-    public static let trialOpenFullApp = "Open in Try Omarchy"
     public static let trialHeadline = "Try Omarchy in a VM"
     public static let trialSubheadline =
       "Omarchy runs in a virtual machine, in a window beside macOS, without changing your disk. When it first starts, it asks for your account, keyboard and time zone."

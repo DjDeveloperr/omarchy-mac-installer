@@ -5,18 +5,14 @@ import OmarchyAppleInstallerTrustCore
 import OmarchyInstallerUXCore
 import TryOmarchyKitClient
 
-/// The trial on this Mac: the kit in Contents/Helpers, this app's own
-/// permissions, and the full app's default VM folder.
+/// Try on this Mac: the kit in Contents/Helpers, this app's own permissions,
+/// and the default VM folder it shares with Try Omarchy.
 @MainActor
 final class LiveTrialEnvironment: TrialEnvironment {
   private let kit = TryOmarchyKit.embedded()
   private lazy var client = VMRunClient(kit: kit)
 
   var isAvailable: Bool { (try? kit.helperURL()) != nil }
-
-  func fullAppInstalled() -> Bool { TryOmarchyApp.installedURL() != nil }
-
-  func openFullApp() -> Bool { TryOmarchyApp.open() }
 
   func space() -> TrialSpace {
     guard let root = TryOmarchyStorage.defaultRoot() else {

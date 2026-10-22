@@ -7,8 +7,6 @@
   @MainActor
   private final class FakeTrialEnvironment: TrialEnvironment {
     var isAvailable = true
-    var installed = false
-    var opened = 0
     var currentSpace = TrialSpace(
       requiredBytes: 15_000_000_000, freeBytes: 40_000_000_000, hasVM: false)
     var permissionState = TrialPermissions(
@@ -17,11 +15,6 @@
     var shutdowns = 0
     var onEvent: (@MainActor (VMRunEvent) -> Void)?
 
-    func fullAppInstalled() -> Bool { installed }
-    func openFullApp() -> Bool {
-      opened += 1
-      return true
-    }
     func space() -> TrialSpace { currentSpace }
     func vmBytes() async -> Int64 { 9_400_000_000 }
     func permissions() -> TrialPermissions { permissionState }
@@ -85,16 +78,6 @@
       XCTAssertEqual(ready(environment).startTitle, "Start")
     }
 
-    func testTheFullAppOpensInsteadOnceInstalled() {
-      let environment = FakeTrialEnvironment()
-      environment.installed = true
-      let trial = TrialSession(environment: environment)
-      XCTAssertEqual(trial.entryTitle, "Open in Try Omarchy")
-      trial.present()
-      XCTAssertEqual(environment.opened, 1)
-      XCTAssertEqual(trial.phase, .hidden)
-    }
-
     func testWithoutAKitThereIsNoTrial() {
       let environment = FakeTrialEnvironment()
       environment.isAvailable = false
@@ -141,6 +124,10 @@
       guard case .failed(let failure) = trial.phase else { return XCTFail("Expected a failure") }
       XCTAssertEqual(failure.code, .vmAlreadyOpen)
       XCTAssertEqual(failure.headline, "Omarchy is open in Try Omarchy")
+      XCTAssertEqual(
+        failure.detail,
+        "Or in another copy of \(PlainLanguage.windowTitle). Shut it down there, then try again here."
+      )
       XCTAssertEqual(failure.technicalDetail, "run-qemu-gpu: this VM is already open")
       trial.dismiss()
       XCTAssertEqual(trial.phase, .hidden)
