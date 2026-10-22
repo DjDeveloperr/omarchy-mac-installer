@@ -3,13 +3,13 @@
   import Observation
   import TryOmarchyKitClient
 
-  /// What the trial needs from this Mac and the embedded Try Omarchy kit.
+  /// What Try needs from this Mac and the embedded Try Omarchy kit.
   @MainActor
   public protocol TrialEnvironment: AnyObject {
-    /// Whether this build embeds the kit. Without it there is no trial.
+    /// Whether this build embeds the kit. Without it there is no Try.
     var isAvailable: Bool { get }
     func space() -> TrialSpace
-    /// The space the trial VM's folder takes on disk, or zero without one.
+    /// The space the VM's folder takes on disk, or zero without one.
     func vmBytes() async -> Int64
     func permissions() -> TrialPermissions
     func requestAccessibility()
@@ -17,6 +17,8 @@
     func requestCamera() async
     func start(onEvent: @escaping @MainActor (VMRunEvent) -> Void) throws
     func shutDown()
+    /// Moves the VM in the default folder to the Trash.
+    func deleteVM() throws
   }
 
   public struct TrialSpace: Equatable, Sendable {
@@ -54,6 +56,10 @@
       self.microphone = microphone
       self.camera = camera
     }
+
+    public var allAllowed: Bool {
+      accessibility == .allowed && microphone == .allowed && camera == .allowed
+    }
   }
 
   public struct TrialProgress: Equatable, Sendable {
@@ -77,31 +83,96 @@
   }
 
   public enum TrialPhase: Equatable, Sendable {
-    /// The installer's own page.
+    /// The installer's own page: the choice, the plan, the install.
     case hidden
-    /// The Try screen: permissions and space, before anything starts.
+    /// The Try page: permissions and space, before anything starts.
     case ready(TrialSpace, TrialPermissions)
     case starting(TrialProgress)
-    case running
+    /// Omarchy runs in its own window. A permission granted now applies at
+    /// the next start.
+    case running(TrialPermissions)
     case stopping
     case failed(TrialFailure)
   }
 
-  /// The trial as one state machine beside the installer's session. Omarchy
-  /// runs in its own window; this tracks it and shuts it down.
+  /// What the installer found it can do on this Mac, which decides where Try
+  /// sits: one of two modes, or the only one.
+  public enum TrialInstallStatus: Equatable, Sendable {
+    case checking
+    /// Install is on offer, so the first page is the choice.
+    case supported
+    /// Omarchy can't be installed on this Mac, and Try is the only mode.
+    case unsupported(FailureDisplay)
+    /// Omarchy is installed natively, and Try is the only mode.
+    case installed
+    /// The installer's own page has the floor: the plan, the install, a
+    /// failure, or the Recovery steps of an unfinished install.
+    case installerPage
+
+    public init(_ phase: InstallerSessionPhase, isBusy: Bool, pendingRecovery: Bool) {
+      switch phase {
+      case .inspecting:
+        self = .checking
+      case .welcome:
+        self = .supported
+      case .unsupported(let failure):
+        self = .unsupported(failure)
+      case .existingInstallRefused:
+        // The inspection is still looking for an unfinished Recovery step.
+        if isBusy {
+          self = .checking
+        } else {
+          self = pendingRecovery ? .installerPage : .installed
+        }
+      default:
+        self = .installerPage
+      }
+    }
+  }
+
+  extension InstallerSession {
+    public var trialInstallStatus: TrialInstallStatus {
+      TrialInstallStatus(
+        phase, isBusy: isBusy, pendingRecovery: recoveryAccount?.target != nil)
+    }
+  }
+
+  /// Why Install on this Mac can't go ahead, for the menu item.
+  public struct TrialInstallReason: Equatable, Sendable {
+    public let headline: String
+    public let detail: String
+    public let canCheckAgain: Bool
+  }
+
+  public enum TrialInstallMenuAction: Equatable, Sendable {
+    case unavailable
+    case install
+    case explain(TrialInstallReason)
+  }
+
+  /// Try as one state machine beside the installer's session. Omarchy runs in
+  /// its own window; this tracks it, shuts it down and deletes its VM.
   @MainActor
   @Observable
   public final class TrialSession {
     public private(set) var phase: TrialPhase = .hidden
-    /// The space the trial VM takes, for the plan review.
+    public private(set) var installStatus: TrialInstallStatus = .checking
+    /// A VM exists in the default folder: the remembered choice.
+    public private(set) var hasVM = false
+    /// The space the VM takes, for the plan review.
     public private(set) var vmBytes: Int64 = 0
     private let environment: any TrialEnvironment
     private var lastError: VMRunError?
     private var shutdownRequested = false
     private var afterExit: [() -> Void] = []
+    private var launched = false
+    /// Try opened on its own because the Mac can't install, so it steps
+    /// aside if a new check finds that it can.
+    private var openedAsOnlyMode = false
 
     public init(environment: any TrialEnvironment) {
       self.environment = environment
+      hasVM = environment.isAvailable && environment.space().hasVM
     }
 
     public var isAvailable: Bool { environment.isAvailable }
@@ -128,22 +199,109 @@
       return PlainLanguage.trialStart
     }
 
+    /// The Try page goes back to the choice page only while there is one: on
+    /// a Mac Omarchy can be installed on, before a VM exists.
+    public var canGoBack: Bool {
+      guard case .ready = phase else { return true }
+      return installStatus == .supported && !hasVM
+    }
+
+    /// Install on this Mac, beside Shut Down on the running page.
+    public var canInstall: Bool { installStatus == .supported }
+
+    public var canDeleteVM: Bool { environment.isAvailable && hasVM && !isActive }
+
+    /// The line under the Mac's name while Try is the only mode.
+    public var installLine: String? { PlainLanguage.trialInstallLine(installStatus) }
+
+    public var installMenuAction: TrialInstallMenuAction {
+      switch installStatus {
+      case .checking, .installerPage: .unavailable
+      case .supported: .install
+      case .unsupported(let failure):
+        .explain(
+          TrialInstallReason(
+            headline: failure.headline,
+            detail: [failure.plainDetail, failure.remedy].compactMap { $0 }.joined(
+              separator: " "),
+            canCheckAgain: true))
+      case .installed:
+        .explain(
+          TrialInstallReason(
+            headline: PlainLanguage.existingInstallHeadline,
+            detail: PlainLanguage.trialInstalledDetail, canCheckAgain: false))
+      }
+    }
+
+    /// The remembered choice: with a VM in the default folder, the app opens
+    /// into Try and starts Omarchy at once, while the installer inspects the
+    /// Mac in the background. Runs once per launch.
+    public func openAtLaunch() {
+      guard !launched else { return }
+      launched = true
+      guard environment.isAvailable, phase == .hidden else { return }
+      let space = environment.space()
+      hasVM = space.hasVM
+      guard space.hasVM else { return }
+      phase = .ready(space, environment.permissions())
+      start()
+    }
+
+    /// Follows the installer's inspection. On a Mac that can't install, and
+    /// on one with Omarchy installed, the Try page opens at once.
+    public func follow(_ status: TrialInstallStatus) {
+      installStatus = status
+      guard environment.isAvailable, !isActive else { return }
+      switch status {
+      case .unsupported, .installed:
+        if phase == .hidden {
+          present()
+          openedAsOnlyMode = true
+        }
+      case .supported:
+        if openedAsOnlyMode, !hasVM, case .ready = phase {
+          openedAsOnlyMode = false
+          phase = .hidden
+        }
+      case .installerPage:
+        if phase != .hidden {
+          openedAsOnlyMode = false
+          phase = .hidden
+        }
+      case .checking:
+        break
+      }
+    }
+
     public func present() {
       guard environment.isAvailable, phase == .hidden else { return }
-      phase = .ready(environment.space(), environment.permissions())
+      openedAsOnlyMode = false
+      phase = readyPhase()
     }
 
-    /// Back to the installer's page, from anywhere Omarchy is not running.
+    /// Back: from a failure to the Try page, and from the Try page to the
+    /// choice page when there is one.
     public func dismiss() {
-      guard !isActive else { return }
-      phase = .hidden
+      switch phase {
+      case .failed:
+        phase = readyPhase()
+      case .ready where canGoBack:
+        phase = .hidden
+      default:
+        break
+      }
     }
 
-    /// Re-reads permissions and space, as when the installer becomes active
-    /// again after System Settings.
+    /// Re-reads permissions and space, as when the app becomes active again
+    /// after System Settings.
     public func refresh() {
-      if case .ready = phase {
-        phase = .ready(environment.space(), environment.permissions())
+      switch phase {
+      case .ready:
+        phase = readyPhase()
+      case .running:
+        phase = .running(environment.permissions())
+      default:
+        if !isActive { hasVM = environment.isAvailable && environment.space().hasVM }
       }
     }
 
@@ -192,6 +350,36 @@
       environment.shutDown()
     }
 
+    /// Install on this Mac: shuts Omarchy down if it runs, leaves Try, then
+    /// continues into the installer's plan.
+    public func leaveForInstall(then install: @escaping () -> Void) {
+      guard canInstall else { return }
+      shutDown { [weak self] in
+        guard let self else { return }
+        openedAsOnlyMode = false
+        phase = .hidden
+        install()
+      }
+    }
+
+    /// The confirmation's words, naming the space the VM takes.
+    public func deletionMessage() async -> String {
+      await refreshVMBytes()
+      return PlainLanguage.trialDeleteMessage(bytes: vmBytes)
+    }
+
+    /// Moves the VM to the Trash and returns to the first launch: the choice
+    /// page, or the Try page on a Mac that can't install.
+    public func deleteVM() throws {
+      guard canDeleteVM else { return }
+      try environment.deleteVM()
+      hasVM = false
+      vmBytes = 0
+      openedAsOnlyMode = false
+      phase = .hidden
+      follow(installStatus)
+    }
+
     func receive(_ event: VMRunEvent) {
       switch event {
       case .progress(let step, let percent):
@@ -199,7 +387,7 @@
           phase = .starting(TrialProgress(phase: step, percent: percent))
         }
       case .ready:
-        if !shutdownRequested { phase = .running }
+        if !shutdownRequested { phase = .running(environment.permissions()) }
       case .stopping:
         phase = .stopping
       case .error(let error):
@@ -212,7 +400,7 @@
             Self.failure(
               for: VMRunError(code: .qemuExited, message: "Omarchy stopped (status \(status)).")))
         } else {
-          phase = .hidden
+          phase = restingPhase()
         }
         lastError = nil
         shutdownRequested = false
@@ -220,6 +408,23 @@
         afterExit = []
         for completion in completions { completion() }
         Task { await refreshVMBytes() }
+      }
+    }
+
+    private func readyPhase() -> TrialPhase {
+      let space = environment.space()
+      hasVM = space.hasVM
+      return .ready(space, environment.permissions())
+    }
+
+    /// Where Try rests once Omarchy has shut down: the Try page while Try is
+    /// the only mode or a VM is the remembered choice, else the choice page.
+    private func restingPhase() -> TrialPhase {
+      let ready = readyPhase()
+      switch installStatus {
+      case .unsupported, .installed: return ready
+      case .installerPage: return .hidden
+      case .supported, .checking: return hasVM ? ready : .hidden
       }
     }
 

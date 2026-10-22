@@ -58,7 +58,14 @@ struct OnePageInstallerView: View {
           .frame(maxWidth: 400)
           .padding(.top, 24)
           .padding(.bottom, 16)
-        header.padding(.bottom, 20)
+        header.padding(.bottom, installLine == nil ? 20 : 8)
+        if let installLine {
+          Text(installLine)
+            .font(OmarchyTheme.body)
+            .foregroundStyle(OmarchyTheme.secondaryText)
+            .multilineTextAlignment(.center)
+            .padding(.bottom, 20)
+        }
         VStack(alignment: .leading, spacing: 14) {
           if let trial, trial.phase != .hidden {
             TrialStage(trial: trial)
@@ -70,8 +77,7 @@ struct OnePageInstallerView: View {
         HStack(spacing: 16) {
           if let trial, trial.phase != .hidden {
             TrialActions(
-              trial: trial, canInstall: canInstallAfterTrial,
-              onInstall: { Task { await session.continueToPlan() } })
+              trial: trial, onInstall: { Task { await session.continueToPlan() } })
           } else {
             actions
           }
@@ -98,7 +104,11 @@ struct OnePageInstallerView: View {
     }
     .task {
       onSessionAvailable(session)
+      trial?.openAtLaunch()
       await recheck()
+    }
+    .onChange(of: session.trialInstallStatus, initial: true) { _, status in
+      trial?.follow(status)
     }
     .onChange(of: channel) { _, _ in
       // Switching channel discards anything already planned: the new channel
@@ -210,12 +220,17 @@ struct OnePageInstallerView: View {
       )
 
     case .welcome:
-      Text(PlainLanguage.checkSubheadline)
-        .font(OmarchyTheme.body)
-        .foregroundStyle(OmarchyTheme.secondaryText)
-        .multilineTextAlignment(.center)
-        .frame(maxWidth: .infinity)
-        .padding(.top, 6)
+      VStack(spacing: 6) {
+        Text(PlainLanguage.checkSubheadline)
+        if let trial, trial.isAvailable {
+          Text(PlainLanguage.trialChoiceDetail)
+        }
+      }
+      .font(OmarchyTheme.body)
+      .foregroundStyle(OmarchyTheme.secondaryText)
+      .multilineTextAlignment(.center)
+      .frame(maxWidth: .infinity)
+      .padding(.top, 6)
 
     case .existingInstallRefused:
       if let handoff = pendingRecoveryHandoff {
@@ -320,11 +335,10 @@ struct OnePageInstallerView: View {
       Button(PlainLanguage.checkAgain) { Task { await recheck() } }
         .omarchySecondaryButton()
         .disabled(session.isBusy)
-      trialEntryButton
 
     case .welcome:
       trialEntryButton
-      Button(PlainLanguage.checkContinue) { Task { await session.continueToPlan() } }
+      Button(PlainLanguage.trialInstall) { Task { await session.continueToPlan() } }
         .omarchyPrimaryButton()
         .disabled(session.isBusy)
         .keyboardShortcut(.defaultAction)
@@ -402,8 +416,7 @@ struct OnePageInstallerView: View {
 
   // MARK: Pieces
 
-  /// Beside Continue, and the only way forward on a Mac Omarchy can't be
-  /// installed on.
+  /// The choice page's second way: Try in a VM, beside Install on this Mac.
   @ViewBuilder
   private var trialEntryButton: some View {
     if let trial, trial.isAvailable {
@@ -413,9 +426,11 @@ struct OnePageInstallerView: View {
     }
   }
 
-  private var canInstallAfterTrial: Bool {
-    if case .welcome = session.phase { return true }
-    return false
+  /// Why Omarchy can't be installed, under the Mac's name, while the Try
+  /// page is the only page.
+  private var installLine: String? {
+    guard let trial, trial.phase != .hidden else { return nil }
+    return trial.installLine
   }
 
   private func statusPanel(title: String) -> some View {

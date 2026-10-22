@@ -2,8 +2,8 @@ import AppKit
 import OmarchyInstallerUXCore
 import SwiftUI
 
-/// The trial's part of the page: the Try screen, then Omarchy's state while
-/// it runs in its own window.
+/// Try's part of the page: the Try page, then Omarchy's state while it runs
+/// in its own window.
 struct TrialStage: View {
   let trial: TrialSession
 
@@ -21,15 +21,7 @@ struct TrialStage: View {
           .fixedSize(horizontal: false, vertical: true)
       }
       Panel {
-        PermissionRow(
-          title: PlainLanguage.trialAccessibility, state: permissions.accessibility,
-          action: { trial.requestAccessibility() })
-        PermissionRow(
-          title: PlainLanguage.trialMicrophone, state: permissions.microphone,
-          action: { Task { await trial.requestMicrophone() } })
-        PermissionRow(
-          title: PlainLanguage.trialCamera, state: permissions.camera,
-          action: { Task { await trial.requestCamera() } })
+        PermissionRows(trial: trial, permissions: permissions, onlyMissing: false)
         Text(PlainLanguage.trialPermissionsNote)
           .font(OmarchyTheme.detail)
           .foregroundStyle(OmarchyTheme.secondaryText)
@@ -57,13 +49,21 @@ struct TrialStage: View {
         ProgressTrack(fraction: progress.fraction, height: 14)
       }
 
-    case .running:
+    case .running(let permissions):
       Panel {
         Text(PlainLanguage.trialRunningHeadline).font(OmarchyTheme.heading)
         Text(PlainLanguage.trialRunningDetail)
           .font(OmarchyTheme.body)
           .foregroundStyle(OmarchyTheme.secondaryText)
           .fixedSize(horizontal: false, vertical: true)
+      }
+      if !permissions.allAllowed {
+        Panel {
+          PermissionRows(trial: trial, permissions: permissions, onlyMissing: true)
+          Text(PlainLanguage.trialPermissionsNextStart)
+            .font(OmarchyTheme.detail)
+            .foregroundStyle(OmarchyTheme.secondaryText)
+        }
       }
 
     case .stopping:
@@ -99,11 +99,10 @@ struct TrialStage: View {
   }
 }
 
-/// The trial's buttons. `canInstall` is whether this Mac can continue into
-/// the native install.
+/// Try's buttons. Install on this Mac shuts Omarchy down, then continues
+/// into the installer's plan.
 struct TrialActions: View {
   let trial: TrialSession
-  let canInstall: Bool
   let onInstall: () -> Void
 
   var body: some View {
@@ -112,8 +111,10 @@ struct TrialActions: View {
       EmptyView()
 
     case .ready:
-      Button(PlainLanguage.trialBack) { trial.dismiss() }
-        .omarchySecondaryButton()
+      if trial.canGoBack {
+        Button(PlainLanguage.trialBack) { trial.dismiss() }
+          .omarchySecondaryButton()
+      }
       Button(trial.startTitle) { trial.start() }
         .omarchyPrimaryButton()
         .disabled(!trial.canStart)
@@ -122,8 +123,8 @@ struct TrialActions: View {
     case .running:
       Button(PlainLanguage.trialShutDown) { trial.shutDown() }
         .omarchySecondaryButton()
-      if canInstall {
-        Button(PlainLanguage.trialInstall) { trial.shutDown(then: onInstall) }
+      if trial.canInstall {
+        Button(PlainLanguage.trialInstall) { trial.leaveForInstall(then: onInstall) }
           .omarchyPrimaryButton()
       }
 
@@ -134,6 +135,31 @@ struct TrialActions: View {
       Button(PlainLanguage.trialBack) { trial.dismiss() }
         .omarchySecondaryButton()
         .keyboardShortcut(.defaultAction)
+    }
+  }
+}
+
+private struct PermissionRows: View {
+  let trial: TrialSession
+  let permissions: TrialPermissions
+  /// The running page lists only what is still not granted.
+  let onlyMissing: Bool
+
+  var body: some View {
+    if !onlyMissing || permissions.accessibility != .allowed {
+      PermissionRow(
+        title: PlainLanguage.trialAccessibility, state: permissions.accessibility,
+        action: { trial.requestAccessibility() })
+    }
+    if !onlyMissing || permissions.microphone != .allowed {
+      PermissionRow(
+        title: PlainLanguage.trialMicrophone, state: permissions.microphone,
+        action: { Task { await trial.requestMicrophone() } })
+    }
+    if !onlyMissing || permissions.camera != .allowed {
+      PermissionRow(
+        title: PlainLanguage.trialCamera, state: permissions.camera,
+        action: { Task { await trial.requestCamera() } })
     }
   }
 }

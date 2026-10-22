@@ -28,6 +28,46 @@
     public static let trialStoppingDetail =
       "Omarchy is closing its apps. If it hasn’t stopped within a minute, it’s stopped for you."
     public static let trialInstall = "Install on this Mac"
+    public static let trialChoiceDetail =
+      "Or try it first in a virtual machine, in a window beside macOS, without changing your disk."
+    public static let trialPermissionsNextStart =
+      "A permission you allow now takes effect the next time Omarchy starts."
+    public static let trialInstalledLine = "Omarchy is already installed on this Mac."
+    public static let trialInstalledDetail =
+      "To install it again, first remove it: choose Installation → Remove Omarchy… in the menu bar."
+
+    // MARK: Try — the Installation menu
+
+    public static let trialInstallMenuItem = "Install on this Mac…"
+    public static let trialCheckAgainMenuItem = "Check Again"
+    public static let trialDeleteMenuItem = "Delete Virtual Machine…"
+    public static let trialDeleteTitle = "Delete the virtual machine?"
+    public static let trialDeleteAction = "Move to Trash"
+    public static let trialDeleteFailed = "The virtual machine couldn’t be deleted"
+
+    public static func trialDeleteMessage(bytes: Int64) -> String {
+      let frees =
+        bytes >= 100_000_000
+        ? " Emptying the Trash frees \(gigabytes(bytes))." : ""
+      return
+        "Omarchy’s virtual machine, with everything saved in it, moves to the Trash.\(frees) The next start downloads Omarchy again."
+    }
+
+    /// The line under the Mac's name while Try is the only mode.
+    public static func trialInstallLine(_ status: TrialInstallStatus) -> String? {
+      switch status {
+      case .unsupported(let failure):
+        if failure.isBlockedModel { return "Omarchy can’t be installed on this Mac model yet." }
+        if failure.headline == notReadyHeadline {
+          return "Omarchy can’t be installed on this Mac right now."
+        }
+        return failure.headline
+      case .installed:
+        return trialInstalledLine
+      case .checking, .supported, .installerPage:
+        return nil
+      }
+    }
 
     public static func trialSpace(_ space: TrialSpace) -> String {
       let required = gigabytes(space.requiredBytes)

@@ -84,6 +84,9 @@ struct OmarchyAppleInstallerApp: App {
   #endif
   @State private var generation = UUID()
   @State private var trial = TrialSession(environment: LiveTrialEnvironment())
+  @State private var installReason: TrialInstallReason?
+  @State private var deletionMessage: String?
+  @State private var deletionFailure: String?
 
   private var isSimulation: Bool {
     #if DEBUG
@@ -163,6 +166,34 @@ struct OmarchyAppleInstallerApp: App {
           }, onClose: { showsRemoval = false }, onRequiresReview: { removalNeedsReview = true },
           simulationScenario: previewRemovalScenario)
       }
+      .alert(
+        installReason?.headline ?? "", isPresented: presented($installReason),
+        presenting: installReason
+      ) { reason in
+        if reason.canCheckAgain {
+          Button(PlainLanguage.checkAgain) { checkAgain() }
+        }
+        Button("OK", role: .cancel) {}
+      } message: { reason in
+        Text(reason.detail)
+      }
+      .alert(
+        PlainLanguage.trialDeleteTitle, isPresented: presented($deletionMessage),
+        presenting: deletionMessage
+      ) { _ in
+        Button(PlainLanguage.trialDeleteAction, role: .destructive) { deleteVM() }
+        Button("Cancel", role: .cancel) {}
+      } message: { message in
+        Text(message)
+      }
+      .alert(
+        PlainLanguage.trialDeleteFailed, isPresented: presented($deletionFailure),
+        presenting: deletionFailure
+      ) { _ in
+        Button("OK", role: .cancel) {}
+      } message: { failure in
+        Text(failure)
+      }
       .preferredColorScheme(previewColorScheme)
       .frame(minWidth: 640)
       .omarchyTypography()
@@ -209,8 +240,24 @@ struct OmarchyAppleInstallerApp: App {
         }
       #endif
       CommandMenu("Installation") {
+        Button(PlainLanguage.trialInstallMenuItem) { installFromMenu() }
+          .disabled(
+            isSimulation || removalNeedsReview || showsRemoval
+              || trial.installMenuAction == .unavailable)
+        Button(PlainLanguage.trialCheckAgainMenuItem) { checkAgain() }
+          .disabled(
+            isSimulation || removalNeedsReview || showsRemoval || !installStatusIsUnsupported
+              || liveSession?.canInspect != true)
+        Divider()
         Button("Remove Omarchy…") { showsRemoval = true }
           .disabled(removalNeedsReview || showsRemoval || liveSession?.canOpenRemoval != true)
+        if trial.isAvailable {
+          Divider()
+          Button(PlainLanguage.trialDeleteMenuItem) {
+            Task { deletionMessage = await trial.deletionMessage() }
+          }
+          .disabled(isSimulation || removalNeedsReview || showsRemoval || !trial.canDeleteVM)
+        }
       }
       if InstallerBuildProfile.current.showsReleaseChannels {
         CommandMenu(PlainLanguage.channelMenuTitle) {
@@ -239,6 +286,44 @@ struct OmarchyAppleInstallerApp: App {
         }
       }
     }
+  }
+
+  private var installStatusIsUnsupported: Bool {
+    if case .unsupported = trial.installStatus { return true }
+    return false
+  }
+
+  /// Install on this Mac from the menu: shuts Omarchy down and continues into
+  /// the plan, or says why this Mac can't install.
+  private func installFromMenu() {
+    switch trial.installMenuAction {
+    case .unavailable:
+      break
+    case .install:
+      trial.leaveForInstall { Task { await liveSession?.continueToPlan() } }
+    case .explain(let reason):
+      installReason = reason
+    }
+  }
+
+  private func checkAgain() {
+    guard let session = liveSession, session.canInspect else { return }
+    Task {
+      await session.inspect()
+      await session.refreshChannelAvailability()
+    }
+  }
+
+  private func deleteVM() {
+    do {
+      try trial.deleteVM()
+    } catch {
+      deletionFailure = error.localizedDescription
+    }
+  }
+
+  private func presented<Value>(_ value: Binding<Value?>) -> Binding<Bool> {
+    Binding(get: { value.wrappedValue != nil }, set: { if !$0 { value.wrappedValue = nil } })
   }
 
   private var previewColorScheme: ColorScheme? {
