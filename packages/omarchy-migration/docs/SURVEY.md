@@ -1,6 +1,6 @@
 # Read-only migration survey
 
-`omarchy-migration survey` shows what a migration of your own Try home would bring, using the real [Try policy](../lib/omarchy_migration/policies/try-omarchy-82927e9.json). It is the first part of the migration that runs against real data, and it is deliberately read-only:
+`omarchy-migration survey` shows what a migration of your own Try home would bring, using the real [Try policy](../lib/omarchy_migration/policies/try-omarchy-4b948a8.json). It is the first part of the migration that runs against real data, and it is deliberately read-only:
 
 - It lists directories and reads file metadata. It never opens a regular file, so no file contents are read.
 - It never enters a credential store (SSH, GnuPG, keyrings, 1Password, Codex, Chromium, Brave) or a path the policy excludes; stores are reported by presence only.

@@ -31,7 +31,7 @@ class SurveyTests(unittest.TestCase):
             "Projects/app/main.py": b"print('hi')\n",
             ".config/nvim/init.lua": b"vim.o.number = true\n",
             ".config/hypr/monitors.lua": b"monitor = Virtual-1\n",
-            ".config/hypr/input.lua": b"input {}\n",
+            ".config/omarchy/shell.json": b'{"version": 1}\n',
             ".cache/thumbnails/a.png": b"\x89PNG cache",
             ".ssh/id_ed25519": b"FAKE-SECRET",
             ".config/chromium/Default/Cookies": b"FAKE-COOKIES",
@@ -85,7 +85,7 @@ class SurveyTests(unittest.TestCase):
         result = self.run_survey()
         examples = {outcome: {item["path"] for item in bucket["examples"]} for outcome, bucket in result.outcomes.items()}
         self.assertEqual(examples["excluded"], {".config/hypr/monitors.lua", ".local/share/omarchy"})
-        self.assertEqual(examples["transform"], {".config/hypr/input.lua"})
+        self.assertEqual(examples["transform"], {".config/omarchy/shell.json"})
         self.assertEqual(examples["share-link"], {"Work"})
         self.assertEqual(examples["held-out"], {".ssh", ".config/chromium"})
         self.assertEqual(result.counts["files-and-projects"]["links"], 1)
@@ -105,7 +105,7 @@ class SurveyTests(unittest.TestCase):
                 if entry.get("kind") == "file":
                     collected[survey.category(entry["path"])][0] += 1
                     collected[survey.category(entry["path"])][1] += entry["bytes"]
-        # input.lua has no Try block here, so collection exports it unchanged.
+        # shell.json has no idle settings here, so collection exports it unchanged.
         self.assertEqual(surveyed, {name: tuple(value) for name, value in collected.items()})
         self.assertEqual(surveyed["caches"], (1, len(self.files[".cache/thumbnails/a.png"])))
         stores = {item["id"]: item for item in document["credential_stores"]}

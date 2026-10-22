@@ -47,7 +47,7 @@ Private documents never cross an app boundary in plaintext: the bundle manifest,
 
 ## Policy
 
-A policy is the trusted, versioned description of one source build. `revision` names it (for example `try-omarchy/82927e9/4`) and `source {provider, repository, commit}` pins the exact provider commit it was derived from.
+A policy is the trusted, versioned description of one source build. `revision` names it (for example `try-omarchy/4b948a8/1`) and `source {provider, repository, commit}` pins the exact provider commit it was derived from.
 
 - **credential_stores** `{id, category, roots, adapter}` are matched first, before traversal, stat or open. A store is exported only when explicitly selected and only through an available adapter. Roots may not overlap each other or any rule.
 - **share_stores** `{id, category, directories, files}` recognize credential locations inside an explicitly selected shared folder by name only: `directories` are relative paths matched as trailing components at any depth (for example `.ssh` or `Library/Keychains`), `files` are file-name patterns (for example `*.pem`). Contents are never inspected. A matched entry is held back unopened unless the user selects that share store separately, so a UI can offer each one as its own choice.
@@ -82,5 +82,9 @@ Validation codes: `not_an_object`, `missing_field`, `unknown_field`, `not_an_int
 Recorded 2026-10-02 with Scott.
 
 - Time zone is chosen in the installer, so it is never migrated. Try's `/var/lib/try-omarchy/timezone.json` is outside the home directory and outside the export.
-- `.config/chromium-flags.conf` loses Try's `--enable-wayland-ime` block. If native Omarchy needs the flag, its own installation provides it; restore is additive and never replaces a destination default without an approved conflict resolution.
+- `.config/chromium-flags.conf` lost Try's `--enable-wayland-ime` block under policies before `try-omarchy/4b948a8/1`. Try's shell build writes the flag to `/etc/chromium-flags.conf` instead, so the file now migrates as written. Restore is additive and never replaces a destination default without an approved conflict resolution.
 - `.config/hypr/monitors.lua` is excluded as a whole. It describes the Mac host display through Try, including scaling, and does not carry over to native hardware.
+- Since `try-omarchy/4b948a8/1` (2026-10-22), the `idle` member of `.config/omarchy/shell.json` is removed. Try turns the screensaver and lock off in the VM, and Omarchy restores its own timers when `idle` is absent, so the native install locks again. A person's own idle timers set in the VM are dropped too; the untouched file is kept in the originals copy.
+- Since `try-omarchy/4b948a8/1`, Try's menu rows are removed, including `trigger.appearance.top-bar.indicators.battery-percentage`: Try v1.0.0 to v1.1.0 wrote it, and later packages leave it in place.
+- Since `try-omarchy/4b948a8/1`, `.aws`, `.kube`, `.password-store` and the GitHub CLI's `.config/gh/hosts.yml` are credential stores. Try's `try-omarchy-import-previous` copies them from an earlier VM; the rest of `.config/gh` migrates as settings.
+- Since `try-omarchy/4b948a8/1`, `.config/fcitx5/config` is excluded as a whole. Try edits its hotkeys in place for the Mac keyboard in the VM, with no marker to strip, so Fcitx customizations in that file stay behind and the native install keeps its own.

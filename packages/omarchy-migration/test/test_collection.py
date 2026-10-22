@@ -11,7 +11,7 @@ import unittest
 import uuid
 from unittest.mock import patch
 
-from omarchy_migration import collection, probe, restore
+from omarchy_migration import collection, policy, probe, restore
 from omarchy_migration.dependency import configured_age
 
 
@@ -561,14 +561,18 @@ class CollectionTests(unittest.TestCase):
             self.assertEqual(self.entry(snapshot, ".local/state/toggles/hypr/flags.lua")["outcome"], "included")
 
     def test_try_policy_drives_collection_of_a_synthetic_try_home(self):
-        document = json.loads((Path(collection.__file__).resolve().parent / "policies/try-omarchy-82927e9.json").read_text())
-        block = next(rule for rule in document["rules"] if rule["id"] == "try-hypr-input-overrides")["transform"]["block"]
+        document = json.loads(policy.SHIPPED.read_text())
         home = {
-            ".config/hypr/input.lua": b"input { kb_layout = us }\n" + block.encode(),
+            ".config/omarchy/extensions/omarchy-menu.jsonc": (
+                b'{\n  // Try Omarchy: Mac integration rows and VM adjustments (added once each; safe to remove).\n'
+                b'  "setup.try-omarchy": {"label": "Try"},\n  "update.timezone": {"label": "Timezone"},\n'
+                b'  "launch.notes": {"label": "Notes"}\n}\n'),
+            ".config/omarchy/shell.json": b'{\n  "version": 1,\n  "idle": {\n    "screensaver": 0,\n    "lock": 0\n  }\n}\n',
+            ".local/state/omarchy/toggles/hypr/zz-try-omarchy.lua": b'pcall(dofile, "/usr/share/try-omarchy/hyprland.lua")\n',
+            ".local/state/omarchy/toggles/hypr/flags.lua": b"blur = false\n",
+            ".local/state/try-omarchy/menu-entries": b"9\n",
+            ".config/fcitx5/config": b"[Hotkey/ActivateKeys]\n0=Hangul\n",
             ".config/hypr/monitors.lua": b"monitor = Virtual-1\n",
-            ".config/chromium-flags.conf": b"--ozone-platform=wayland\n--enable-wayland-ime\n",
-            ".config/omarchy/extensions/omarchy-menu.jsonc": b'{\n  "setup.try-omarchy": {"label": "Try"}\n}\n',
-            ".config/omarchy/hooks/pre-refresh-pacman.d/restore-arm-pacman": b"#!/bin/bash\n",
             ".config/chromium/Default/Cookies": b"FAKE-CHROMIUM-COOKIES",
             ".local/share/keyrings/login.keyring": b"FAKE-KEYRING",
             "Documents/notes.md": b"personal\n",
@@ -580,30 +584,36 @@ class CollectionTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             path.write_bytes(data)
             path.chmod(0o600)
-        (source / ".local/share/omarchy").symlink_to("/usr/share/omarchy")
+        (source / ".config/omarchy/backgrounds/tokyo-night").mkdir(parents=True, mode=0o700)
+        (source / ".config/omarchy/backgrounds/tokyo-night/try-omarchy-wallpaper.jpg").symlink_to(
+            "/usr/share/try-omarchy/backgrounds/tokyo-night/try-omarchy-wallpaper.jpg")
         (source / "Work").symlink_to("/mnt/mac")
         with collection.collect_fixture(source, self.request, document, snapshot_parent=self.parent) as snapshot:
             captured = {name: path.read_bytes() for name, path in snapshot.paths.items() if path.is_file() and not path.is_symlink()}
-            self.assertEqual(captured[".config/hypr/input.lua"], b"input { kb_layout = us }\n")
-            self.assertEqual(captured[".config/chromium-flags.conf"], b"--ozone-platform=wayland\n")
-            self.assertEqual(json.loads(captured[".config/omarchy/extensions/omarchy-menu.jsonc"]), {})
+            menu = captured[".config/omarchy/extensions/omarchy-menu.jsonc"].decode()
+            self.assertEqual(json.loads("\n".join(line for line in menu.splitlines() if "//" not in line)),
+                             {"launch.notes": {"label": "Notes"}})
+            self.assertEqual(json.loads(captured[".config/omarchy/shell.json"]), {"version": 1})
+            self.assertEqual(captured[".local/state/omarchy/toggles/hypr/flags.lua"], b"blur = false\n")
             self.assertEqual(captured["Documents/notes.md"], b"personal\n")
-            for absent in (".config/hypr/monitors.lua", ".config/omarchy/hooks/pre-refresh-pacman.d/restore-arm-pacman",
-                           ".local/share/omarchy", ".config/chromium/Default/Cookies", ".local/share/keyrings/login.keyring"):
+            for absent in (".local/state/omarchy/toggles/hypr/zz-try-omarchy.lua", ".local/state/try-omarchy",
+                           ".config/fcitx5/config", ".config/hypr/monitors.lua",
+                           ".config/omarchy/backgrounds/tokyo-night/try-omarchy-wallpaper.jpg",
+                           ".config/chromium/Default/Cookies", ".local/share/keyrings/login.keyring"):
                 self.assertNotIn(absent, snapshot.paths)
             self.assertEqual(self.entry(snapshot, "Work")["mount"], "mac-share")
-            self.assertEqual(snapshot.report["policy_revision"], "try-omarchy/82927e9/4")
+            self.assertEqual(snapshot.report["policy_revision"], document["revision"])
             self.assertEqual(snapshot.report["counts"]["held-out"], 2)
-            self.assertEqual(snapshot.report["counts"]["excluded"], 3)
-            self.assertEqual(snapshot.report["counts"]["transformed"], 3)
+            self.assertEqual(snapshot.report["counts"]["excluded"], 5)
+            self.assertEqual(snapshot.report["counts"]["transformed"], 2)
             provenance = snapshot.manifest["provenance"]
             self.assertEqual((provenance["policy_revision"], provenance["policy_sha256"]),
-                             ("try-omarchy/82927e9/4", snapshot.report["policy_sha256"]))
+                             (document["revision"], snapshot.report["policy_sha256"]))
             self.assertEqual(provenance["collection"]["counts"], snapshot.report["counts"])
             exceptions = {item["source"]: (item["outcome"], item["rule"] or item["store"] or item["mount"])
                           for item in provenance["collection"]["exceptions"]}
-            self.assertEqual(exceptions[".config/hypr/monitors.lua"], ("excluded", "try-hypr-monitors"))
-            self.assertEqual(exceptions[".config/hypr/input.lua"], ("transformed", "try-hypr-input-overrides"))
+            self.assertEqual(exceptions[".config/omarchy/shell.json"], ("transformed", "try-idle-defaults"))
+            self.assertEqual(exceptions[".local/state/try-omarchy"], ("excluded", "try-state"))
             self.assertEqual(exceptions[".config/chromium"], ("held-out", "chromium"))
             self.assertEqual(exceptions["Work"], ("inert-link", "mac-share"))
             self.assertNotIn("Documents/notes.md", exceptions)

@@ -8,11 +8,11 @@ import unittest
 from unittest.mock import patch
 import uuid
 
-from omarchy_migration import collection, contract, probe, restore
+from omarchy_migration import collection, contract, policy, probe, restore
 from omarchy_migration.dependency import configured_age
 
 SECRET = b"synthetic-only-otter-maple-window-cobalt"
-POLICY = json.loads((Path(collection.__file__).resolve().parent / "policies/try-omarchy-82927e9.json").read_text())
+POLICY = json.loads(policy.SHIPPED.read_text())
 DIRECTORIES, FILES_PER_DIRECTORY = 40, 110
 
 

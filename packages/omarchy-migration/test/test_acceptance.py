@@ -14,13 +14,12 @@ import tempfile
 import unittest
 import uuid
 
-from omarchy_migration import collection, contract, probe, restore, review
+from omarchy_migration import collection, contract, policy, probe, restore, review
 from omarchy_migration.dependency import configured_age
 
 SECRET = b"synthetic-only-otter-maple-window-cobalt"
 MTIME = 1720000000123456789
-POLICY = json.loads((Path(collection.__file__).resolve().parent / "policies/try-omarchy-82927e9.json").read_text())
-INPUT_BLOCK = next(rule for rule in POLICY["rules"] if rule["id"] == "try-hypr-input-overrides")["transform"]["block"].encode()
+POLICY = json.loads(policy.SHIPPED.read_text())
 
 SOURCE_FILES = {
     # Appearance and personal configuration, copied byte for byte.
@@ -29,16 +28,22 @@ SOURCE_FILES = {
     ".config/ghostty/config": b"font-size = 13\ntheme = dusk\n",
     ".config/weird-tool/settings.ini": b"[mystery]\nkeep_me = exactly-as-is\n",
     ".bashrc": b"source ~/.local/share/omarchy/default/bash/rc\nalias gs='git status'\n",
+    ".config/chromium-flags.conf": b"--ozone-platform=wayland\n--force-dark-mode\n",
     # Customized files that also carry Try's known additions.
-    ".config/hypr/input.lua": b"input {\n  kb_layout = us,de\n  sensitivity = 0.3\n}\n" + INPUT_BLOCK,
-    ".config/chromium-flags.conf": b"--ozone-platform=wayland\n--force-dark-mode\n--enable-wayland-ime\n",
+    ".config/omarchy/shell.json": (
+        b'{\n  "version": 1,\n  "idle": {\n    "screensaver": 0,\n    "lock": 0\n  },\n'
+        b'  "bar": {\n    "position": "bottom"\n  }\n}\n'),
     ".config/omarchy/extensions/omarchy-menu.jsonc": (
         b'{\n  // my launcher\n  "launch.notes": {"label": "Notes", "action": "obsidian"},\n'
         b'  "setup.try-omarchy": {"label": "Try Omarchy Settings", "action": "omarchy-native-settings"},\n'
-        b'  "setup.security.touch-id": {"label": "Touch ID", "action": "try-omarchy-touch-id"}\n}\n'),
+        b'  "setup.security.touch-id": {"label": "Touch ID", "action": "try-omarchy-touch-id"},\n'
+        b'  "setup.move-to-native-install": {"label": "Move to Native Install"},\n'
+        b'  "update.firmware": {"label": "Firmware", "when": "! omarchy-hw-vm"}\n}\n'),
     # Hardware, VM and transient state the policy excludes.
     ".config/hypr/monitors.lua": b"monitor = Virtual-1, preferred, auto, 2\n",
-    ".config/omarchy/hooks/pre-refresh-pacman.d/restore-arm-pacman": b"#!/bin/bash\ncp /usr/share/try-omarchy/pacman.conf /etc\n",
+    ".local/state/omarchy/toggles/hypr/zz-try-omarchy.lua": b'pcall(dofile, "/usr/share/try-omarchy/hyprland.lua")\n',
+    ".config/fcitx5/config": b"[Hotkey/ActivateKeys]\n0=Hangul\n",
+    ".local/state/try-omarchy/menu-rows.json": b"{}",
     ".local/state/omarchy/clipboard-history.json": b'["a copied password"]',
     ".local/share/mise/installs/node/22/bin/node": b"ELF synthetic runtime",
     # Credential stores held back without an adapter.
@@ -53,11 +58,13 @@ EXPECTED = {
     ".config/ghostty/config": "identical",
     ".config/weird-tool/settings.ini": "identical",
     ".bashrc": "conflict-destination-kept",
-    ".config/hypr/input.lua": "transformed",
-    ".config/chromium-flags.conf": "transformed",
+    ".config/chromium-flags.conf": "identical",
+    ".config/omarchy/shell.json": "transformed",
     ".config/omarchy/extensions/omarchy-menu.jsonc": "transformed",
     ".config/hypr/monitors.lua": "excluded-destination-kept",
-    ".config/omarchy/hooks/pre-refresh-pacman.d/restore-arm-pacman": "excluded",
+    ".local/state/omarchy/toggles/hypr/zz-try-omarchy.lua": "excluded",
+    ".config/fcitx5/config": "excluded",
+    ".local/state/try-omarchy/menu-rows.json": "excluded",
     ".local/state/omarchy/clipboard-history.json": "excluded",
     ".local/share/mise/installs/node/22/bin/node": "excluded",
     ".ssh/id_ed25519": "held-out",
@@ -69,8 +76,7 @@ EXPECTED = {
 }
 
 TRANSFORMED = {
-    ".config/hypr/input.lua": b"input {\n  kb_layout = us,de\n  sensitivity = 0.3\n}\n",
-    ".config/chromium-flags.conf": b"--ozone-platform=wayland\n--force-dark-mode\n",
+    ".config/omarchy/shell.json": b'{\n  "version": 1,\n  "bar": {\n    "position": "bottom"\n  }\n}\n',
 }
 
 DESTINATION_DEFAULTS = {
@@ -112,7 +118,7 @@ class AcceptanceTests(unittest.TestCase):
             path = self.home / name
             path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             path.write_bytes(data)
-            path.chmod(0o755 if name.endswith("restore-arm-pacman") else 0o600)
+            path.chmod(0o600)
         (self.home / "Work").symlink_to("/mnt/mac")
         project = self.home / "Projects/app"
         project.mkdir(parents=True, mode=0o755)

@@ -19,7 +19,7 @@ from . import policy as migration_policy
 from .categories import category
 from .dependency import admit_age
 
-POLICY_PATH = Path(__file__).resolve().parent / "policies/try-omarchy-82927e9.json"
+POLICY_PATH = migration_policy.SHIPPED
 CAPTURE_ATTEMPTS = 3
 # Collector rejections caused by a home changing under a live capture. The
 # export boot captures a quiet home; a trial can run in a working session.

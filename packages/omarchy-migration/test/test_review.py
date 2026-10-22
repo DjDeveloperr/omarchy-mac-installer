@@ -269,22 +269,22 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(outcomes["configuration"], ("restored", len(configuration), 0))  # includes original copies
         user_files = [entry for entry in configuration
                       if probe.entry_kind(entry) == "file" and not entry["path"].startswith(fixture.collection.ORIGINALS_ROOT + "/")]
-        self.assertEqual(len(user_files), 5)
+        self.assertEqual(len(user_files), 4)
         self.assertEqual(outcomes["files-and-projects"][0], "restored")
         work = next(item for item in report["categories"] if item["id"] == "files-and-projects")
         self.assertEqual((work["omitted"], work["reasons"]), (1, ["link_not_restorable"]))
-        self.assertEqual((self.target / ".config/hypr/input.lua").read_bytes(), b"input {\n  kb_layout = us\n}\n")
+        self.assertEqual(json.loads((self.target / ".config/omarchy/shell.json").read_bytes()), {"version": 1})
 
     def test_conflicts_make_a_category_partial_and_retry_reports_the_same_job(self):
-        (self.target / ".config").mkdir(mode=0o700)
-        (self.target / ".config/chromium-flags.conf").write_bytes(b"--native-choice\n")
+        (self.target / ".config/unfamiliar-example").mkdir(mode=0o700, parents=True)
+        (self.target / ".config/unfamiliar-example/settings").write_bytes(b"native-choice\n")
         plan = contract.parse(self.command("plan").stdout.encode())
         self.assertEqual(plan["actions"]["conflict"], 1)
         report = contract.parse(self.command("apply", "--plan-id", plan["plan_id"]).stdout.encode())
         configuration = next(item for item in report["categories"] if item["id"] == "configuration")
         self.assertEqual((configuration["outcome"], configuration["conflicts"], configuration["reasons"]),
                          ("partial", 1, ["destination_exists"]))
-        self.assertEqual((self.target / ".config/chromium-flags.conf").read_bytes(), b"--native-choice\n")
+        self.assertEqual((self.target / ".config/unfamiliar-example/settings").read_bytes(), b"native-choice\n")
         again = contract.parse(self.command("plan").stdout.encode())
         retried = contract.parse(self.command("apply", "--plan-id", again["plan_id"]).stdout.encode())
         self.assertEqual(retried["job_id"], report["job_id"])

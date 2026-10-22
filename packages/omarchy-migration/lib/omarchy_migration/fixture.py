@@ -18,6 +18,7 @@ import time
 import uuid
 
 from . import contract
+from .policy import SHIPPED
 from . import collection, probe
 from .categories import CATEGORIES, DEFAULT_SELECTED, category
 from .dependency import configured_age
@@ -28,7 +29,7 @@ MODULE_VERSION = "0.0.0-fixture"
 OMARCHY_VERSION = "4.0.4"
 # The fixture has no real account; contract identities need a person's UID.
 SYNTHETIC_UID = 1000
-POLICY_PATH = Path(__file__).resolve().parent / "policies/try-omarchy-82927e9.json"
+POLICY_PATH = SHIPPED
 FIXTURE_ADAPTERS = {"ssh": "fixture-ssh-bytes/1", "brave": "fixture-browser/1"}
 SUPPORTED_ADAPTERS = tuple(sorted(FIXTURE_ADAPTERS.values()))
 INVENTORY_NAMESPACE = uuid.UUID("5a0e2c1e-7f43-4d1b-9a8e-6c0d3b2f4e17")
@@ -55,15 +56,14 @@ def fixture_policy():
 
 def examples(policy):
     """Fixed synthetic home contents, including the files Try itself writes."""
-    block = next(rule for rule in policy["rules"] if rule["id"] == "try-hypr-input-overrides")
     files = {
         "Projects/demo/changed.txt": b"SYNTHETIC modified project file\n",
         "Projects/demo/untracked.txt": b"SYNTHETIC untracked draft\n",
         ".config/example-theme/selected": b"catppuccin\n",
         ".config/unfamiliar-example/settings": b"preserve-this-unknown-setting=true\n",
-        ".config/hypr/input.lua": b"input {\n  kb_layout = us\n}\n" + block["transform"]["block"].encode(),
+        ".config/omarchy/shell.json": b'{\n  "version": 1,\n  "idle": {\n    "screensaver": 0,\n    "lock": 0\n  }\n}\n',
         ".config/hypr/monitors.lua": b"monitor = Virtual-1, preferred, auto, 2\n",
-        ".config/chromium-flags.conf": b"--ozone-platform=wayland\n--enable-wayland-ime\n",
+        ".local/state/omarchy/toggles/hypr/zz-try-omarchy.lua": b'pcall(dofile, "/usr/share/try-omarchy/hyprland.lua")\n',
         ".config/omarchy/extensions/omarchy-menu.jsonc": (
             b'{\n  "setup.try-omarchy": {"label": "Try Omarchy Settings", "action": "omarchy-native-settings"},\n'
             b'  "launch.notes": {"label": "Notes", "action": "obsidian"}\n}\n'),

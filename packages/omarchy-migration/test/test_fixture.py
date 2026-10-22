@@ -23,8 +23,7 @@ SAMPLE = Path(__file__).resolve().parent / "fixtures/fixture-request.json"
 EXPORTED_FILES = {
     "Projects/demo/changed.txt", "Projects/demo/untracked.txt",
     ".config/example-theme/selected", ".config/unfamiliar-example/settings",
-    ".config/hypr/input.lua", ".config/chromium-flags.conf",
-    ".config/omarchy/extensions/omarchy-menu.jsonc",
+    ".config/omarchy/shell.json", ".config/omarchy/extensions/omarchy-menu.jsonc",
 }
 
 
@@ -74,7 +73,7 @@ class RequestTests(unittest.TestCase):
         available = {adapter["id"] for adapter in capabilities["adapters"] if adapter["available"]}
         self.assertEqual(available, set(fixture.SUPPORTED_ADAPTERS))
         categories = {item["id"]: item for item in inventory["categories"]}
-        self.assertEqual((categories["configuration"]["files"], categories["files-and-projects"]["files"]), (5, 2))
+        self.assertEqual((categories["configuration"]["files"], categories["files-and-projects"]["files"]), (4, 2))
         self.assertEqual((categories["caches"]["files"], categories["caches"]["default_selected"]), (0, False))
         share = inventory["mounts"][0]
         self.assertEqual((share["id"], share["linked"], share["measured"], share["files"]), ("mac-share", True, True, 2))
@@ -148,11 +147,11 @@ class ExportFixtureTests(unittest.TestCase):
         originals = decoded["provenance"]["originals"]
         self.assertEqual({path for path in files if not path.startswith(originals + "/")}, EXPORTED_FILES)
         self.assertEqual({path[len(originals) + 1:] for path in files if path.startswith(originals + "/")},
-                         {".config/hypr/input.lua", ".config/chromium-flags.conf", ".config/omarchy/extensions/omarchy-menu.jsonc"})
+                         {".config/omarchy/shell.json", ".config/omarchy/extensions/omarchy-menu.jsonc"})
         self.assertEqual(decoded["schema"], contract.BUNDLE)
         self.assertEqual(decoded["provenance"]["policy_revision"], receipt["policy_revision"])
         excluded = {item["source"] for item in decoded["provenance"]["collection"]["exceptions"] if item["outcome"] == "excluded"}
-        self.assertEqual(excluded, {".config/hypr/monitors.lua"})
+        self.assertEqual(excluded, {".config/hypr/monitors.lua", ".local/state/omarchy/toggles/hypr/zz-try-omarchy.lua"})
         self.assertEqual(receipt["estimates"]["entries"], len(decoded["entries"]))
         self.assertEqual(receipt["bundle"]["bytes"], (self.output / "bundle.age").stat().st_size)
         before = (self.output / "bundle.age").stat()
@@ -171,11 +170,11 @@ class ExportFixtureTests(unittest.TestCase):
         with restore.verified_bundle(self.age, fixture.SECRET, self.output / "bundle.age") as bundle:
             with restore.Restorer(bundle, target, job) as importer:
                 importer.apply(importer.plan())
-        self.assertEqual((target / ".config/hypr/input.lua").read_bytes(), b"input {\n  kb_layout = us\n}\n")
+        self.assertEqual(json.loads((target / ".config/omarchy/shell.json").read_bytes()), {"version": 1})
         originals = target / fixture.collection.ORIGINALS_ROOT / self.request["request_id"]
-        self.assertIn(b"try-omarchy/pinch-input.lua", (originals / ".config/hypr/input.lua").read_bytes())
-        self.assertEqual(stat.S_IMODE((originals / ".config/hypr/input.lua").stat().st_mode), 0o600)
-        self.assertEqual((target / ".config/chromium-flags.conf").read_bytes(), b"--ozone-platform=wayland\n")
+        self.assertIn(b'"idle"', (originals / ".config/omarchy/shell.json").read_bytes())
+        self.assertEqual(stat.S_IMODE((originals / ".config/omarchy/shell.json").stat().st_mode), 0o600)
+        self.assertFalse((target / ".local/state/omarchy/toggles/hypr/zz-try-omarchy.lua").exists())
         menu = (target / ".config/omarchy/extensions/omarchy-menu.jsonc").read_bytes()
         self.assertEqual(json.loads(menu), {"launch.notes": {"label": "Notes", "action": "obsidian"}})
         self.assertFalse((target / ".config/hypr/monitors.lua").exists())

@@ -7,9 +7,13 @@ targets, and the two data-only transforms. Callers own all file access.
 from collections import namedtuple
 import fnmatch
 import json
+from pathlib import Path
 import re
 
 from . import contract
+
+# The one provider policy this package ships: Try Omarchy's shell build.
+SHIPPED = Path(__file__).resolve().parent / "policies/try-omarchy-4b948a8.json"
 
 # Transforms read whole files; policy targets are small configuration files.
 MAX_TRANSFORM_INPUT = 1024 * 1024

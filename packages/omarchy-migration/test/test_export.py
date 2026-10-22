@@ -223,9 +223,9 @@ class ExportTests(unittest.TestCase):
         self.assertNotIn("unexpected", outcomes, summary["comparison"]["examples"])
         self.assertNotIn("changed-since-export", outcomes)
         self.assertGreater(outcomes["identical"], 0)
-        self.assertEqual(outcomes["transformed"], 3)
-        # Three cleaned files' originals, plus the directories that hold them.
-        self.assertGreater(outcomes["original-copy"], 3)
+        self.assertEqual(outcomes["transformed"], 2)
+        # Two cleaned files' originals, plus the directories that hold them.
+        self.assertGreater(outcomes["original-copy"], 2)
         self.assertEqual(outcomes["inert"], 1)  # the Work link into the shared folder
         self.assertEqual(json.loads((workdir / "trial-report.json").read_text())["comparison"], summary["comparison"])
         details = {(item["source"], item["outcome"]) for item in summary["exception_details"]}

@@ -20,7 +20,7 @@ from . import contract, policy as migration_policy
 from . import collection
 from .categories import CATEGORIES, DEFAULT_SELECTED, category
 
-POLICY_PATH = Path(__file__).resolve().parent / "policies/try-omarchy-82927e9.json"
+POLICY_PATH = migration_policy.SHIPPED
 DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 MAX_DEPTH = 64
 MAX_ENTRIES = 2_000_000

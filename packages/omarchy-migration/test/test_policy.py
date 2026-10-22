@@ -7,6 +7,8 @@ from omarchy_migration import contract, policy, survey
 
 HERE = Path(__file__).resolve().parent
 DOCUMENT = json.loads(survey.POLICY_PATH.read_text())
+# Try's policy before the shell rewrite: its appended blocks still exercise strip-appended-block.
+LEGACY = json.loads((HERE / "fixtures/policies/try-omarchy-82927e9.json").read_text())
 
 # Try's seeded file at e1a0dbe (guest/native-overlay/etc/skel/...).
 SEEDED_MENU = b'''{
@@ -50,13 +52,13 @@ EXTENDED_MENU = b'''{
   },
   "setup.security.touch-id": {"label":"Touch ID","action":"try-omarchy-touch-id"},
   "launch.notes": {"label": "Notes", "action": "obsidian"},  /* keep */
-  "setup.try-omarchy-integrations": {"label":"Try Omarchy Integrations","action":"/usr/local/bin/try-omarchy-integrations"},
+  "setup.move-to-native-install": {"label":"Move to Native Install","action":"/usr/bin/try-omarchy-export-home"},
 }
 '''
 
 
 def rule(rule_id):
-    return next(item for item in DOCUMENT["rules"] if item["id"] == rule_id)
+    return next(item for item in DOCUMENT["rules"] + LEGACY["rules"] if item["id"] == rule_id)
 
 
 class MatchTests(unittest.TestCase):
@@ -74,8 +76,7 @@ class MatchTests(unittest.TestCase):
         self.assertIsNone(self.policy.match(".config/chromium-flags.conf.d/x"))
 
     def test_tree_rules_cover_descendants(self):
-        self.assertEqual(self.policy.match(".local/state/omarchy/toggles/hypr/flags.lua").item["id"],
-                         "omarchy-hypr-toggles")
+        self.assertEqual(self.policy.match(".local/state/try-omarchy/menu-rows.json").item["id"], "try-state")
 
     def test_excluding_a_directory_excludes_its_descendants(self):
         self.assertEqual(self.policy.match(".local/share/omarchy/bin/omarchy").item["id"], "omarchy-runtime-link")
@@ -101,7 +102,7 @@ class MatchTests(unittest.TestCase):
                      ".local/state/omarchy/current/theme/name", ".local/state/omarchy/agents/state.json",
                      ".local/share/applications/chatgpt.desktop", ".local/share/zoxide/db.zo"):
             self.assertIsNone(self.policy.match(path), path)
-        self.assertEqual(self.policy.match(".local/state/omarchy/toggles/hypr/flags.lua").item["action"], "preserve")
+        self.assertIsNone(self.policy.match(".local/state/omarchy/toggles/hypr/flags.lua"))
 
     def test_revision_three_stores_from_the_windows_importer_comparison(self):
         for path, store in ((".config/google-chrome/Default/Cookies", "google-chrome"),
@@ -118,14 +119,48 @@ class MatchTests(unittest.TestCase):
             self.assertIsNone(self.policy.match(path), path)
         self.assertEqual(self.policy.share_store("old/.config/google-chrome")["id"], "share-browser-profiles")
 
-    def test_try_settings_desktop_override_is_excluded_but_other_entries_migrate(self):
-        match = self.policy.match(".local/share/applications/try-omarchy-settings.desktop")
-        self.assertEqual((match.item["id"], match.item["action"]), ("try-settings-desktop-override", "exclude"))
-        self.assertIsNone(self.policy.match(".local/share/applications/try-omarchy-settings.desktop.bak"))
+    def test_shell_try_vm_settings_are_excluded_or_cleaned(self):
+        for path, rule_id in ((".local/state/omarchy/toggles/hypr/zz-try-omarchy.lua", "try-hypr-profile"),
+                              (".config/fcitx5/config", "try-fcitx5-keys"),
+                              (".config/omarchy/backgrounds/tokyo-night/try-omarchy-wallpaper.jpg", "try-wallpaper-link")):
+            match = self.policy.match(path)
+            self.assertEqual((match.item["id"], match.item["action"]), (rule_id, "exclude"), path)
+        for path in (".config/fcitx5/profile", ".config/omarchy/backgrounds/tokyo-night/1-mine.png",
+                     ".local/share/applications/try-omarchy-settings.desktop"):
+            self.assertIsNone(self.policy.match(path), path)
+        shell = b'{\n  "version": 1,\n  "idle": {\n    "screensaver": 0,\n    "lock": 0\n  },\n  "bar": {}\n}\n'
+        result = self.policy.transform(rule("try-idle-defaults"), shell)
+        self.assertEqual((json.loads(result.data), result.status), ({"version": 1, "bar": {}}, "applied"))
 
     def test_menu_removal_handles_the_current_try_entry(self):
         current = b'{\n  "setup.try-omarchy": {\n    "icon": "x",\n    "iconFont": "omarchy",\n    "label": "Try Omarchy Settings"\n  }\n}\n'
         self.assertEqual(json.loads(self.policy.transform(rule("try-menu-entries"), current).data), {})
+
+    def test_every_menu_row_the_shell_build_writes_is_removed(self):
+        # Try's menu-entries ROWS at 4b948a8, the native-install-export row, and the battery row
+        # v1.0.0 to v1.1.0 wrote, which later packages leave behind.
+        try_keys = ["setup.try-omarchy", "setup.security.touch-id", "setup.security.onepassword-touch-id",
+                    "setup.import-previous-vm", "setup.move-to-native-install", "update.timezone",
+                    "setup.direct-boot", "update.firmware", "update.hardware.wifi", "update.hardware.bluetooth",
+                    "appearance.top-bar.indicators.battery-percentage-on",
+                    "appearance.top-bar.indicators.battery-percentage-off",
+                    "install.gaming.geforce-now", "install.gaming.battlenet", "install.gaming.lutris",
+                    "trigger.appearance.top-bar.indicators.battery-percentage"]
+        rows = "".join(f'  "{key}": {{"label": "x"}},\n' for key in try_keys)
+        menu = ('{\n  // Try Omarchy: Mac integration rows and VM adjustments (added once each; safe to remove).\n'
+                + rows + '  "launch.notes": {"label": "Notes"},\n}\n').encode()
+        result = self.policy.transform(rule("try-menu-entries"), menu)
+        self.assertEqual(result.status, "applied")
+        self.assertEqual([member[0] for member in policy._Scanner(result.data.decode()).members()], ["launch.notes"])
+        self.assertEqual(sorted(rule("try-menu-entries")["transform"]["keys"]), sorted(try_keys))
+
+    def test_credential_folders_import_previous_brings_in_are_stores(self):
+        for path, store in ((".aws/credentials", "aws"), (".kube/config", "kube"),
+                            (".password-store/mail.gpg", "password-store"), (".config/gh/hosts.yml", "github-cli")):
+            match = self.policy.match(path)
+            self.assertEqual((match.kind, match.item["id"]), ("store", store), path)
+        for path in (".config/gh/config.yml", ".config/gh", ".awsome/notes"):
+            self.assertIsNone(self.policy.match(path), path)
 
     def test_share_stores_match_names_at_any_depth_and_nothing_else(self):
         cases = {".ssh": "share-ssh", "Users-backup/scott/.ssh": "share-ssh", "Library/Keychains": "share-macos-keychains",
@@ -168,7 +203,7 @@ class MatchTests(unittest.TestCase):
 
 class StripBlockTests(unittest.TestCase):
     def setUp(self):
-        self.policy = policy.Policy(DOCUMENT)
+        self.policy = policy.Policy(LEGACY)
 
     def test_try_input_block_is_removed_and_user_edits_survive(self):
         block = rule("try-hypr-input-overrides")["transform"]["block"].encode()
@@ -225,7 +260,7 @@ class StripBlockTests(unittest.TestCase):
         transform = rule("try-hypr-input-overrides")["transform"]
         self.assertEqual({item["block"].encode() for item in transform["earlier"]}, {PINCH_ONLY_BLOCK, REPAIRED_BLOCK})
         for damage in ({"commit": "1ec823c"}, {"path": "/abs"}, {"block": ""}, {"block": "-- no marker here\n"}):
-            document = copy.deepcopy(DOCUMENT)
+            document = copy.deepcopy(LEGACY)
             target = next(item for item in document["rules"] if item["id"] == "try-hypr-input-overrides")
             target["transform"]["earlier"][0].update(damage)
             with self.subTest(damage=damage), self.assertRaises(contract.ContractError):
