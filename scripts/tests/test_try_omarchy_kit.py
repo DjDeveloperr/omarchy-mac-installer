@@ -27,6 +27,21 @@ class TryOmarchyKitTests(unittest.TestCase):
     def write_pin(self, pin: dict) -> None:
         (self.directory / "Packaging/try-omarchy-kit.json").write_text(json.dumps(pin))
 
+    def pinned_kit(self, **changes) -> dict:
+        """The checkout's pin with a consistent kit, then CHANGES to that kit."""
+        pin = self.pin()
+        pin["kit"] = {"release": "v1.2.3", "revision": pin["client"]["revision"], "url": kit.kit_url("v1.2.3"),
+                      "bytes": 1, "sha256": "0" * 64, "version": "v1.2.3",
+                      "runProtocolVersion": kit.protocol_version(kit.VENDOR), **changes}
+        return pin
+
+    def test_the_checkout_pin_is_consistent(self) -> None:
+        pin = kit.check(ROOT)
+        if pin["kit"] is not None:
+            self.assertEqual(pin["kit"]["revision"], pin["client"]["revision"])
+            self.assertEqual(pin["kit"]["version"], pin["kit"]["release"])
+            self.assertEqual(pin["kit"]["runProtocolVersion"], kit.protocol_version(kit.VENDOR))
+
     def test_the_vendored_client_matches_its_pin(self) -> None:
         kit.check(ROOT)
         kit.check(self.directory)
@@ -43,20 +58,73 @@ class TryOmarchyKitTests(unittest.TestCase):
             lambda pin: pin.update(format=2),
             lambda pin: pin["client"].update(repository="someone/fork"),
             lambda pin: pin["client"].update(revision="main"),
-            lambda pin: pin.update(kit={"release": "v1.2.3", "url": "https://example.com/TryOmarchyKit.zip",
-                                        "bytes": 1, "sha256": "0" * 64}),
-            lambda pin: pin.update(kit={"release": "v1.2.3", "url": kit.kit_url("v1.2.3"),
-                                        "bytes": True, "sha256": "0" * 64}),
+            lambda pin: pin.update(kit=self.pinned_kit(url="https://example.com/TryOmarchyKit.zip")["kit"]),
+            lambda pin: pin.update(kit=self.pinned_kit(bytes=True)["kit"]),
+            lambda pin: pin.update(kit=self.pinned_kit(revision="main")["kit"]),
+            lambda pin: pin.update(kit=self.pinned_kit(runProtocolVersion=0)["kit"]),
+            lambda pin: pin.update(kit=self.pinned_kit(runProtocolVersion=True)["kit"]),
+            lambda pin: pin.update(kit={key: value for key, value in self.pinned_kit()["kit"].items()
+                                        if key != "version"}),
         ):
             pin = copy.deepcopy(good)
             change(pin)
             self.write_pin(pin)
             with self.assertRaises(ValueError):
                 kit.check(self.directory)
-        pin = copy.deepcopy(good)
-        pin["kit"] = {"release": "v1.2.3", "url": kit.kit_url("v1.2.3"), "bytes": 1, "sha256": "0" * 64}
-        self.write_pin(pin)
+        self.write_pin(self.pinned_kit())
         self.assertEqual(kit.check(self.directory)["kit"]["release"], "v1.2.3")
+
+    def test_a_development_kit_is_never_pinned(self) -> None:
+        for version in ("development", "v1.2.4"):
+            self.write_pin(self.pinned_kit(version=version))
+            with self.assertRaisesRegex(ValueError, "is not its release"):
+                kit.check(self.directory)
+
+    def test_the_kit_and_the_client_come_from_one_revision(self) -> None:
+        self.write_pin(self.pinned_kit(revision="1" * 40))
+        with self.assertRaisesRegex(ValueError, "different revisions"):
+            kit.check(self.directory)
+
+    def test_the_kit_speaks_the_vendored_clients_protocol(self) -> None:
+        self.write_pin(self.pinned_kit(runProtocolVersion=kit.protocol_version(kit.VENDOR) + 1))
+        with self.assertRaisesRegex(ValueError, "run-mode protocol"):
+            kit.check(self.directory)
+
+    def test_the_protocol_version_is_read_from_the_client(self) -> None:
+        source = self.directory / "Vendor/TryOmarchyKitClient/VMRunProtocol.swift"
+        self.assertGreaterEqual(kit.protocol_version(source.parent), 1)
+        source.write_text(source.read_text().replace("public static let version =", "public static let v ="))
+        with self.assertRaisesRegex(ValueError, "cannot find VMRunProtocol.version"):
+            kit.protocol_version(source.parent)
+
+    def test_a_release_manifest_must_name_its_release(self) -> None:
+        valid = {"format": 1, "version": "v1.2.3", "runProtocolVersion": 1, "buildDate": "2026-10-23T09:30:05Z"}
+        self.assertEqual(kit.kit_manifest(valid, "v1.2.3"), {"version": "v1.2.3", "runProtocolVersion": 1})
+        for change in ({"format": 2}, {"format": True}, {"runProtocolVersion": 0},
+                       {"runProtocolVersion": "1"}, {"version": "development"}, {"version": "v1.2.4"}):
+            with self.assertRaises(ValueError):
+                kit.kit_manifest({**valid, **change}, "v1.2.3")
+        with self.assertRaises(ValueError):
+            kit.kit_manifest([valid], "v1.2.3")
+
+    def test_the_online_check_compares_the_release_with_the_pin(self) -> None:
+        pin = self.pinned_kit()
+        self.write_pin(pin)
+        published = {"format": 1, "version": "v1.2.3", "runProtocolVersion": pin["kit"]["runProtocolVersion"],
+                     "buildDate": "2026-10-23T09:30:05Z"}
+        tag = pin["kit"]["revision"]
+        original = (kit.tag_revision, kit.download)
+        self.addCleanup(lambda: (setattr(kit, "tag_revision", original[0]), setattr(kit, "download", original[1])))
+        kit.tag_revision = lambda release: tag
+        kit.download = lambda url, destination: destination.write_text(json.dumps(published))
+        self.assertEqual(kit.check_online(self.directory)["kit"]["release"], "v1.2.3")
+        published["runProtocolVersion"] += 1
+        with self.assertRaisesRegex(ValueError, "differs from the pin"):
+            kit.check_online(self.directory)
+        published["runProtocolVersion"] -= 1
+        tag = "1" * 40
+        with self.assertRaisesRegex(ValueError, "no longer names"):
+            kit.check_online(self.directory)
 
     def test_without_a_pinned_kit_there_is_nothing_to_embed(self) -> None:
         pin = self.pin()
@@ -80,9 +148,7 @@ class TryOmarchyKitTests(unittest.TestCase):
         cache.mkdir()
         digest = hashlib.sha256(b"kit").hexdigest()
         (cache / f"{digest}.zip").write_bytes(b"kit")
-        pin = self.pin()
-        pin["kit"] = {"release": "v1.2.3", "url": kit.kit_url("v1.2.3"), "bytes": 3, "sha256": digest}
-        self.write_pin(pin)
+        self.write_pin(self.pinned_kit(bytes=3, sha256=digest))
         self.assertEqual(kit.fetch(cache, self.directory, {}), cache / f"{digest}.zip")
 
 
