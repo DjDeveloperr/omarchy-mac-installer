@@ -2,7 +2,7 @@
 #
 # Signs the Try Omarchy kit inside the app as this installer, so macOS asks for
 # Accessibility, Microphone and Camera in the installer's name
-# (docs/try-omarchy-trial.md). Every Mach-O in the kit is signed, as
+# (docs/try.md). Every Mach-O in the kit is signed, as
 # notarization requires: the runtime's libraries and zstd, QEMU with the
 # hypervisor and microphone, the helper with the camera and microphone, then
 # the kit bundle. The kit must still pass its launcher's own check.

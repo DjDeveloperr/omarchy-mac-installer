@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The Try Omarchy kit the trial runs, and the client library from the same release.
 
-Packaging/try-omarchy-kit.json pins both (docs/try-omarchy-trial.md):
+Packaging/try-omarchy-kit.json pins both (docs/try.md):
 
   client  the TryOmarchyKitClient sources vendored in Vendor/, by revision and digest
   kit     TryOmarchyKit.zip from that revision's GitHub release, by URL, size and

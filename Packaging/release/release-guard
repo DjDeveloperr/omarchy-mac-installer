@@ -292,7 +292,7 @@ class Guard:
                 and app == app.parents[2] / "Contents/Helpers/Try Omarchy Kit.app")
 
     def check_vm_kit(self, app: Path, label: str) -> None:
-        """The Try Omarchy kit the trial runs (docs/try-omarchy-trial.md)."""
+        """The Try Omarchy kit the trial runs (docs/try.md)."""
         if app.is_symlink():
             self.find(label, "the Try Omarchy kit is a symbolic link")
             return
