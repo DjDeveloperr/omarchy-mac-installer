@@ -63,6 +63,7 @@ Changes to `main` go through pull requests with approval from someone other than
 - [Extraction provenance and boundaries](docs/extraction.md): original revision, preserved history, inherited build issues and future shared-package integration.
 - [Validation and macOS handoff](docs/validation.md): what has been checked and what remains.
 - [Simulation guide](Development/Simulation.md): debug-only UI scenarios that avoid real installation.
+- [Try Omarchy in a window](docs/try-omarchy-trial.md): the trial VM, its pinned kit and its signing.
 
 The preserved release and cutover tools target the original publisher's infrastructure. They are not a release procedure for Omacom. Publishing, signing, privileged helper registration and physical installation require separate preparation and authorization.
 

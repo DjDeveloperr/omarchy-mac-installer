@@ -29,7 +29,8 @@ check off).
 
 Notarization rejects any Mach-O the release signing does not reach, archived
 ones included, and the dry run never notarizes. So every app bundle must
-carry its restore-image decoder in Contents/Helpers (and nothing else there),
+carry its restore-image decoder in Contents/Helpers (and nothing else there
+but the Try Omarchy kit),
 and each bundled engine archive may hold no Mach-O beyond the authenticated
 runtime Engine/runtime-macho.json pins.
 
@@ -256,6 +257,8 @@ class Guard:
                     nested_label = f"{label}/{nested.relative_to(top)}"
                     if self.is_recovery_template(nested):
                         self.check_recovery_template(nested, nested_label)
+                    elif self.is_vm_kit(nested):
+                        self.check_vm_kit(nested, nested_label)
                     else:
                         self.check_app(nested, nested_label)
 
@@ -283,6 +286,31 @@ class Guard:
         expected = outer / "Contents/Resources/RecoveryTemplate" / (
             self.values["INSTALLER_RECOVERY_APP_NAME"] + ".app")
         return outer.name.endswith(".app") and app == expected
+
+    def is_vm_kit(self, app: Path) -> bool:
+        return (len(app.parents) >= 3 and app.parents[2].name.endswith(".app")
+                and app == app.parents[2] / "Contents/Helpers/Try Omarchy Kit.app")
+
+    def check_vm_kit(self, app: Path, label: str) -> None:
+        """The Try Omarchy kit the trial runs (docs/try-omarchy-trial.md)."""
+        if app.is_symlink():
+            self.find(label, "the Try Omarchy kit is a symbolic link")
+            return
+        try:
+            info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+        except (OSError, ValueError, plistlib.InvalidFileException):
+            self.find(label, "the Try Omarchy kit Info.plist is missing or unreadable")
+            return
+        if info.get("CFBundleIdentifier") != "dev.tryomarchy.kit" or info.get("TryOmarchyKitFormat") != 1:
+            self.find(label, "the Try Omarchy kit is not a format 1 kit")
+        helper = app / "Contents/MacOS/omarchy-vm-helper"
+        if helper.is_symlink() or not helper.is_file():
+            self.find(label, "the Try Omarchy kit's helper is missing or linked")
+        # The kit has no bridged-networking daemon, and downloads its image.
+        if (app / "Contents/Library").exists():
+            self.find(label, "the Try Omarchy kit carries a launch daemon")
+        if not (app / "Contents/Resources/guest/download.json").is_file():
+            self.find(label, "the Try Omarchy kit carries no image download manifest")
 
     def check_recovery_template(self, app: Path, label: str) -> None:
         if app.is_symlink():
@@ -391,6 +419,8 @@ class Guard:
         elif decoder.read_bytes()[:4] not in MACHO:
             self.find(label, "Contents/Helpers/omarchy-restore-image is not a Mach-O executable")
         for entry in sorted(helpers.iterdir()) if helpers.is_dir() and not helpers.is_symlink() else []:
+            if entry.name == "Try Omarchy Kit.app" and entry.is_dir() and not entry.is_symlink():
+                continue
             if entry.name != decoder.name:
                 self.find(label, f"Contents/Helpers/{entry.name} is not the restore-image decoder")
         artifacts = app / "Contents/Resources/Engine/artifacts"

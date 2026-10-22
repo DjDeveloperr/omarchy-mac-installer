@@ -172,6 +172,30 @@ class ReleaseGuardTest(unittest.TestCase):
         (self.app / "Contents/Helpers/other-tool").write_bytes(b"\xcf\xfa\xed\xfe")
         self.assertRefused("Contents/Helpers/other-tool is not the restore-image decoder")
 
+    def vm_kit(self) -> Path:
+        kit = self.app / "Contents/Helpers/Try Omarchy Kit.app"
+        (kit / "Contents/MacOS").mkdir(parents=True)
+        (kit / "Contents/Resources/guest").mkdir(parents=True)
+        self.write_plist(kit / "Contents/Info.plist",
+                         {"CFBundleIdentifier": "dev.tryomarchy.kit", "TryOmarchyKitFormat": 1})
+        (kit / "Contents/MacOS/omarchy-vm-helper").write_bytes(b"kit helper fixture")
+        (kit / "Contents/Resources/guest/download.json").write_text("{}")
+        return kit
+
+    def test_the_try_omarchy_kit_is_accepted_beside_the_decoder(self) -> None:
+        self.vm_kit()
+        self.assertEqual([], [finding for finding in self.findings() if "Helpers" in finding])
+
+    def test_a_kit_with_a_daemon_or_no_download_manifest_is_refused(self) -> None:
+        kit = self.vm_kit()
+        (kit / "Contents/Library/LaunchDaemons").mkdir(parents=True)
+        self.assertRefused("the Try Omarchy kit carries a launch daemon")
+        (kit / "Contents/Resources/guest/download.json").unlink()
+        self.assertRefused("the Try Omarchy kit carries no image download manifest")
+        self.edit_plist("Contents/Helpers/Try Omarchy Kit.app/Contents/Info.plist",
+                        lambda value: value.update(CFBundleIdentifier="dev.tryomarchy.native"))
+        self.assertRefused("the Try Omarchy kit is not a format 1 kit")
+
     def test_an_engine_with_its_own_native_tool_is_refused(self) -> None:
         # The 2.3.0 notarization failure: engine .50 carried the ad hoc
         # signed decoder in bin/, out of the release signing's reach.
