@@ -46,7 +46,7 @@
     func testTheTryScreenShowsSpaceAndOptionalPermissions() async {
       let environment = FakeTrialEnvironment()
       let trial = ready(environment)
-      XCTAssertEqual(trial.entryTitle, "Try it in a window")
+      XCTAssertEqual(trial.entryTitle, "Try in a VM")
       guard case .ready(let space, let permissions) = trial.phase else {
         return XCTFail("Expected the Try screen")
       }
@@ -178,7 +178,7 @@
       XCTAssertNil(PlainLanguage.trialDiskNotice(bytes: 0))
       XCTAssertEqual(
         PlainLanguage.trialDiskNotice(bytes: 9_400_000_000),
-        "The Omarchy trial uses 9 GB of macOS’s space, already counted above. Installing keeps it, in Application Support › Try Omarchy."
+        "Omarchy’s VM uses 9 GB of macOS’s space, already counted above. Installing keeps it, in Application Support › Try Omarchy."
       )
     }
   }

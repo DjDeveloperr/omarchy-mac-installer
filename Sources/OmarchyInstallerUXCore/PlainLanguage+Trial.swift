@@ -3,13 +3,13 @@
   import TryOmarchyKitClient
 
   extension PlainLanguage {
-    // MARK: Trial — Omarchy in a window
+    // MARK: Try — Omarchy in a VM
 
-    public static let trialEntry = "Try it in a window"
+    public static let trialEntry = "Try in a VM"
     public static let trialOpenFullApp = "Open in Try Omarchy"
-    public static let trialHeadline = "Try Omarchy in a window"
+    public static let trialHeadline = "Try Omarchy in a VM"
     public static let trialSubheadline =
-      "Omarchy runs in a virtual machine on macOS, without changing your disk. When it first starts, it asks for your account, keyboard and time zone."
+      "Omarchy runs in a virtual machine, in a window beside macOS, without changing your disk. When it first starts, it asks for your account, keyboard and time zone."
     public static let trialPermissionsNote =
       "Each permission is optional. Omarchy starts without them."
     public static let trialAccessibility = "Use ⌘ as the Super key"
@@ -44,12 +44,12 @@
       "Free up \(gigabytes(space.requiredBytes - (space.freeBytes ?? 0))) more to try Omarchy."
     }
 
-    /// The plan review's note on the trial VM, which the native install
-    /// leaves in place.
+    /// The plan review's note on the VM, which the native install leaves in
+    /// place.
     public static func trialDiskNotice(bytes: Int64) -> String? {
       guard bytes >= 100_000_000 else { return nil }
       return
-        "The Omarchy trial uses \(gigabytes(bytes)) of macOS’s space, already counted above. Installing keeps it, in Application Support › Try Omarchy."
+        "Omarchy’s VM uses \(gigabytes(bytes)) of macOS’s space, already counted above. Installing keeps it, in Application Support › Try Omarchy."
     }
 
     public static func trialProgressTitle(_ phase: VMRunPhase) -> String {
@@ -70,14 +70,17 @@
     public static func trialFailure(_ code: VMRunErrorCode) -> (headline: String, detail: String) {
       switch code {
       case .vmAlreadyOpen:
-        ("Omarchy is open in Try Omarchy", "Shut it down there, then try again here.")
+        (
+          "Omarchy is open in Try Omarchy",
+          "Or in another copy of \(windowTitle). Shut it down there, then try again here."
+        )
       case .volumeNotAPFS:
         ("Omarchy’s folder isn’t on an APFS disk", "The VM needs APFS for its disk.")
       case .macOSTooOld:
-        ("This Mac needs a newer macOS", "Omarchy in a window needs macOS 15 or newer.")
+        ("This Mac needs a newer macOS", "Omarchy in a VM needs macOS 15 or newer.")
       case .hypervisorUnavailable:
         (
-          "This Mac can’t run Omarchy in a window",
+          "This Mac can’t run Omarchy in a VM",
           "It does not offer the virtualization Omarchy needs."
         )
       case .notEnoughSpace:
@@ -93,8 +96,8 @@
         ("Omarchy’s folder isn’t available", "Reconnect its drive, then try again.")
       case .storageLayoutUnknown:
         (
-          "This VM was made by a newer Try Omarchy",
-          "Open it in Try Omarchy, or update this installer."
+          "This VM was made by a newer version",
+          "Update \(windowTitle) to start it."
         )
       case .hostSleepUnavailable, .hostWakeFailed:
         ("Omarchy stopped after this Mac slept", "Start it again to continue.")
