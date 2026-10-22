@@ -138,7 +138,7 @@ class Check:
         for path in expected:
             self.find(f"the kit has no {path.relative_to(kit)}")
         manifest = self.check_manifest(kit, pinned)
-        if manifest:
+        if manifest and not self.findings:
             print(f"check-try-kit: kit {manifest['version']}, run-mode protocol {manifest['runProtocolVersion']}, "
                   f"{signed} Mach-O files signed as {identifier}")
 
