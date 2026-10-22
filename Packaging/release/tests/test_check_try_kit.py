@@ -67,7 +67,7 @@ class CheckTryKitTest(unittest.TestCase):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
-        self.app = self.root / "Omarchy Installer.app"
+        self.app = self.root / f"{check.identity()['INSTALLER_APP_NAME']}.app"
         self.kit = self.app / check.KIT
         self.codesign = FakeCodesign()
         self.pin_path = self.root / "try-omarchy-kit.json"
