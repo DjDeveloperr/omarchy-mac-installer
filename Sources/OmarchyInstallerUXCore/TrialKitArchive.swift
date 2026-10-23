@@ -10,6 +10,7 @@
     public static let maximumEntries = 20_000
     public static let maximumUnpackedBytes: UInt64 = 4 << 30
     public static let maximumNameBytes = 1_024
+    static let maximumDirectoryBytes: UInt64 = 32 << 20
 
     public enum Kind: Equatable, Sendable {
       case file
@@ -56,7 +57,9 @@
       guard disk == 0, directoryDisk == 0, entriesOnDisk == entryCount, entryCount != 0xFFFF,
         directorySize != 0xFFFF_FFFF, directoryOffset != 0xFFFF_FFFF
       else { throw Refusal.unsupported }
-      guard Int(entryCount) <= maximumEntries else { throw Refusal.tooLarge }
+      guard Int(entryCount) <= maximumEntries, directorySize <= maximumDirectoryBytes else {
+        throw Refusal.tooLarge
+      }
       guard directoryOffset + directorySize <= size - tailSize + UInt64(end) else {
         throw Refusal.unreadable
       }
