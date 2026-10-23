@@ -69,6 +69,11 @@ final class LiveTrialEnvironment: TrialEnvironment {
   /// System Settings opens once macOS has added the row, as in Try Omarchy.
   func requestAccessibility() {
     guard !AXIsProcessTrusted() else { return }
+    // A replaced build leaves a row tied to its old signature, which System
+    // Settings shows and turning on doesn't grant to this build. Reset only
+    // this app's decision so the prompt registers the code installed now, as
+    // Try Omarchy's launcher does.
+    Self.resetOwnAccessibilityDecision()
     // The value of kAXTrustedCheckOptionPrompt, which Swift 6 treats as mutable.
     _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
     guard
@@ -76,6 +81,17 @@ final class LiveTrialEnvironment: TrialEnvironment {
         string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
     else { return }
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { NSWorkspace.shared.open(settings) }
+  }
+
+  private static func resetOwnAccessibilityDecision() {
+    guard let identifier = Bundle.main.bundleIdentifier, !identifier.isEmpty else { return }
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
+    process.arguments = ["reset", "Accessibility", identifier]
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
+    guard (try? process.run()) != nil else { return }
+    process.waitUntilExit()
   }
 
   func requestMicrophone() async { await Self.request(.audio, settings: "Privacy_Microphone") }
