@@ -407,6 +407,8 @@
         if case .starting = phase {
           phase = .starting(TrialProgress(phase: step, percent: percent))
         }
+      case .notice:
+        break
       case .ready:
         if !shutdownRequested { phase = .running(environment.permissions()) }
       case .stopping:
