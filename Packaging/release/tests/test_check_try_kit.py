@@ -72,7 +72,9 @@ class CheckTryKitTest(unittest.TestCase):
         self.codesign = FakeCodesign()
         self.pin_path = self.root / "try-omarchy-kit.json"
         self.pin(None)
+        self.daemon_answer = check.NETWORK_SERVICE
         for patch in (mock.patch.object(check, "codesign", self.codesign),
+                      mock.patch.object(check, "network_daemon_check", lambda daemon: self.daemon_answer),
                       mock.patch.object(check, "PIN", self.pin_path),
                       mock.patch.dict(os.environ, {}, clear=False)):
             patch.start()
@@ -93,12 +95,23 @@ class CheckTryKitTest(unittest.TestCase):
     def make_kit(self, version: str = "v1.2.3", protocol: int = PROTOCOL) -> None:
         resources = self.kit / "Contents/Resources"
         for relative, entitlement in ((check.QEMU, "vm-qemu.entitlements"), (check.HELPER, "vm-helper.entitlements"),
+                                      (check.NETWORK_DAEMON, None),
                                       ("Contents/Resources/runtime/lib/libglib-2.0.0.dylib", None),
                                       ("Contents/Resources/runtime/bin/zstd", None)):
             path = self.kit / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(MACHO)
             self.codesign.sign(path, entitlements=entitlements(entitlement) if entitlement else None)
+        for relative in sorted(check.NETWORK_PINNED):
+            path = self.kit / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(MACHO)
+            self.codesign.sign(path, identifier="dev.tryomarchy.kit", runtime=False)
+        job = self.app / f"Contents/Library/LaunchDaemons/{check.NETWORK_SERVICE}.plist"
+        job.parent.mkdir(parents=True, exist_ok=True)
+        job.write_bytes(plistlib.dumps({
+            "Label": check.NETWORK_SERVICE, "MachServices": {check.NETWORK_SERVICE: True},
+            "BundleProgram": f"{check.KIT}/{check.NETWORK_DAEMON}"}))
         (resources / "scripts").mkdir(exist_ok=True)
         (resources / "scripts/run-qemu-gpu.sh").write_text("#!/bin/bash\n")
         (resources / "kit.json").write_text(json.dumps({
@@ -134,7 +147,7 @@ class CheckTryKitTest(unittest.TestCase):
         self.make_kit()
         status, output, errors = self.run_check()
         self.assertEqual((status, errors), (0, ""))
-        self.assertIn(f"kit v1.2.3, run-mode protocol {PROTOCOL}, 4 Mach-O files signed as {IDENTIFIER}", output)
+        self.assertIn(f"kit v1.2.3, run-mode protocol {PROTOCOL}, 5 Mach-O files signed as {IDENTIFIER}", output)
 
     def test_a_pinned_kit_must_be_in_the_app(self) -> None:
         self.pin("v1.2.3")
@@ -173,6 +186,29 @@ class CheckTryKitTest(unittest.TestCase):
         self.refused(f"the kit's bundle is not signed as {IDENTIFIER}")
         info.unlink()
         self.refused("the kit's Info.plist is missing")
+
+    def test_the_networking_runtime_keeps_the_kits_signatures_and_the_app_registers_its_daemon(self) -> None:
+        self.pin("v1.2.3")
+        self.make_kit()
+        client = self.kit / "Contents/Resources/network/omarchy-network-client"
+        self.codesign.sign(client)
+        self.refused("omarchy-network-client was re-signed")
+        client.unlink()
+        self.refused("the kit has no Contents/Resources/network/omarchy-network-client")
+        self.make_kit()
+        self.codesign.sign(self.kit / check.NETWORK_DAEMON, identifier="dev.tryomarchy.kit")
+        self.refused("omarchy-network-daemon is not signed as")
+        self.make_kit()
+        self.daemon_answer = None
+        self.refused("networking daemon does not accept its runtime")
+        self.daemon_answer = check.NETWORK_SERVICE
+        job = self.app / f"Contents/Library/LaunchDaemons/{check.NETWORK_SERVICE}.plist"
+        job.write_bytes(plistlib.dumps({
+            "Label": check.NETWORK_SERVICE, "MachServices": {check.NETWORK_SERVICE: True},
+            "BundleProgram": "Contents/MacOS/omarchy-network-daemon"}))
+        self.refused("job does not name the kit's service and daemon")
+        job.unlink()
+        self.refused(f"the app has no Contents/Library/LaunchDaemons/{check.NETWORK_SERVICE}.plist")
 
     def test_qemu_and_the_helper_carry_their_entitlements_and_nothing_else_does(self) -> None:
         self.pin("v1.2.3")

@@ -172,7 +172,18 @@ class KitArchiveTests(unittest.TestCase):
         (bundle / kit.KIT_MANIFEST).write_text('{"format": 1}')
         (bundle / "Contents/Info.plist").write_bytes(plistlib.dumps(
             {"CFBundleExecutable": "omarchy-vm-helper", "CFBundlePackageType": "BNDL", **info}))
+        daemon = bundle / kit.KIT_NETWORK_DAEMON
+        daemon.write_text("#!/bin/sh\n")
+        daemon.chmod(0o755)
+        self.write_job(bundle)
         return bundle
+
+    def write_job(self, bundle: Path, **changes: object) -> None:
+        job = bundle / kit.KIT_NETWORK_JOB
+        job.parent.mkdir(parents=True, exist_ok=True)
+        job.write_bytes(plistlib.dumps({
+            "Label": "dev.tryomarchy.kit.network", "MachServices": {"dev.tryomarchy.kit.network": True},
+            "BundleProgram": kit.KIT_NETWORK_DAEMON, "RunAtLoad": False, **changes}))
 
     def archive(self) -> Path:
         archive = self.directory / kit.KIT_NAME
@@ -190,6 +201,34 @@ class KitArchiveTests(unittest.TestCase):
         self.assertTrue((unpacked / "Contents/MacOS/omarchy-vm-helper").stat().st_mode & 0o111)
         with self.assertRaisesRegex(ValueError, "already exists"):
             kit.unpack(self.archive(), helpers)
+
+    def test_embedding_registers_the_kits_daemon_as_the_app(self) -> None:
+        self.kit_folder()
+        app = self.directory / "Omarchy Installer.app"
+        bundle = kit.embed(self.archive(), app)
+        self.assertEqual(bundle, app / kit.EMBEDDED_KIT)
+        job = plistlib.loads((app / "Contents/Library/LaunchDaemons/dev.tryomarchy.kit.network.plist").read_bytes())
+        self.assertEqual(job["BundleProgram"],
+                         "Contents/Helpers/TryOmarchyKit.bundle/Contents/MacOS/omarchy-network-daemon")
+        self.assertEqual((job["Label"], job["MachServices"], job["RunAtLoad"]),
+                         ("dev.tryomarchy.kit.network", {"dev.tryomarchy.kit.network": True}, False))
+        self.assertTrue((app / job["BundleProgram"]).is_file())
+
+    def test_a_networking_job_that_names_another_service_or_program_is_refused(self) -> None:
+        for changes in ({"Label": "../escape"}, {"MachServices": {"dev.tryomarchy.network": True}},
+                        {"BundleProgram": "Contents/MacOS/omarchy-vm-helper"}):
+            with self.subTest(changes=changes):
+                shutil.rmtree(self.source, ignore_errors=True)
+                self.write_job(self.kit_folder(), **changes)
+                app = self.directory / "app.app"
+                shutil.rmtree(app, ignore_errors=True)
+                with self.assertRaisesRegex(ValueError, "does not name its service and daemon"):
+                    kit.embed(self.archive(), app)
+        shutil.rmtree(self.source)
+        (self.kit_folder() / kit.KIT_NETWORK_DAEMON).unlink()
+        shutil.rmtree(self.directory / "app.app")
+        with self.assertRaisesRegex(ValueError, "no networking daemon"):
+            kit.embed(self.archive(), self.directory / "app.app")
 
     def test_an_archive_with_anything_beside_the_kit_is_refused(self) -> None:
         self.kit_folder()

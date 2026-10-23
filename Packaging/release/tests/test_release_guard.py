@@ -209,6 +209,19 @@ class ReleaseGuardTest(unittest.TestCase):
                         lambda value: value.update(CFBundleExecutable="Try Omarchy"))
         self.assertRefused("the Try Omarchy kit's Info.plist does not name its helper")
 
+    def test_the_kits_networking_job_must_name_the_kits_daemon(self) -> None:
+        kit = self.vm_kit()
+        job = self.app / "Contents/Library/LaunchDaemons/dev.tryomarchy.kit.network.plist"
+        program = "Contents/Helpers/TryOmarchyKit.bundle/Contents/MacOS/omarchy-network-daemon"
+        self.write_plist(job, {"Label": "dev.tryomarchy.kit.network", "BundleProgram": program})
+        self.assertRefused("the Try Omarchy kit's networking job does not name the kit's daemon")
+        (kit / "Contents/MacOS/omarchy-network-daemon").write_bytes(b"daemon fixture")
+        self.assertEqual([], [finding for finding in self.findings() if "LaunchDaemons" in finding or "job" in finding])
+        self.write_plist(job, {"Label": "dev.tryomarchy.kit.network", "BundleProgram": "Contents/MacOS/other"})
+        self.assertRefused("the Try Omarchy kit's networking job does not name the kit's daemon")
+        self.write_plist(self.app / "Contents/Library/LaunchDaemons/other.plist", {"Label": "other"})
+        self.assertRefused("Contents/Library/LaunchDaemons/other.plist is not a job this app registers")
+
     def test_the_old_kit_app_is_not_a_kit(self) -> None:
         kit = self.vm_kit()
         kit.rename(self.app / "Contents/Helpers/Try Omarchy Kit.app")

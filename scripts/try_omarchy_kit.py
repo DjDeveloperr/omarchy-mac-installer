@@ -12,6 +12,7 @@ Packaging/try-omarchy-kit.json pins both (docs/try.md):
   try_omarchy_kit.py vendor --source TRY_OMARCHY_CHECKOUT [--release vX.Y.Z]
   try_omarchy_kit.py fetch --cache DIR
   try_omarchy_kit.py unpack ARCHIVE DIR
+  try_omarchy_kit.py embed ARCHIVE APP
 
 `check` verifies the vendored client against the pin, and that a pinned kit
 comes from the client's revision, is a release and speaks the client's
@@ -24,7 +25,11 @@ A kit archive holds one folder, TryOmarchyKit.bundle: a helper bundle with no
 bundle identifier, its helper at Contents/MacOS/omarchy-vm-helper and its
 manifest at Contents/Resources/kit.json. `unpack` extracts an archive into DIR,
 which must not hold a kit yet, checks that layout and prints the kit's path.
-The app embeds its kit at Contents/Helpers/TryOmarchyKit.bundle.
+
+`embed` unpacks the kit into APP's Contents/Helpers/TryOmarchyKit.bundle and
+copies the kit's bridged-networking job, Contents/Resources/network/launchd.plist,
+to APP's Contents/Library/LaunchDaemons/<Label>.plist, with BundleProgram naming
+the kit's daemon inside APP, so the app registers the daemon as itself.
 """
 from __future__ import annotations
 
@@ -52,6 +57,9 @@ KIT_BUNDLE = "TryOmarchyKit.bundle"
 KIT_HELPER = "Contents/MacOS/omarchy-vm-helper"
 KIT_MANIFEST = "Contents/Resources/kit.json"
 EMBEDDED_KIT = f"Contents/Helpers/{KIT_BUNDLE}"
+KIT_NETWORK_DAEMON = "Contents/MacOS/omarchy-network-daemon"
+KIT_NETWORK_JOB = "Contents/Resources/network/launchd.plist"
+NETWORK_LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,127}$")
 PROTOCOL_SOURCE = "VMRunProtocol.swift"
 DIGEST = re.compile(r"^[0-9a-f]{64}$")
 RELEASE = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+$")
@@ -294,6 +302,40 @@ def unpack(archive: Path, directory: Path) -> Path:
     return target
 
 
+def install_network_job(app: Path) -> Path:
+    """Copy the embedded kit's networking job into APP's LaunchDaemons, naming the daemon inside APP."""
+    bundle = app / EMBEDDED_KIT
+    daemon = bundle / KIT_NETWORK_DAEMON
+    if daemon.is_symlink() or not daemon.is_file() or not os.access(daemon, os.X_OK):
+        raise ValueError(f"the kit has no networking daemon at {KIT_NETWORK_DAEMON}")
+    source = bundle / KIT_NETWORK_JOB
+    try:
+        if source.is_symlink() or source.stat().st_size > 65536:
+            raise ValueError
+        job = plistlib.loads(source.read_bytes())
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        raise ValueError(f"the kit's {KIT_NETWORK_JOB} is missing or unreadable") from None
+    label = job.get("Label") if isinstance(job, dict) else None
+    if (not isinstance(label, str) or not NETWORK_LABEL.match(label) or job.get("MachServices") != {label: True}
+            or job.get("BundleProgram") != KIT_NETWORK_DAEMON):
+        raise ValueError("the kit's networking job does not name its service and daemon")
+    job["BundleProgram"] = f"{EMBEDDED_KIT}/{KIT_NETWORK_DAEMON}"
+    target = app / "Contents/Library/LaunchDaemons" / f"{label}.plist"
+    if target.exists() or target.is_symlink():
+        raise ValueError(f"{target} already exists")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(plistlib.dumps(job))
+    target.chmod(0o644)
+    return target
+
+
+def embed(archive: Path, app: Path) -> Path:
+    """The kit in APP's Contents/Helpers, with its networking job in APP's LaunchDaemons."""
+    bundle = unpack(archive, app / "Contents/Helpers")
+    install_network_job(app)
+    return bundle
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -307,6 +349,9 @@ def main() -> int:
     unpack_command = commands.add_parser("unpack")
     unpack_command.add_argument("archive", type=Path)
     unpack_command.add_argument("directory", type=Path)
+    embed_command = commands.add_parser("embed")
+    embed_command.add_argument("archive", type=Path)
+    embed_command.add_argument("app", type=Path)
     arguments = parser.parse_args()
     try:
         if arguments.command == "check":
@@ -319,6 +364,8 @@ def main() -> int:
             print(json.dumps(pin, indent=2))
         elif arguments.command == "unpack":
             print(unpack(arguments.archive, arguments.directory))
+        elif arguments.command == "embed":
+            print(embed(arguments.archive, arguments.app))
         else:
             archive = fetch(arguments.cache)
             if archive is not None:

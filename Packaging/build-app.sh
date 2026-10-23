@@ -306,7 +306,7 @@ kit_archive=$(python3 "$package_directory/scripts/try_omarchy_kit.py" fetch \
   || fail "the Try Omarchy kit could not be fetched or verified"
 vm_kit="$contents/Helpers/TryOmarchyKit.bundle"
 if [[ -n $kit_archive ]]; then
-  python3 "$package_directory/scripts/try_omarchy_kit.py" unpack "$kit_archive" "$contents/Helpers" >/dev/null \
+  python3 "$package_directory/scripts/try_omarchy_kit.py" embed "$kit_archive" "$assembled_app" >/dev/null \
     || fail "the kit archive does not hold a kit"
   OMARCHY_QEMU_GPU_INSPECT_ONLY=1 "$vm_kit/Contents/Resources/scripts/run-qemu-gpu.sh" >/dev/null 2>&1 \
     || fail "the kit's launcher rejects its own factory"
