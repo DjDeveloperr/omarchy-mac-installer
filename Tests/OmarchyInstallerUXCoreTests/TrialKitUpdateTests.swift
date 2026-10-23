@@ -31,7 +31,7 @@
       ).layout
       store = TrialKitStore.under(
         applicationSupport: base.appendingPathComponent("Application Support"),
-        workspace: "org.omarchy.installer")
+        workspace: InstallerProductIdentity.appIdentifier)
       releases = FakeTrialKitReleases()
       clock = Clock()
     }
@@ -412,7 +412,8 @@
       XCTAssertTrue(requirement.contains("certificate leaf[subject.OU] = \"RZC79MPD34\""))
       XCTAssertTrue(requirement.contains("identifier \"dev.tryomarchy.kit\""))
       XCTAssertTrue(requirement.contains("1.2.840.113635.100.6.1.13"))
-      XCTAssertEqual(TrialKitSigner.installer.teamIdentifier, "T2C384FJBD")
+      XCTAssertEqual(
+        TrialKitSigner.installer.teamIdentifier, InstallerProductIdentity.teamIdentifier)
       XCTAssertEqual(
         TrialKitSigner.installer.codeIdentifier, InstallerProductIdentity.appIdentifier + ".vm-kit")
       XCTAssertEqual(TrialKitSignaturePolicy.release, .developerID([.tryOmarchy, .installer]))
