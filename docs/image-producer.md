@@ -49,9 +49,9 @@ image-builder/bin/build-mac-image --inputs FILE --candidates DIR [--cache DIR] [
 Candidate set, as the importer accepts it:
 
 - **Runtime group** (built from the pinned `quattro-upstream` commit, which each archive also records): `omarchy`, `omarchy-settings`, `omarchy-mac`, `omarchy-mac-boot`
-- **Boot group** (built from omacom/omarchy-pkgs): `linux-aurora`, `linux-aurora-headers`, `m1n1-aurora`, `uboot-asahi`, `limine-mkinitcpio-hook`
-- **Minimum versions**, in the policy since the manifest records none: `omarchy-mac-boot` 20260921-10, `limine-mkinitcpio-hook` 1.39.0-2.
-- **Refused outright:** `omarchy-apple-boot`, `omarchy-first-boot`, `linux-asahi` and the Asahi `m1n1`.
+- **Boot group** (built from omacom/omarchy-pkgs): `linux-aurora`, `linux-aurora-headers`, `m1n1-aurora`, `uboot-aurora`, `limine-mkinitcpio-hook`
+- **Minimum versions**, in the policy since the manifest records none: `omarchy-mac-boot` 20260921-10, `limine-mkinitcpio-hook` 1.39.0-2, `m1n1-aurora` 1.6.1.aurora20-3.
+- **Refused outright:** `omarchy-apple-boot`, `omarchy-first-boot`, `linux-asahi`, `grub`, the Asahi `m1n1`, `aura`, `m1n1-neo` and `uboot-asahi`.
 - **Not in the set:** `limine` and `limine-snapper-sync`, from the pinned Arch Linux ARM and Omarchy databases.
 
 Build order inside the container:

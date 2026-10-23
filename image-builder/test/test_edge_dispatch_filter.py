@@ -124,7 +124,7 @@ class EdgeDispatchFilterTest(unittest.TestCase):
 
     def test_a_channel_set_package_is_relevant(self):
         # The unified image's set: the runtime and every Aurora boot and support package.
-        for name in ("linux-aurora", "aura", "uboot-aurora", "aurora-audio", "alsa-ucm-conf-aurora", "speakerguardd",
+        for name in ("linux-aurora", "m1n1-aurora", "uboot-aurora", "aurora-audio", "alsa-ucm-conf-aurora", "speakerguardd",
                      "omarchy-aurora-firmware", "mesa-aurora", "vulkan-aurora", "aurora-bless", "omarchy-dev",
                      "omarchy-settings-dev", "omarchy-mac", "omarchy-mac-boot"):
             decision = self.decide(name, "claude-code")
@@ -132,7 +132,7 @@ class EdgeDispatchFilterTest(unittest.TestCase):
             self.assertEqual(decision["matched"], [name])
 
     def test_the_replaced_asahi_boot_chain_does_not_trigger_an_image(self):
-        self.assertFalse(self.decide("m1n1-aurora", "uboot-asahi")["relevant"])
+        self.assertFalse(self.decide("aura", "m1n1-neo", "uboot-asahi")["relevant"])
 
     def test_runtime_lists_builder_packages_and_their_dependencies_are_relevant(self):
         self.assertEqual(self.decide("zram-generator")["matched"], ["zram-generator"], "the runtime's aarch64 list")

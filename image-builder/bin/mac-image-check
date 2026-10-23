@@ -486,7 +486,7 @@ def runtime_providers(candidates: Path | None) -> dict[str, str]:
         return {}
     summary = json.loads((Path(candidates) / "import.json").read_text())
     providers = {p["role"]: p["name"] for p in summary["packages"] if p.get("role", p["name"]) != p["name"]}
-    providers.update({"m1n1-aurora": "aura", "uboot-asahi": "uboot-aurora"})
+    providers.update({"uboot-asahi": "uboot-aurora"})
     for name in ("aurora-audio", "alsa-ucm-conf-aurora", "speakerguardd", "omarchy-aurora-firmware"):
         require(any(p["name"] == name and p["group"] == "support" for p in summary["packages"]),
                 "Aurora support package is missing: " + name)

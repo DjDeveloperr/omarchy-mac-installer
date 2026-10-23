@@ -2,7 +2,7 @@
 
 # Builds an Apple Silicon image payload from a signed candidate set: the
 # Omarchy runtime, its Apple add-on and boot packages, the Aurora stack (the
-# kernel with every Mac's device tree, Aura's m1n1 and Stage 1, the Aurora
+# kernel with every Mac's device tree, m1n1-aurora's Stage 2 and Stage 1, the Aurora
 # U-Boot and the Aurora support packages) exactly as the set signed them, the rest from the package
 # databases the inputs record pins, set up by the runtime's own system setup
 # inside an isolated chroot, with a sealed @factory snapshot, first boot armed
@@ -800,7 +800,6 @@ qualified() {
   for name in "$@"; do
     replacement=$name
     case $name in
-      m1n1-aurora) replacement=aura ;;
       uboot-asahi) replacement=uboot-aurora ;;
       mesa) replacement=mesa-aurora ;;
       vulkan-asahi) replacement=vulkan-aurora ;;
@@ -1295,16 +1294,16 @@ stage_recovery_app() {
     fail "could not stage the pinned Recovery app"
 }
 
-# Board payloads come from the same authenticated Aura package as Stage 2.
+# Board payloads come from the same authenticated m1n1-aurora package as Stage 2.
 # The engine's per-board contract (BOARD_STAGE1, BOARD_STAGE2): the MacBook
-# Neo boots Aura's raw Stage 1 as esp/aurora/stage1-j700.bin and takes
+# Neo boots its raw Stage 1 as esp/aurora/stage1-j700.bin and takes
 # esp/m1n1/boot-j700.bin, the same bundle as m1n1/boot.bin, in its place.
 # Every other Mac drops boot-j700.bin.
 stage_board_boot_payloads() {
-  local stage1="$target/usr/share/aura/stage1/aura-raw.bin"
+  local stage1="$target/usr/share/m1n1-aurora/stage1/m1n1-raw.bin"
   local stage2="$target/boot/efi/m1n1/boot.bin"
   [[ -s $stage1 && ! -L $stage1 && -s $stage2 && ! -L $stage2 ]] ||
-    fail "the image lacks matched Aura Stage 1 and Stage 2 payloads for the MacBook Neo"
+    fail "the image lacks matched m1n1-aurora Stage 1 and Stage 2 payloads for the MacBook Neo"
   mkdir -p "$target/boot/efi/aurora" "$target/boot/efi/m1n1"
   install -m 0644 "$stage1" "$target/boot/efi/aurora/stage1-j700.bin"
   install -m 0644 "$stage2" "$target/boot/efi/m1n1/boot-j700.bin"

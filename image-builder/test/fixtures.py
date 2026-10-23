@@ -61,7 +61,7 @@ VERSIONS = {
     "linux-aurora": "7.0.0.aurora1-1",
     "linux-aurora-headers": "7.0.0.aurora1-1",
     "limine-mkinitcpio-hook": "1.39.0-2",
-    "aura": "0.1.0.r20261014-2",
+    "m1n1-aurora": "1.6.1.aurora20-3",
     "uboot-aurora": "2026.07.asahi2-1",
     "aurora-audio": "4.1.aurora2-1",
     "alsa-ucm-conf-aurora": "10.aurora2-1",
@@ -78,7 +78,7 @@ def dtb(model: str) -> bytes:
     return b"\xd0\x0d\xfe\xed" + struct.pack(">I", 8 + len(body)) + body
 
 
-def aura_stage1() -> bytes:
+def raw_stage1() -> bytes:
     body = struct.pack("<II40s192s", 1, 0, b"", b";m1n1/boot.bin")
     return b"stage1" + b"AURORA-S1-CFG01\0" + body + struct.pack("<I", zlib.crc32(body)) + b"STACKBOT"
 
@@ -122,8 +122,10 @@ def default_contents(layout: str | None = None) -> dict[str, dict[str, bytes]]:
         },
         "linux-aurora-headers": {f"usr/lib/modules/{RELEASE}/build/Makefile": b"# headers\n",
                                  f"usr/lib/modules/{RELEASE}/source": "build"},
-        "aura": {"usr/lib/asahi-boot/m1n1.bin": b"m1n1 stage 1 payload",
-                 "usr/share/aura/stage1/aura-raw.bin": aura_stage1()},
+        # Like omacom/omarchy-pkgs#1513: Stage 2, the raw Stage 1 and its legacy installer copy.
+        "m1n1-aurora": {"usr/lib/asahi-boot/m1n1.bin": b"m1n1 stage 2 payload",
+                        "usr/share/m1n1-aurora/stage1/m1n1-raw.bin": raw_stage1(),
+                        "usr/share/aura/stage1/aura-raw.bin": raw_stage1()},
         # Like the published package: U-Boot only, its device trees come from the kernel.
         "uboot-aurora": {"usr/lib/asahi-boot/u-boot-nodtb.bin": b"u-boot for apple silicon" * 8},
         "limine-mkinitcpio-hook": {"usr/share/libalpm/scripts/limine-apple-gate": b"#!/bin/bash\n"},
@@ -396,7 +398,7 @@ def write_payload(zip_path: Path, boot_uuid: str, root_uuid: str, omit: tuple[st
         (payload / "esp/m1n1/boot.bin").write_bytes(b"m1n1" * 64)
         shutil.copy(ROOT / "builder/omarchy-volume.icns", payload / "omarchy-volume.icns")
         (payload / "esp/aurora").mkdir()
-        (payload / "esp/aurora/stage1-j700.bin").write_bytes(aura_stage1())
+        (payload / "esp/aurora/stage1-j700.bin").write_bytes(raw_stage1())
         shutil.copy(payload / "esp/m1n1/boot.bin", payload / "esp/m1n1/boot-j700.bin")
         if recovery_app is not None:
             shutil.copytree(recovery_app, payload / "esp/aurora/recovery")
@@ -559,7 +561,7 @@ def make_root(root: Path, candidates: Path, layout: str | None = None) -> None:
     stage2 += compressor.compress(uboot) + compressor.flush() + b"chosen.asahi,efi-system-partition=EFI\n"
     write(root, "boot/efi/m1n1/boot.bin", stage2)
     write(root, "boot/efi/m1n1/boot-j700.bin", stage2)
-    write(root, "boot/efi/aurora/stage1-j700.bin", member("aura", "usr/share/aura/stage1/aura-raw.bin"))
+    write(root, "boot/efi/aurora/stage1-j700.bin", member("m1n1-aurora", "usr/share/m1n1-aurora/stage1/m1n1-raw.bin"))
     write(root, "etc/m1n1.conf", "# m1n1 options\nchosen.asahi,efi-system-partition=EFI\nunknown=ignored\n")
     loader = pe_image({".text": b"Limine loader"})
     write(root, "usr/share/limine/BOOTAA64.EFI", loader)
@@ -587,7 +589,7 @@ def make_root(root: Path, candidates: Path, layout: str | None = None) -> None:
                                          "alsa-ucm-conf-asahi", "asahi-audio", "vulkan-asahi", "asahi-bless", "iwd",
                                          "networkmanager", "bluez", "wireplumber")}
     provides = {p["name"]: (p["role"],) for p in summary["packages"] if p.get("role", p["name"]) != p["name"]}
-    replacements = {"aura": "m1n1-aurora", "uboot-aurora": "uboot-asahi", "mesa-aurora": "mesa",
+    replacements = {"uboot-aurora": "uboot-asahi", "mesa-aurora": "mesa",
                     "vulkan-aurora": "vulkan-asahi", "aurora-bless": "asahi-bless",
                     "aurora-audio": "asahi-audio", "alsa-ucm-conf-aurora": "alsa-ucm-conf-asahi"}
     for name, role in replacements.items():

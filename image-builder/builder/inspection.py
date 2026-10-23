@@ -75,6 +75,8 @@ def _load(name: str, file: str):
 candidate_set = _load("candidate_set", "candidate_set.py")
 limine = _load("apple_limine", "apple_limine.py")
 installed_system = _load("verify_installed_system", "verify_installed_system.py")
+# The raw Stage 1 the engine enrolls on a MacBook Neo.
+STAGE1 = "usr/share/m1n1-aurora/stage1/m1n1-raw.bin"
 test_image_pin = _load("test_image_pin", "test_image_pin.py")
 
 
@@ -296,8 +298,8 @@ def check_installed_payloads(root: Path, candidates: Candidates) -> str:
     stage1 = root / "boot/efi/aurora/stage1-j700.bin"
     stage2 = root / "boot/efi/m1n1/boot-j700.bin"
     require(stage1.is_file() and not stage1.is_symlink()
-            and stage1.read_bytes() == candidates.member("aura", "usr/share/aura/stage1/aura-raw.bin"),
-            "the J700 Stage 1 does not match the authenticated Aura package")
+            and stage1.read_bytes() == candidates.member(candidates.boot_owners[STAGE1], STAGE1),
+            "the J700 Stage 1 does not match the authenticated m1n1-aurora package")
     require(stage2.is_file() and not stage2.is_symlink()
             and stage2.read_bytes() == (root / "boot/efi/m1n1/boot.bin").read_bytes(),
             "the J700 Stage 2 does not match the inspected common bundle")
