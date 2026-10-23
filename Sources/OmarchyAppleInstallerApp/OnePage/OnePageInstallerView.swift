@@ -209,6 +209,7 @@ struct OnePageInstallerView: View {
         .font(OmarchyTheme.eyebrow)
         .textCase(.uppercase)
         .foregroundStyle(OmarchyTheme.accent)
+        .padding(.vertical, 4)
     }
   }
 
