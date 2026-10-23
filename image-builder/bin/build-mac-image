@@ -2,7 +2,7 @@
 
 # Builds an Apple Silicon image payload from a signed candidate set: the
 # Omarchy runtime, its Apple add-on and boot packages, the Aurora stack (the
-# kernel with every Mac's device tree, Aura's m1n1 and Stage 1, the Aurora
+# kernel with every Mac's device tree, m1n1-aurora's Stage 2 and Stage 1, the Aurora
 # U-Boot and the Aurora support packages) exactly as the set signed them, the rest from the package
 # databases the inputs record pins, set up by the runtime's own system setup
 # inside an isolated chroot, with a sealed @factory snapshot, first boot armed

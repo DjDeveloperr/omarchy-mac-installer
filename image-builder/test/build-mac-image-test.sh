@@ -930,6 +930,54 @@ else
   echo "skip - pacman resolution of the repository order (no pacman on this host)"
 fi
 
+# The boot transaction, where pacman exists, with omacom/omarchy-pkgs#1513's
+# metadata: m1n1-aurora and uboot-aurora fill every virtual boot dependency
+# themselves, so neither the packages m1n1-aurora replaces nor the stock Asahi
+# ones are pulled in beside them, though every repository still carries them.
+if command -v pacman >/dev/null 2>&1; then
+  boot_db() {
+    local repository=$1 tree=$scratch/boot-db-$1 entry name version fields
+    shift
+    mkdir -p "$tree" "$scratch/boot-dbpath/sync"
+    for entry in "$@"; do
+      IFS='|' read -r name version fields <<<"$entry"
+      mkdir -p "$tree/$name-$version"
+      {
+        printf '%%FILENAME%%\n%s-%s-any.pkg.tar.zst\n\n%%NAME%%\n%s\n\n%%VERSION%%\n%s\n\n' "$name" "$version" "$name" "$version"
+        printf '%%ARCH%%\nany\n\n%%CSIZE%%\n1\n\n%b' "$fields"
+      } >"$tree/$name-$version/desc"
+    done
+    (cd "$tree" && bsdtar -czf "$scratch/boot-dbpath/sync/$repository.db" -- *)
+  }
+  boot_db omarchy-candidates \
+    'm1n1-aurora|1.6.1.aurora20-3|%DEPENDS%\nasahi-scripts>=20260127.1\nuboot-asahi\n\n%PROVIDES%\nm1n1=1.6.1.aurora20\nm1n1-neo=1.6.1.aurora20\n\n%CONFLICTS%\nm1n1\naura\nm1n1-neo\n\n%REPLACES%\naura\nm1n1-neo\n\n' \
+    'uboot-aurora|2026.07.aurora2-1|%PROVIDES%\nuboot-asahi=2026.07.aurora2\n\n%CONFLICTS%\nuboot-asahi\nuboot-asahi-j700\n\n' \
+    'omarchy-mac-boot|20261023-1|%DEPENDS%\nasahi-scripts\nm1n1\nuboot-asahi\n\n'
+  boot_db omarchy \
+    'aura|0.1.0.r20261023-1|%PROVIDES%\nm1n1=1.6.1.aurora19\nm1n1-aurora=1.6.1.aurora19\nm1n1-neo=1.6.1.aurora19\n\n%CONFLICTS%\nm1n1\nm1n1-aurora\nm1n1-neo\n\n' \
+    'm1n1-neo|1.6.1.aurora16-1|%PROVIDES%\nm1n1=1.6.1.aurora16\n\n%CONFLICTS%\nm1n1\n\n'
+  boot_db asahi-alarm 'm1n1|1.6.1-1|' 'uboot-asahi|2026.07.asahi2-1|' 'asahi-scripts|20260127.1-1|'
+  {
+    printf '[options]\nArchitecture = auto\nSigLevel = Never\n'
+    for repository in omarchy-candidates omarchy asahi-alarm; do
+      printf '[%s]\nServer = file:///nonexistent/%s\n' "$repository" "$repository"
+    done
+  } >"$scratch/boot.conf"
+  boot_resolved() {
+    pacman --config "$scratch/boot.conf" --dbpath "$scratch/boot-dbpath" --noconfirm -Sp --print-format '%r %n' "$@" 2>&1 | sort
+  }
+  expected=$'asahi-alarm asahi-scripts\nomarchy-candidates m1n1-aurora\nomarchy-candidates omarchy-mac-boot\nomarchy-candidates uboot-aurora'
+  [[ $(boot_resolved omarchy-candidates/m1n1-aurora omarchy-candidates/uboot-aurora omarchy-candidates/omarchy-mac-boot) == "$expected" ]] ||
+    fail "the boot transaction resolves to m1n1-aurora, uboot-aurora and nothing they replace: $(boot_resolved omarchy-candidates/m1n1-aurora omarchy-candidates/uboot-aurora omarchy-candidates/omarchy-mac-boot)"
+  # Without uboot-aurora in the same transaction the virtual dependency takes the
+  # stock uboot-asahi, which the pre-check refuses.
+  grep -Fxq 'asahi-alarm uboot-asahi' <<<"$(boot_resolved omarchy-candidates/m1n1-aurora)" ||
+    fail "m1n1-aurora alone pulls the stock uboot-asahi: $(boot_resolved omarchy-candidates/m1n1-aurora)"
+  pass "pacman resolves the boot set to m1n1-aurora and uboot-aurora, never aura, m1n1-neo, m1n1 or uboot-asahi"
+else
+  echo "skip - pacman resolution of the boot transaction (no pacman on this host)"
+fi
+
 # Every image stages the engine's matched J700 board contract from the authenticated m1n1-aurora package.
 (
   candidates=$scratch/board-boot-inputs
