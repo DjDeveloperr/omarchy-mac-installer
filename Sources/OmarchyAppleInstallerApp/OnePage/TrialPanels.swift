@@ -208,6 +208,7 @@ struct TrialLandingChoices: View {
       }
       .buttonStyle(.link)
       .font(OmarchyTheme.detail)
+      .foregroundStyle(OmarchyTheme.accent)
     }
   }
 
