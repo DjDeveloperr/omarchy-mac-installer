@@ -8,7 +8,7 @@ import TryOmarchyKitClient
 import os
 
 /// Try on this Mac: the kit in Contents/Helpers or a newer one it fetched,
-/// this app's own permissions, and the VM folder Try Omarchy resolves.
+/// this app's own permissions, and Try Omarchy's default VM folder.
 @MainActor
 final class LiveTrialEnvironment: TrialEnvironment {
   private nonisolated static let logger = Logger(
@@ -50,17 +50,14 @@ final class LiveTrialEnvironment: TrialEnvironment {
 
   var isAvailable: Bool { embedded.hasLauncher }
 
-  func vmRoot() -> TrialVMRoot? {
-    guard let root = TryOmarchyStorage.resolvedRoot() else { return nil }
-    return TrialVMRoot.resolved(root, defaultRoot: TryOmarchyStorage.defaultRoot())
-  }
+  private func vmRoot() -> URL? { TryOmarchyStorage.defaultRoot() }
 
   func space() -> TrialSpace { TrialSpace.of(vmRoot()) }
 
   func vmBytes() async -> Int64 {
-    guard let root = vmRoot(), root.missing == nil else { return 0 }
+    guard let root = vmRoot() else { return 0 }
     return await Task.detached(priority: .utility) {
-      TryOmarchyStorage.allocatedBytes(at: root.url)
+      TryOmarchyStorage.allocatedBytes(at: root)
     }.value
   }
 
@@ -144,8 +141,10 @@ final class LiveTrialEnvironment: TrialEnvironment {
       "Starting Try with kit \((try? layout.manifest().version.description) ?? "unknown", privacy: .public)"
     )
     do {
+      let configuration = try TrialRunConfiguration.make(
+        productName: InstallerProductIdentity.appName)
       // The main queue keeps the events in the order the client delivers them.
-      try client.start(VMRunConfiguration(productName: InstallerProductIdentity.appName)) {
+      try client.start(configuration) {
         [weak self] event in
         DispatchQueue.main.async {
           if case .exited = event { self?.lease = nil }
@@ -176,9 +175,8 @@ final class LiveTrialEnvironment: TrialEnvironment {
     guard
       let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
         .first,
-      vmRoot()?.isDefault == true,
       TrialVMFolder.root(under: support).standardizedFileURL
-        == TryOmarchyStorage.defaultRoot()?.standardizedFileURL
+        == vmRoot()?.standardizedFileURL
     else { throw TrialVMFolder.Refusal.notTheDefaultFolder }
     try TrialVMFolder.trash(under: support)
   }

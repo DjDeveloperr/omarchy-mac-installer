@@ -30,7 +30,7 @@ struct TrialStage: View {
         .font(OmarchyTheme.body)
         .foregroundStyle(OmarchyTheme.secondaryText)
         .fixedSize(horizontal: false, vertical: true)
-      if space.isShort {
+      if !space.isEnough {
         Text(PlainLanguage.trialSpaceShortfall(space))
           .font(OmarchyTheme.body)
           .foregroundStyle(OmarchyTheme.caution)

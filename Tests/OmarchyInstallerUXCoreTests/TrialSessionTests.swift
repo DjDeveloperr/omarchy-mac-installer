@@ -4,17 +4,9 @@
   import XCTest
   @testable import OmarchyInstallerUXCore
 
-  private let defaultRoot = TrialVMRoot(
-    url: URL(fileURLWithPath: "/Users/someone/Library/Application Support/Try Omarchy/VM/v1"),
-    isDefault: true, sharesMacOSVolume: true)
-  private let movedRoot = TrialVMRoot(
-    url: URL(fileURLWithPath: "/Volumes/Studio/Try Omarchy"), isDefault: false,
-    sharesMacOSVolume: false)
-
   @MainActor
   private final class FakeTrialEnvironment: TrialEnvironment {
     var isAvailable = true
-    var root: TrialVMRoot? = defaultRoot
     var startedHere = false
     var currentSpace = TrialSpace(
       requiredBytes: 15_000_000_000, freeBytes: 40_000_000_000, hasVM: false)
@@ -30,7 +22,6 @@
     var registerError: Error?
     var runsFetchedKit = false
 
-    func vmRoot() -> TrialVMRoot? { root }
     func space() -> TrialSpace { currentSpace }
     func vmBytes() async -> Int64 { 9_400_000_000 }
     func permissions() -> TrialPermissions { permissionState }
@@ -446,8 +437,7 @@
         "landing-space-\(UUID().uuidString)")
       try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
       defer { try? FileManager.default.removeItem(at: folder) }
-      let root = TrialVMRoot(url: folder, isDefault: true, sharesMacOSVolume: true)
-      let tryReading = try XCTUnwrap(TrialSpace.of(root).freeBytes)
+      let tryReading = try XCTUnwrap(TrialSpace.of(folder).freeBytes)
       let headerReading = try XCTUnwrap(VolumeFreeSpace.bytes(at: folder))
       XCTAssertLessThan(abs(tryReading - headerReading), 100_000_000, "One reading for both")
     }
@@ -674,100 +664,11 @@
       XCTAssertNotNil(environment.onEvent)
     }
 
-    func testAMovedVMIsFound() async throws {
-      let environment = FakeTrialEnvironment()
-      environment.makeVM()
-      environment.root = movedRoot
-      let trial = TrialSession(environment: environment)
-      XCTAssertTrue(trial.hasVM)
-      XCTAssertEqual(trial.vmRoot, movedRoot)
-      trial.follow(.supported)
-      trial.openAtLaunch()
-      let send = try XCTUnwrap(environment.onEvent)
-      send(.ready)
-      send(.exited(status: 0))
-      guard case .ready = trial.phase else { return XCTFail("A moved VM keeps the Try page") }
-      XCTAssertEqual(
-        trial.landing.tryLine, "Omarchy is set up in the folder chosen in Try Omarchy.")
-      XCTAssertEqual(trial.startTitle, "Start")
-      await trial.settled()
-      XCTAssertEqual(trial.vmBytes, 9_400_000_000)
-      XCTAssertEqual(
-        trial.diskNotice,
-        "Omarchy’s virtual machine is on another disk, in the folder chosen in Try Omarchy. Installing keeps it."
-      )
-      XCTAssertEqual(
-        PlainLanguage.trialDiskNotice(
-          bytes: 9_400_000_000,
-          root: TrialVMRoot(url: movedRoot.url, isDefault: false, sharesMacOSVolume: true)),
-        "Omarchy’s virtual machine uses up to 9 GB of macOS’s space, already counted above. Installing keeps it, in the folder chosen in Try Omarchy."
-      )
-    }
-
-    func testAVMOnADriveThatIsNotConnectedSaysSo() {
-      let environment = FakeTrialEnvironment()
-      environment.root = TrialVMRoot(
-        url: movedRoot.url, isDefault: false, sharesMacOSVolume: false,
-        missing: .disconnectedDrive)
-      environment.currentSpace = TrialSpace(
-        requiredBytes: 1_073_741_824, freeBytes: nil, hasVM: false,
-        missingFolder: .disconnectedDrive)
-      environment.permissionState = TrialPermissions(
-        accessibility: .allowed, microphone: .allowed, camera: .allowed)
-      let trial = TrialSession(environment: environment)
-      XCTAssertTrue(trial.hasVM, "The VM is still the remembered choice")
-      trial.openAtLaunch()
-      XCTAssertNil(environment.onEvent, "Nothing starts without the drive")
-      XCTAssertTrue(trial.showsLanding)
-      XCTAssertEqual(
-        trial.landing.tryLine, "Omarchy’s virtual machine is on a drive that isn’t connected.")
-      trial.present()
-      guard case .ready(let space, _) = trial.phase else { return XCTFail("Expected the Try page") }
-      XCTAssertFalse(trial.canStart)
-      XCTAssertFalse(space.isShort)
-      XCTAssertEqual(trial.startTitle, "Start")
-      XCTAssertEqual(trial.subheadline, PlainLanguage.trialChosenFolderSubheadline)
-      XCTAssertEqual(
-        PlainLanguage.trialSpace(space),
-        "Omarchy’s virtual machine is on a drive that isn’t connected. Connect it, then start again."
-      )
-      trial.follow(.supported)
-      XCTAssertFalse(trial.canDeleteVM)
-
-      environment.root = movedRoot
-      environment.currentSpace = TrialSpace(
-        requiredBytes: 1_073_741_824, freeBytes: 400_000_000_000, hasVM: true)
-      trial.refresh()
-      XCTAssertTrue(trial.canStart, "Connecting the drive enables Start")
-    }
-
     func testTheSpaceLineNamesTheVMsDisk() {
       XCTAssertEqual(
         PlainLanguage.trialSpace(
           TrialSpace(requiredBytes: 1_073_741_824, freeBytes: 400_000_000_000, hasVM: true)),
         "400 GB is free on the disk that holds Omarchy’s virtual machine.")
-    }
-
-    func testDeleteIsDisabledForAMovedVM() throws {
-      let environment = FakeTrialEnvironment()
-      environment.makeVM()
-      environment.root = movedRoot
-      let trial = TrialSession(environment: environment)
-      trial.follow(.supported)
-      XCTAssertTrue(trial.hasVM)
-      XCTAssertFalse(trial.canDeleteVM)
-      XCTAssertEqual(
-        trial.deleteVMLine,
-        "This virtual machine is in a folder chosen in Try Omarchy. Manage it from Try Omarchy or the Finder."
-      )
-      try trial.deleteVM()
-      XCTAssertEqual(environment.deletions, 0)
-      XCTAssertTrue(trial.hasVM)
-
-      environment.root = defaultRoot
-      trial.refresh()
-      XCTAssertTrue(trial.canDeleteVM)
-      XCTAssertNil(trial.deleteVMLine)
     }
 
     func testOmarchyOpenInTryOmarchyOffersTryAgain() throws {
@@ -1035,9 +936,9 @@
       for phase in VMRunPhase.allCases {
         XCTAssertFalse(PlainLanguage.trialProgressTitle(phase).isEmpty)
       }
-      XCTAssertNil(PlainLanguage.trialDiskNotice(bytes: 0, root: defaultRoot))
+      XCTAssertNil(PlainLanguage.trialDiskNotice(bytes: 0))
       XCTAssertEqual(
-        PlainLanguage.trialDiskNotice(bytes: 9_400_000_000, root: defaultRoot),
+        PlainLanguage.trialDiskNotice(bytes: 9_400_000_000),
         "Omarchy’s virtual machine uses up to 9 GB of macOS’s space, already counted above. Installing keeps it, in Application Support › Try Omarchy."
       )
     }

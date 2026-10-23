@@ -8,10 +8,8 @@
   public protocol TrialEnvironment: AnyObject {
     /// Whether this build embeds the kit. Without it there is no Try.
     var isAvailable: Bool { get }
-    /// Where the VM lives, as Try Omarchy resolves it, or nil when the folder
-    /// it chose can't be used.
-    func vmRoot() -> TrialVMRoot?
-    /// The space in the VM's folder and on the volume that holds it.
+    /// The space in Try Omarchy's default VM folder and on the volume that
+    /// holds it.
     func space() -> TrialSpace
     /// The space the VM's folder takes on disk, or zero without one.
     func vmBytes() async -> Int64
@@ -50,26 +48,14 @@
     public let freeBytes: Int64?
     /// A VM already exists, so starting downloads nothing.
     public let hasVM: Bool
-    /// The folder chosen in Try Omarchy isn't there, so nothing can start.
-    public let missingFolder: TrialMissingFolder?
 
-    public init(
-      requiredBytes: Int64, freeBytes: Int64?, hasVM: Bool,
-      missingFolder: TrialMissingFolder? = nil
-    ) {
+    public init(requiredBytes: Int64, freeBytes: Int64?, hasVM: Bool) {
       self.requiredBytes = requiredBytes
       self.freeBytes = freeBytes
       self.hasVM = hasVM
-      self.missingFolder = missingFolder
     }
 
-    public var isEnough: Bool { missingFolder == nil && (freeBytes ?? 0) >= requiredBytes }
-
-    /// Too little room, as opposed to a folder that isn't there.
-    public var isShort: Bool { missingFolder == nil && !isEnough }
-
-    /// A VM is the remembered choice, even while its folder isn't there.
-    public var remembersVM: Bool { hasVM || missingFolder != nil }
+    public var isEnough: Bool { (freeBytes ?? 0) >= requiredBytes }
   }
 
   public enum TrialPermissionState: Equatable, Sendable {
@@ -235,8 +221,6 @@
     public private(set) var installStatus: TrialInstallStatus = .checking
     /// A VM exists where Try Omarchy keeps it: the remembered choice.
     public private(set) var hasVM = false
-    /// The VM's folder, the default one or one chosen in Try Omarchy.
-    public private(set) var vmRoot: TrialVMRoot?
     /// This start asked for bridged networking and got shared networking.
     public private(set) var bridgedNetworkUnavailable = false
     public private(set) var bridgedNetwork: TrialBridgedNetwork = .notRegistered
@@ -267,9 +251,8 @@
       self.environment = environment
       guard environment.isAvailable else { return }
       let space = environment.space()
-      hasVM = space.remembersVM
+      hasVM = space.hasVM
       lastSpace = space
-      vmRoot = environment.vmRoot()
       bridgedNetwork = environment.bridgedNetwork()
     }
 
@@ -297,7 +280,7 @@
     }
 
     public var startTitle: String {
-      guard case .ready(let space, _) = phase, space.remembersVM else {
+      guard case .ready(let space, _) = phase, space.hasVM else {
         return PlainLanguage.trialDownloadAndStart
       }
       return PlainLanguage.trialStart
@@ -333,9 +316,9 @@
       }
       return TrialLanding(
         install: install, installTitle: installTitle, tryTitle: PlainLanguage.trialEntry,
-        tryLine: hasVM ? PlainLanguage.trialLandingVMLine(vmRoot) : nil,
+        tryLine: hasVM ? PlainLanguage.trialLandingVMLine : nil,
         spaceLine: lastSpace.flatMap(PlainLanguage.trialLandingSpace),
-        spaceIsShort: lastSpace?.isShort == true,
+        spaceIsShort: lastSpace?.isEnough == false,
         tryIsPrimary: hasVM || install != .available)
     }
 
@@ -348,30 +331,19 @@
       }
     }
 
-    /// Delete Virtual Machine moves only the default folder.
-    public var canDeleteVM: Bool {
-      environment.isAvailable && hasVM && vmRoot?.isDefault == true && !isActive
-    }
-
-    /// The menu's line under Delete Virtual Machine for a VM that lives
-    /// elsewhere.
-    public var deleteVMLine: String? {
-      guard environment.isAvailable, hasVM, vmRoot?.isDefault == false else { return nil }
-      return PlainLanguage.trialDeleteMovedLine
-    }
+    public var canDeleteVM: Bool { environment.isAvailable && hasVM && !isActive }
 
     /// The Try page's line under its headline.
     public var subheadline: String {
-      guard case .ready(let space, _) = phase, space.remembersVM else {
+      guard case .ready(let space, _) = phase, space.hasVM else {
         return PlainLanguage.trialSubheadline
       }
-      return space.hasVM
-        ? PlainLanguage.trialReadySubheadline : PlainLanguage.trialChosenFolderSubheadline
+      return PlainLanguage.trialReadySubheadline
     }
 
     /// The plan review's note on the VM, which the native install leaves in
     /// place.
-    public var diskNotice: String? { PlainLanguage.trialDiskNotice(bytes: vmBytes, root: vmRoot) }
+    public var diskNotice: String? { PlainLanguage.trialDiskNotice(bytes: vmBytes) }
 
     /// Try Again on a failure that starting again can help.
     public var canTryAgain: Bool {
@@ -402,7 +374,7 @@
       let space = environment.space()
       noteVM(space)
       let permissions = environment.permissions()
-      guard space.remembersVM, space.isEnough,
+      guard space.hasVM, space.isEnough,
         permissions.allAllowed || environment.hasStartedHere
       else { return }
       phase = .ready(space, permissions)
@@ -475,8 +447,7 @@
 
     private func noteVM(_ space: TrialSpace) {
       lastSpace = space
-      hasVM = space.remembersVM
-      vmRoot = environment.isAvailable ? environment.vmRoot() : nil
+      hasVM = space.hasVM
       guard hasVM else { return }
       vmBytesRefresh = Task { await refreshVMBytes() }
     }

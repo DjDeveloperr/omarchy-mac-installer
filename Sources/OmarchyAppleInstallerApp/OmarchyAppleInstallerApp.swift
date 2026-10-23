@@ -275,9 +275,6 @@ struct OmarchyAppleInstallerApp: App {
             Task { confirmDeletion(await trial.deletionMessage()) }
           }
           .disabled(isSimulation || removalNeedsReview || showsRemoval || !trial.canDeleteVM)
-          if let line = trial.deleteVMLine {
-            Text(line)
-          }
           Button(PlainLanguage.trialRepairBridgedNetworkMenuItem) {
             confirmBridgedNetworkChange(removing: false)
           }
