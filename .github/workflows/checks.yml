@@ -142,8 +142,10 @@ jobs:
           python3 Engine/prepare-engine.py --output Engine/artifacts
           # Notarization refuses native code the app's signing cannot reach.
           python3 Engine/verify-engine-macho.py --signatures Engine/artifacts/*.tar.gz
-      - name: Check the Try Omarchy kit pin against its release
-        run: python3 scripts/try_omarchy_kit.py check --online 2>&1 | tee "$RUNNER_TEMP/installer-ci/try-kit-pin.log"
+      - name: Check the Try Omarchy kit pin against its release, and kit unpacking
+        run: |
+          python3 scripts/try_omarchy_kit.py check --online 2>&1 | tee "$RUNNER_TEMP/installer-ci/try-kit-pin.log"
+          python3 -m unittest scripts/tests/test_try_omarchy_kit.py 2>&1 | tee "$RUNNER_TEMP/installer-ci/try-kit-unpack.log"
       - name: Assemble and inspect the app bundle
         run: |
           source Packaging/identity.conf

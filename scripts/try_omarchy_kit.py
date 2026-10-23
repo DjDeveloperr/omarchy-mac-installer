@@ -11,6 +11,7 @@ Packaging/try-omarchy-kit.json pins both (docs/try.md):
   try_omarchy_kit.py check [--online]
   try_omarchy_kit.py vendor --source TRY_OMARCHY_CHECKOUT [--release vX.Y.Z]
   try_omarchy_kit.py fetch --cache DIR
+  try_omarchy_kit.py unpack ARCHIVE DIR
 
 `check` verifies the vendored client against the pin, and that a pinned kit
 comes from the client's revision, is a release and speaks the client's
@@ -18,6 +19,12 @@ protocol. `--online` also checks the release tag and its TryOmarchyKit.json.
 `fetch` prints the verified kit archive's path, or nothing when no kit is pinned.
 OMARCHY_TRY_KIT_ZIP names a local archive instead, checked against the digest
 in its .sha256 file beside it; developer builds use it to embed an unreleased kit.
+
+A kit archive holds one folder, TryOmarchyKit.bundle: a helper bundle with no
+bundle identifier, its helper at Contents/MacOS/omarchy-vm-helper and its
+manifest at Contents/Resources/kit.json. `unpack` extracts an archive into DIR,
+which must not hold a kit yet, checks that layout and prints the kit's path.
+The app embeds its kit at Contents/Helpers/TryOmarchyKit.bundle.
 """
 from __future__ import annotations
 
@@ -26,6 +33,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import plistlib
 import re
 import shutil
 import subprocess
@@ -40,6 +48,10 @@ REPOSITORY = "omacom/try-omarchy"
 CLIENT_PATH = "macos/Sources/TryOmarchyKitClient"
 KIT_NAME = "TryOmarchyKit.zip"
 MANIFEST_NAME = "TryOmarchyKit.json"
+KIT_BUNDLE = "TryOmarchyKit.bundle"
+KIT_HELPER = "Contents/MacOS/omarchy-vm-helper"
+KIT_MANIFEST = "Contents/Resources/kit.json"
+EMBEDDED_KIT = f"Contents/Helpers/{KIT_BUNDLE}"
 PROTOCOL_SOURCE = "VMRunProtocol.swift"
 DIGEST = re.compile(r"^[0-9a-f]{64}$")
 RELEASE = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+$")
@@ -234,6 +246,54 @@ def fetch(cache: Path, root: Path = ROOT, environment: dict[str, str] = os.envir
     return archive
 
 
+def kit_bundle(directory: Path) -> Path:
+    """The kit in a folder that holds an unpacked kit archive."""
+    return directory / KIT_BUNDLE
+
+
+def check_layout(bundle: Path) -> None:
+    """An unpacked kit: a real folder with its helper and manifest, and no bundle identity."""
+    def regular(path: Path) -> bool:
+        return not path.is_symlink() and path.is_file()
+
+    if bundle.is_symlink() or not bundle.is_dir():
+        raise ValueError(f"{bundle} is not a kit folder")
+    helper = bundle / KIT_HELPER
+    if not regular(helper) or not os.access(helper, os.X_OK):
+        raise ValueError(f"the kit has no helper at {KIT_HELPER}")
+    if not regular(bundle / KIT_MANIFEST):
+        raise ValueError(f"the kit has no manifest at {KIT_MANIFEST}")
+    info = bundle / "Contents/Info.plist"
+    try:
+        identity = plistlib.loads(info.read_bytes()) if regular(info) else None
+    except (ValueError, plistlib.InvalidFileException):
+        identity = None
+    if not isinstance(identity, dict) or identity.get("CFBundleExecutable") != Path(KIT_HELPER).name:
+        raise ValueError("the kit's Info.plist does not name its helper")
+    named = sorted({"CFBundleIdentifier", "CFBundleName", "CFBundleDisplayName"} & set(identity))
+    if named:
+        raise ValueError(f"the kit has a bundle identity of its own ({', '.join(named)})")
+
+
+def unpack(archive: Path, directory: Path) -> Path:
+    """Extract a kit archive into DIRECTORY and return the kit's folder."""
+    target = kit_bundle(directory)
+    if target.exists() or target.is_symlink():
+        raise ValueError(f"{target} already exists")
+    directory.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=".kit.", dir=directory))
+    try:
+        subprocess.run(["/usr/bin/ditto", "-x", "-k", str(archive), str(staging)], check=True)
+        entries = sorted(entry.name for entry in staging.iterdir())
+        if entries != [KIT_BUNDLE]:
+            raise ValueError(f"the kit archive must hold only {KIT_BUNDLE}, not {entries}")
+        check_layout(kit_bundle(staging))
+        kit_bundle(staging).rename(target)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    return target
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -244,6 +304,9 @@ def main() -> int:
     vendor_command.add_argument("--release")
     fetch_command = commands.add_parser("fetch")
     fetch_command.add_argument("--cache", type=Path, required=True)
+    unpack_command = commands.add_parser("unpack")
+    unpack_command.add_argument("archive", type=Path)
+    unpack_command.add_argument("directory", type=Path)
     arguments = parser.parse_args()
     try:
         if arguments.command == "check":
@@ -254,6 +317,8 @@ def main() -> int:
         elif arguments.command == "vendor":
             pin = vendor(arguments.source.resolve(), arguments.release)
             print(json.dumps(pin, indent=2))
+        elif arguments.command == "unpack":
+            print(unpack(arguments.archive, arguments.directory))
         else:
             archive = fetch(arguments.cache)
             if archive is not None:

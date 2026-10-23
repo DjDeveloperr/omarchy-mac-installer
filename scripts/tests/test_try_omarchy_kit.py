@@ -3,7 +3,9 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import plistlib
 import shutil
+import subprocess
 import tempfile
 import unittest
 
@@ -150,6 +152,74 @@ class TryOmarchyKitTests(unittest.TestCase):
         (cache / f"{digest}.zip").write_bytes(b"kit")
         self.write_pin(self.pinned_kit(bytes=3, sha256=digest))
         self.assertEqual(kit.fetch(cache, self.directory, {}), cache / f"{digest}.zip")
+
+
+
+@unittest.skipUnless(Path("/usr/bin/ditto").exists(), "kit archives are made and unpacked with macOS's ditto")
+class KitArchiveTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.directory)
+        self.source = self.directory / "source"
+
+    def kit_folder(self, name: str = kit.KIT_BUNDLE, **info: object) -> Path:
+        bundle = self.source / name
+        helper = bundle / kit.KIT_HELPER
+        helper.parent.mkdir(parents=True)
+        helper.write_text("#!/bin/sh\n")
+        helper.chmod(0o755)
+        (bundle / kit.KIT_MANIFEST).parent.mkdir(parents=True)
+        (bundle / kit.KIT_MANIFEST).write_text('{"format": 1}')
+        (bundle / "Contents/Info.plist").write_bytes(plistlib.dumps(
+            {"CFBundleExecutable": "omarchy-vm-helper", "CFBundlePackageType": "BNDL", **info}))
+        return bundle
+
+    def archive(self) -> Path:
+        archive = self.directory / kit.KIT_NAME
+        archive.unlink(missing_ok=True)
+        subprocess.run(["/usr/bin/ditto", "-c", "-k", str(self.source), str(archive)], check=True)
+        return archive
+
+    def test_a_kit_unpacks_into_its_bundle_folder(self) -> None:
+        self.kit_folder()
+        helpers = self.directory / "app/Contents/Helpers"
+        unpacked = kit.unpack(self.archive(), helpers)
+        self.assertEqual(unpacked, helpers / "TryOmarchyKit.bundle")
+        self.assertEqual(kit.kit_bundle(helpers), unpacked)
+        self.assertEqual(sorted(entry.name for entry in helpers.iterdir()), ["TryOmarchyKit.bundle"])
+        self.assertTrue((unpacked / "Contents/MacOS/omarchy-vm-helper").stat().st_mode & 0o111)
+        with self.assertRaisesRegex(ValueError, "already exists"):
+            kit.unpack(self.archive(), helpers)
+
+    def test_an_archive_with_anything_beside_the_kit_is_refused(self) -> None:
+        self.kit_folder()
+        (self.source / "extra").write_text("extra")
+        with self.assertRaisesRegex(ValueError, "must hold only TryOmarchyKit.bundle"):
+            kit.unpack(self.archive(), self.directory / "out")
+        self.assertEqual(list((self.directory / "out").iterdir()), [])
+
+    def test_the_old_kit_app_is_refused(self) -> None:
+        self.kit_folder("Try Omarchy Kit.app")
+        with self.assertRaisesRegex(ValueError, "must hold only TryOmarchyKit.bundle"):
+            kit.unpack(self.archive(), self.directory / "out")
+
+    def test_a_kit_with_a_bundle_identity_is_refused(self) -> None:
+        for key in ("CFBundleIdentifier", "CFBundleName", "CFBundleDisplayName"):
+            with self.subTest(key=key):
+                shutil.rmtree(self.source, ignore_errors=True)
+                self.kit_folder(**{key: "dev.tryomarchy.kit"})
+                with self.assertRaisesRegex(ValueError, f"bundle identity of its own \\({key}\\)"):
+                    kit.unpack(self.archive(), self.directory / "out")
+        self.assertEqual(list((self.directory / "out").iterdir()), [])
+
+    def test_a_kit_without_its_helper_or_manifest_is_refused(self) -> None:
+        for missing, message in ((kit.KIT_HELPER, "no helper"), (kit.KIT_MANIFEST, "no manifest"),
+                                 ("Contents/Info.plist", "does not name its helper")):
+            with self.subTest(missing=missing):
+                shutil.rmtree(self.source, ignore_errors=True)
+                (self.kit_folder() / missing).unlink()
+                with self.assertRaisesRegex(ValueError, message):
+                    kit.unpack(self.archive(), self.directory / "out")
 
 
 if __name__ == "__main__":

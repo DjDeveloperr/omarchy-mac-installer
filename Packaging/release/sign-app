@@ -46,7 +46,7 @@ recovery="$app/Contents/Resources/RecoveryTemplate/$INSTALLER_RECOVERY_APP_NAME.
   fail "the app carries no restore-image decoder at ${restore_image#"$app"/}"
 # Contents/Helpers holds the decoder, the Try Omarchy kit when one is pinned,
 # and nothing else this script would not sign.
-vm_kit="$app/Contents/Helpers/Try Omarchy Kit.app"
+vm_kit="$app/Contents/Helpers/TryOmarchyKit.bundle"
 for entry in "$app/Contents/Helpers"/*; do
   [[ $entry == "$restore_image" || $entry == "$vm_kit" ]] ||
     fail "Contents/Helpers holds more than the restore-image decoder and the kit"

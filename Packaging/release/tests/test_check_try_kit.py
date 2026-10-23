@@ -103,6 +103,9 @@ class CheckTryKitTest(unittest.TestCase):
         (resources / "scripts/run-qemu-gpu.sh").write_text("#!/bin/bash\n")
         (resources / "kit.json").write_text(json.dumps({
             "format": 1, "version": version, "runProtocolVersion": protocol, "buildDate": "2026-10-23T09:30:05Z"}))
+        (self.kit / "Contents/Info.plist").write_bytes(plistlib.dumps({
+            "CFBundleExecutable": "omarchy-vm-helper", "CFBundlePackageType": "BNDL", "LSUIElement": True}))
+        self.codesign.sign(self.kit)
 
     def run_check(self) -> tuple[int, str, str]:
         output, errors = io.StringIO(), io.StringIO()
@@ -156,6 +159,20 @@ class CheckTryKitTest(unittest.TestCase):
         self.codesign.sign(library)
         self.codesign.invalid.add(str(self.kit))
         self.refused("the kit does not verify")
+
+    def test_the_kit_has_no_bundle_identity_of_its_own(self) -> None:
+        self.pin("v1.2.3")
+        self.make_kit()
+        info = self.kit / "Contents/Info.plist"
+        for key in ("CFBundleIdentifier", "CFBundleName", "CFBundleDisplayName"):
+            with self.subTest(key=key):
+                info.write_bytes(plistlib.dumps({"CFBundleExecutable": "omarchy-vm-helper", key: "dev.tryomarchy.kit"}))
+                self.refused(f"the kit has a bundle identity of its own ({key})")
+        self.make_kit()
+        self.codesign.sign(self.kit, identifier="dev.tryomarchy.kit")
+        self.refused(f"the kit's bundle is not signed as {IDENTIFIER}")
+        info.unlink()
+        self.refused("the kit's Info.plist is missing")
 
     def test_qemu_and_the_helper_carry_their_entitlements_and_nothing_else_does(self) -> None:
         self.pin("v1.2.3")

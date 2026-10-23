@@ -10,6 +10,8 @@ with Packaging/entitlements/installer-app.entitlements.
 When Packaging/try-omarchy-kit.json pins a kit, or OMARCHY_TRY_KIT_ZIP named
 a local one for the build, the app carries it in Contents/Helpers, and:
 
+- the kit is a helper bundle with no bundle identifier or name of its own,
+  signed as <app identifier>.vm-kit;
 - the kit verifies (codesign --deep --strict), and every Mach-O in it is
   signed with the hardened runtime as <app identifier>.vm-kit;
 - QEMU carries exactly vm-qemu.entitlements (the hypervisor and the
@@ -38,7 +40,7 @@ IDENTITY = ROOT / "Packaging/identity.conf"
 PIN = ROOT / "Packaging/try-omarchy-kit.json"
 ENTITLEMENTS = ROOT / "Packaging/entitlements"
 PROTOCOL_SOURCE = ROOT / "Vendor/TryOmarchyKitClient/VMRunProtocol.swift"
-KIT = "Contents/Helpers/Try Omarchy Kit.app"
+KIT = "Contents/Helpers/TryOmarchyKit.bundle"
 QEMU = "Contents/Resources/runtime/bin/Try Omarchy"
 HELPER = "Contents/MacOS/omarchy-vm-helper"
 RELEASE = re.compile(r"v(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})")
@@ -112,6 +114,7 @@ class Check:
         identifier = self.values["INSTALLER_APP_IDENTIFIER"] + ".vm-kit"
         if codesign("--verify", "--deep", "--strict", str(kit)).returncode != 0:
             self.find("the kit does not verify (codesign --verify --deep --strict)")
+        self.check_identity(kit, identifier)
         expected = {
             kit / QEMU: self.entitlements_file("vm-qemu.entitlements"),
             kit / HELPER: self.entitlements_file("vm-helper.entitlements"),
@@ -141,6 +144,20 @@ class Check:
         if manifest and not self.findings:
             print(f"check-try-kit: kit {manifest['version']}, run-mode protocol {manifest['runProtocolVersion']}, "
                   f"{signed} Mach-O files signed as {identifier}")
+
+    def check_identity(self, kit: Path, identifier: str) -> None:
+        """The kit runs as the app: no bundle identity, and signed under the app's kit identifier."""
+        try:
+            info = plistlib.loads((kit / "Contents/Info.plist").read_bytes())
+        except (OSError, ValueError, plistlib.InvalidFileException):
+            self.find("the kit's Info.plist is missing or unreadable")
+            return
+        named = sorted({"CFBundleIdentifier", "CFBundleName", "CFBundleDisplayName"} & set(info))
+        if named:
+            self.find(f"the kit has a bundle identity of its own ({', '.join(named)})")
+        details = codesign("-d", "--verbose=2", str(kit)).stderr.decode(errors="replace")
+        if f"\nIdentifier={identifier}\n" not in f"\n{details}":
+            self.find(f"the kit's bundle is not signed as {identifier}")
 
     def check_manifest(self, kit: Path, pinned: dict | None) -> dict | None:
         path = kit / "Contents/Resources/kit.json"

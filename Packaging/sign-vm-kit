@@ -5,7 +5,7 @@
 # (docs/try.md). Every Mach-O in the kit is signed, as
 # notarization requires: the runtime's libraries and zstd, QEMU with the
 # hypervisor and microphone, the helper with the camera and microphone, then
-# the kit bundle. The kit must still pass its launcher's own check.
+# the kit's bundle, which has no bundle identifier of its own.
 #
 #   Packaging/sign-vm-kit APP CODESIGN_ARGUMENTS...
 #
@@ -25,7 +25,7 @@ shift
 script_directory=$(cd "$(dirname "$0")" && pwd -P)
 # shellcheck source=identity.conf
 source "$script_directory/identity.conf"
-kit="$app/Contents/Helpers/Try Omarchy Kit.app"
+kit="$app/Contents/Helpers/TryOmarchyKit.bundle"
 [[ -d $kit && ! -L $kit ]] || fail "the app carries no kit"
 identifier="$INSTALLER_APP_IDENTIFIER.vm-kit"
 runtime="$kit/Contents/Resources/runtime"

@@ -304,10 +304,10 @@ python3 "$package_directory/Engine/verify-restore-image.py" "$restore_image_path
 kit_archive=$(python3 "$package_directory/scripts/try_omarchy_kit.py" fetch \
   --cache "$package_directory/.build/try-omarchy-kit") \
   || fail "the Try Omarchy kit could not be fetched or verified"
-vm_kit="$contents/Helpers/Try Omarchy Kit.app"
+vm_kit="$contents/Helpers/TryOmarchyKit.bundle"
 if [[ -n $kit_archive ]]; then
-  /usr/bin/ditto -x -k "$kit_archive" "$contents/Helpers"
-  [[ -d $vm_kit && ! -L $vm_kit ]] || fail "the kit archive holds no Try Omarchy Kit.app"
+  python3 "$package_directory/scripts/try_omarchy_kit.py" unpack "$kit_archive" "$contents/Helpers" >/dev/null \
+    || fail "the kit archive does not hold a kit"
   OMARCHY_QEMU_GPU_INSPECT_ONLY=1 "$vm_kit/Contents/Resources/scripts/run-qemu-gpu.sh" >/dev/null 2>&1 \
     || fail "the kit's launcher rejects its own factory"
 fi

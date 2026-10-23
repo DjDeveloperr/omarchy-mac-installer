@@ -252,13 +252,13 @@ class Guard:
                 if data[:4] in MACHO:
                     self.signed_entitlements(where, path)
             for name in subdirectories:
-                if name.endswith(".app"):
-                    nested = base / name
-                    nested_label = f"{label}/{nested.relative_to(top)}"
+                nested = base / name
+                nested_label = f"{label}/{nested.relative_to(top)}"
+                if self.is_vm_kit(nested):
+                    self.check_vm_kit(nested, nested_label)
+                elif name.endswith(".app"):
                     if self.is_recovery_template(nested):
                         self.check_recovery_template(nested, nested_label)
-                    elif self.is_vm_kit(nested):
-                        self.check_vm_kit(nested, nested_label)
                     else:
                         self.check_app(nested, nested_label)
 
@@ -287,12 +287,12 @@ class Guard:
             self.values["INSTALLER_RECOVERY_APP_NAME"] + ".app")
         return outer.name.endswith(".app") and app == expected
 
-    def is_vm_kit(self, app: Path) -> bool:
-        return (len(app.parents) >= 3 and app.parents[2].name.endswith(".app")
-                and app == app.parents[2] / "Contents/Helpers/Try Omarchy Kit.app")
+    def is_vm_kit(self, kit: Path) -> bool:
+        return (len(kit.parents) >= 3 and kit.parents[2].name.endswith(".app")
+                and kit == kit.parents[2] / "Contents/Helpers/TryOmarchyKit.bundle")
 
     def check_vm_kit(self, app: Path, label: str) -> None:
-        """The Try Omarchy kit the trial runs (docs/try.md)."""
+        """The Try Omarchy kit the trial runs (docs/try.md): helpers with no identity of their own."""
         if app.is_symlink():
             self.find(label, "the Try Omarchy kit is a symbolic link")
             return
@@ -301,8 +301,17 @@ class Guard:
         except (OSError, ValueError, plistlib.InvalidFileException):
             self.find(label, "the Try Omarchy kit Info.plist is missing or unreadable")
             return
-        if info.get("CFBundleIdentifier") != "dev.tryomarchy.kit" or info.get("TryOmarchyKitFormat") != 1:
-            self.find(label, "the Try Omarchy kit is not a format 1 kit")
+        if not isinstance(info, dict) or info.get("CFBundleExecutable") != "omarchy-vm-helper":
+            self.find(label, "the Try Omarchy kit's Info.plist does not name its helper")
+            return
+        if {"CFBundleIdentifier", "CFBundleName", "CFBundleDisplayName"} & set(info):
+            self.find(label, "the Try Omarchy kit has a bundle identity of its own")
+        manifest = app / "Contents/Resources/kit.json"
+        try:
+            if manifest.is_symlink() or json.loads(manifest.read_text()).get("format") != 1:
+                raise ValueError
+        except (OSError, ValueError, AttributeError):
+            self.find(label, "the Try Omarchy kit has no format 1 kit.json")
         helper = app / "Contents/MacOS/omarchy-vm-helper"
         if helper.is_symlink() or not helper.is_file():
             self.find(label, "the Try Omarchy kit's helper is missing or linked")
@@ -419,7 +428,7 @@ class Guard:
         elif decoder.read_bytes()[:4] not in MACHO:
             self.find(label, "Contents/Helpers/omarchy-restore-image is not a Mach-O executable")
         for entry in sorted(helpers.iterdir()) if helpers.is_dir() and not helpers.is_symlink() else []:
-            if entry.name == "Try Omarchy Kit.app" and entry.is_dir() and not entry.is_symlink():
+            if entry.name == "TryOmarchyKit.bundle" and entry.is_dir() and not entry.is_symlink():
                 continue
             if entry.name != decoder.name:
                 self.find(label, f"Contents/Helpers/{entry.name} is not the restore-image decoder")
