@@ -152,14 +152,19 @@ struct OnePageInstallerView: View {
     }
     .sheet(isPresented: migrationNoticeBinding) {
       if let trial {
-        ConfirmationSheet(
-          title: PlainLanguage.trialMigrationNoticeTitle,
-          message: PlainLanguage.trialMigrationNoticeMessage,
-          action: PlainLanguage.trialInstallWithoutMigrating,
-          cancelIsDefault: true,
-          onConfirm: { trial.installWithoutMigrating() },
+        let offer = migrationOffer(trial)
+        MigrationSheet(
+          offer: offer,
+          onPrimary: { migrate(offer, trial) },
+          onInstallWithoutMigrating: {
+            Task {
+              await session.chooseTryExport(nil)
+              trial.continueToInstall()
+            }
+          },
           onCancel: { trial.dismissMigrationNotice() }
         )
+        .task { await session.offerNewestTryExport() }
       }
     }
     .sheet(isPresented: $showsRecoveryRetryConfirmation) {
@@ -290,6 +295,15 @@ struct OnePageInstallerView: View {
           .font(OmarchyTheme.body)
           .foregroundStyle(OmarchyTheme.secondaryText)
           .fixedSize(horizontal: false, vertical: true)
+      }
+      if let export = session.chosenTryExport {
+        VStack(alignment: .leading, spacing: 4) {
+          Text(PlainLanguage.tryExportPlanLine(export))
+            .font(OmarchyTheme.body)
+            .foregroundStyle(OmarchyTheme.secondaryText)
+          Text(PlainLanguage.tryExportNotYet).omarchyHelpText()
+        }
+        .fixedSize(horizontal: false, vertical: true)
       }
       acknowledgement(acknowledged, resizesMacOS: plan.fixedMacOSBytes == nil)
 
@@ -430,6 +444,26 @@ struct OnePageInstallerView: View {
   /// the running page: Omarchy shuts down first, then the plan follows.
   private func continueToPlan() {
     Task { await session.continueToPlan() }
+  }
+
+  private func migrationOffer(_ trial: TrialSession) -> TrialMigrationOffer {
+    TrialMigrationOffer(
+      exports: session.tryExports, chosenID: session.chosenTryExportID,
+      check: session.tryExportCheck, exportWaitsInOutbox: trial.exportWaitsInOutbox,
+      phase: trial.phase)
+  }
+
+  /// Install with These Files keeps the chosen export for the install; Shut
+  /// Down Omarchy publishes the export it holds, then offers it.
+  private func migrate(_ offer: TrialMigrationOffer, _ trial: TrialSession) {
+    switch offer.primary {
+    case .installWithExport(enabled: true):
+      trial.continueToInstall()
+    case .shutDownToPublish(enabled: true):
+      trial.shutDownToPublishExport { Task { await session.offerNewestTryExport() } }
+    case .installWithExport, .shutDownToPublish, nil:
+      break
+    }
   }
 
   private var migrationNoticeBinding: Binding<Bool> {

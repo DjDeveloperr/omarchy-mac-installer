@@ -9,8 +9,8 @@
     case noMacRelease, modelNotOnChannel, channelUnreachable
     case allocationClamped, allocationAligned, approvalChanged, credentialsRejected, connectionLost
     case emptyReply, helperFailure, degradedProgress, recoveryRetry, manualRecovery
-    case shutdownFailure, completed, installationMedia, spaceChanged, preparedResumeMismatch, tryExport,
-      tryExportOnThisMac
+    case shutdownFailure, completed, installationMedia, spaceChanged, preparedResumeMismatch
+    case tryExport, tryExportOnThisMac
 
     public var id: String { rawValue }
     public var title: String {

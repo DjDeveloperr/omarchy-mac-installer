@@ -32,6 +32,29 @@
       self.missing = missing
     }
 
+    /// A finished export Omarchy left in the VM's outbox,
+    /// `native-exports/<export id>/`, which the launcher publishes to Try
+    /// Omarchy's Exports folder when the VM stops. Only names are read: the
+    /// guest writes the outbox, and exports come from Exports alone.
+    public var hasExportInOutbox: Bool {
+      guard missing == nil else { return false }
+      let outbox = url.appendingPathComponent("native-exports", isDirectory: true)
+      guard let names = try? FileManager.default.contentsOfDirectory(atPath: outbox.path) else {
+        return false
+      }
+      return names.contains { name in
+        guard name.range(of: Self.exportIDPattern, options: .regularExpression) != nil else {
+          return false
+        }
+        var information = stat()
+        return lstat(outbox.appendingPathComponent(name).path, &information) == 0
+          && information.st_mode & S_IFMT == S_IFDIR
+      }
+    }
+
+    static let exportIDPattern =
+      "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+
     /// Compares the folder with the default one, and their volumes through
     /// the nearest folder of each that exists.
     public static func resolved(_ url: URL, defaultRoot: URL?) -> Self {

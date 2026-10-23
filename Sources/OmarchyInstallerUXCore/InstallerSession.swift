@@ -108,6 +108,22 @@
       }
     }
 
+    /// The chosen export once its check passed, for the plan review.
+    public var chosenTryExport: TryOmarchyExportDisplay? {
+      guard tryExportCheck == .verified, let id = chosenTryExportID else { return nil }
+      return tryExports.exports.first { $0.id == id }
+    }
+
+    /// Migrate to Native: looks again, then chooses and checks the newest
+    /// export, unless it is already chosen and checked.
+    public func offerNewestTryExport() async {
+      await refreshTryExports()
+      guard let newest = tryExports.exports.first,
+        chosenTryExportID != newest.id || tryExportCheck != .verified
+      else { return }
+      await chooseTryExport(newest.id)
+    }
+
     /// Chooses an export (or none) and checks its ciphertext against the
     /// receipt. Only the latest choice's answer is kept.
     public func chooseTryExport(_ id: String?) async {

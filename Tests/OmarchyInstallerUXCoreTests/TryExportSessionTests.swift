@@ -159,5 +159,40 @@
         XCTAssertFalse(PlainLanguage.tryExportFailure(problem).contains("passphrase"))
       }
     }
+
+    func testMigrateToNativeChoosesAndChecksTheNewestExport() async {
+      let environment = MockInstallerEnvironment()
+      environment.tryExportAnswers = [
+        .none, .found([Self.older], unusable: 0), .found([Self.newer, Self.older], unusable: 0),
+      ]
+      let session = await welcomed(environment)
+
+      await session.offerNewestTryExport()
+      XCTAssertNil(session.chosenTryExportID)
+      XCTAssertNil(session.chosenTryExport)
+
+      await session.offerNewestTryExport()
+      XCTAssertEqual(session.chosenTryExportID, Self.older.id)
+      XCTAssertEqual(session.chosenTryExport, Self.older)
+
+      await session.offerNewestTryExport()
+      XCTAssertEqual(session.chosenTryExportID, Self.newer.id, "A newly published export wins")
+      XCTAssertEqual(session.chosenTryExport, Self.newer)
+
+      await session.offerNewestTryExport()
+      XCTAssertEqual(
+        environment.checkedTryExports, [Self.older.id, Self.newer.id],
+        "A chosen export that passed its check isn't hashed again")
+    }
+
+    func testThePlanShowsTheChosenExportOnlyOnceItsCheckPasses() async {
+      let environment = MockInstallerEnvironment()
+      environment.tryExportAnswers = [.found([Self.newer], unusable: 0)]
+      environment.tryExportChecks = [Self.newer.id: .failed("tampered")]
+      let session = await welcomed(environment)
+      await session.offerNewestTryExport()
+      XCTAssertEqual(session.chosenTryExportID, Self.newer.id)
+      XCTAssertNil(session.chosenTryExport)
+    }
   }
 #endif
