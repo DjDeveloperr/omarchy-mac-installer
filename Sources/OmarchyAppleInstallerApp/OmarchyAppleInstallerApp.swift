@@ -227,6 +227,9 @@ struct OmarchyAppleInstallerApp: App {
       .containerBackground(OmarchyTheme.window, for: .window)
     }
     .defaultSize(width: 780, height: 600)
+    // Centred at every launch, like Try Omarchy's launcher, wherever it was left.
+    .restorationBehavior(.disabled)
+    .defaultWindowPlacement { _, _ in WindowPlacement(.center) }
     .windowResizability(.contentSize)
     .windowStyle(.hiddenTitleBar)
     .commands {

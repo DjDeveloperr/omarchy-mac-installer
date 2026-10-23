@@ -4,7 +4,7 @@ The installer is the one app for Omarchy on a Mac, with two modes. **Install** p
 
 ## What people see
 
-- The first page is the landing page: this Mac in a line, a few short lines, then two buttons of the same width side by side at the bottom, **Install on this Mac** on the left and **Try it in a VM** on the right. The lines say why Install is unavailable, what Try has and the space for it. With nothing to say, one line names both choices. The page keeps its height in every state.
+- The first page is the landing page: this Mac in a line, a few short lines, then two buttons of the same width side by side at the bottom, **Install on this Mac** on the left and **Try it in a VM** on the right. The lines say why Install is unavailable, what Try has and the space for it. With nothing to say, one line names both choices. The page keeps its height in every state, and the window opens centred on the screen at every launch.
 - **Install on this Mac** continues into the plan. While the installer checks the Mac, the button is unavailable, and the lines say so with a spinner.
 - When Omarchy can't be installed, Install stays unavailable, and the lines give the reason: the Mac model, too little space, or what else holds this Mac back. **Details** shows the whole reason, with the supported models when the Mac model is the reason, and **Check again** checks the Mac again.
 - On a Mac with Omarchy installed, Install is unavailable, and the line says Omarchy is installed. **Remove Omarchy…** stays in the Installation menu. An install still waiting for its Recovery step shows the Recovery steps instead. If Omarchy started before the check found it, the running page says so, and the steps appear once Omarchy shuts down.
