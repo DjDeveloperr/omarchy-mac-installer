@@ -63,6 +63,21 @@ struct TrialStage: View {
             .fixedSize(horizontal: false, vertical: true)
         }
       }
+      if let line = trial.bridgedNetworkLine {
+        Panel {
+          HStack {
+            Text(line)
+              .font(OmarchyTheme.body)
+              .foregroundStyle(OmarchyTheme.secondaryText)
+              .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            Button(trial.bridgedNetworkActionTitle) {
+              Task { await trial.setUpBridgedNetwork() }
+            }
+            .omarchySecondaryButton()
+          }
+        }
+      }
       if !permissions.allAllowed {
         Panel {
           PermissionRows(trial: trial, permissions: permissions, onlyMissing: true)

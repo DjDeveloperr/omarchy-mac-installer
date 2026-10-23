@@ -46,6 +46,33 @@
     public static let trialDeleteTitle = "Delete the virtual machine?"
     public static let trialDeleteAction = "Move to Trash"
     public static let trialDeleteFailed = "The virtual machine couldn’t be deleted"
+    public static let trialRepairBridgedNetworkMenuItem = "Repair Bridged Networking"
+    public static let trialRemoveBridgedNetworkMenuItem = "Remove Bridged Networking"
+
+    // MARK: Try — bridged networking
+
+    public static func trialBridgedNetworkLine(_ state: TrialBridgedNetwork) -> String {
+      switch state {
+      case .notRegistered:
+        "Omarchy is using shared networking, because bridged networking isn’t set up. Set it up, and the next start uses it."
+      case .needsApproval:
+        "Omarchy is using shared networking. Bridged networking waits for you to allow it in System Settings, under Login Items."
+      case .enabled:
+        "Omarchy is using shared networking, because bridged networking didn’t answer. Repairing it shuts Omarchy down."
+      }
+    }
+
+    public static func trialBridgedNetworkAction(_ state: TrialBridgedNetwork) -> String {
+      switch state {
+      case .notRegistered: "Set Up Bridged Networking"
+      case .needsApproval: "Open Login Items"
+      case .enabled: "Repair"
+      }
+    }
+
+    public static func trialBridgedNetworkFailed(_ reason: String) -> String {
+      "Bridged networking couldn’t be changed: \(reason)"
+    }
 
     public static func trialDeleteMessage(bytes: Int64) -> String {
       let frees =

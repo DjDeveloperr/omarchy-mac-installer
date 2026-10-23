@@ -247,6 +247,14 @@ struct OmarchyAppleInstallerApp: App {
             Task { confirmDeletion(await trial.deletionMessage()) }
           }
           .disabled(isSimulation || removalNeedsReview || showsRemoval || !trial.canDeleteVM)
+          Button(PlainLanguage.trialRepairBridgedNetworkMenuItem) {
+            Task { await trial.repairBridgedNetwork() }
+          }
+          .disabled(isSimulation || !trial.canChangeBridgedNetwork)
+          Button(PlainLanguage.trialRemoveBridgedNetworkMenuItem) {
+            Task { await trial.removeBridgedNetwork() }
+          }
+          .disabled(isSimulation || !trial.canChangeBridgedNetwork)
         }
       }
       if InstallerBuildProfile.current.showsReleaseChannels {

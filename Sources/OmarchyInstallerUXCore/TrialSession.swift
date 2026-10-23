@@ -19,6 +19,20 @@
     func shutDown()
     /// Moves the VM in the default folder to the Trash.
     func deleteVM() throws
+    /// The kit's bridged-networking daemon, which this app registers as itself.
+    func bridgedNetwork() -> TrialBridgedNetwork
+    func registerBridgedNetwork() throws
+    /// Login Items in System Settings, where the daemon waits for approval.
+    func openBridgedNetworkApproval()
+    func unregisterBridgedNetwork() async throws
+  }
+
+  /// Where the kit's bridged-networking daemon stands with Service Management.
+  public enum TrialBridgedNetwork: Equatable, Sendable {
+    case notRegistered
+    /// Registered, waiting for approval in Login Items.
+    case needsApproval
+    case enabled
   }
 
   public struct TrialSpace: Equatable, Sendable {
@@ -161,6 +175,11 @@
     public private(set) var installStatus: TrialInstallStatus = .checking
     /// A VM exists in the default folder: the remembered choice.
     public private(set) var hasVM = false
+    /// This start asked for bridged networking and got shared networking.
+    public private(set) var bridgedNetworkUnavailable = false
+    public private(set) var bridgedNetwork: TrialBridgedNetwork = .notRegistered
+    /// Why setting up, repairing or removing bridged networking failed.
+    public private(set) var bridgedNetworkFailure: String?
     /// The space the VM takes, for the plan review.
     public private(set) var vmBytes: Int64 = 0
     private let environment: any TrialEnvironment
@@ -176,6 +195,7 @@
     public init(environment: any TrialEnvironment) {
       self.environment = environment
       hasVM = environment.isAvailable && environment.space().hasVM
+      if environment.isAvailable { bridgedNetwork = environment.bridgedNetwork() }
     }
 
     public var isAvailable: Bool { environment.isAvailable }
@@ -305,6 +325,7 @@
     /// Re-reads permissions and space, as when the app becomes active again
     /// after System Settings.
     public func refresh() {
+      if environment.isAvailable { bridgedNetwork = environment.bridgedNetwork() }
       switch phase {
       case .ready:
         phase = readyPhase()
@@ -349,6 +370,7 @@
       guard canStart else { return }
       lastError = nil
       shutdownRequested = false
+      bridgedNetworkUnavailable = false
       phase = .starting(TrialProgress(phase: .checking, percent: nil))
       do {
         try environment.start { [weak self] event in self?.receive(event) }
@@ -401,8 +423,81 @@
       follow(installStatus)
     }
 
+    /// The running page's line about bridged networking, while this start
+    /// fell back to shared networking.
+    public var bridgedNetworkLine: String? {
+      guard bridgedNetworkUnavailable, isActive else { return nil }
+      return bridgedNetworkFailure ?? PlainLanguage.trialBridgedNetworkLine(bridgedNetwork)
+    }
+
+    public var bridgedNetworkActionTitle: String {
+      PlainLanguage.trialBridgedNetworkAction(bridgedNetwork)
+    }
+
+    /// Repair and Remove in the menu, once the daemon is registered.
+    public var canChangeBridgedNetwork: Bool {
+      environment.isAvailable && bridgedNetwork != .notRegistered && phase != .stopping
+    }
+
+    /// Registers the daemon, or opens Login Items while it waits for approval.
+    /// A daemon that is set up but still unavailable is repaired. The next
+    /// start uses it.
+    public func setUpBridgedNetwork() async {
+      bridgedNetworkFailure = nil
+      switch environment.bridgedNetwork() {
+      case .notRegistered:
+        do {
+          try environment.registerBridgedNetwork()
+        } catch {
+          if environment.bridgedNetwork() == .notRegistered {
+            bridgedNetworkFailure = PlainLanguage.trialBridgedNetworkFailed(
+              error.localizedDescription)
+          }
+        }
+        bridgedNetwork = environment.bridgedNetwork()
+        if bridgedNetwork == .needsApproval { environment.openBridgedNetworkApproval() }
+      case .needsApproval:
+        bridgedNetwork = .needsApproval
+        environment.openBridgedNetworkApproval()
+      case .enabled:
+        await repairBridgedNetwork()
+      }
+    }
+
+    /// Shuts Omarchy down, then registers the daemon again.
+    public func repairBridgedNetwork() async {
+      await changeBridgedNetwork { environment in
+        try await environment.unregisterBridgedNetwork()
+        try environment.registerBridgedNetwork()
+      }
+      if bridgedNetwork == .needsApproval { environment.openBridgedNetworkApproval() }
+    }
+
+    /// Shuts Omarchy down, then unregisters the daemon.
+    public func removeBridgedNetwork() async {
+      await changeBridgedNetwork { environment in try await environment.unregisterBridgedNetwork() }
+    }
+
+    private func changeBridgedNetwork(
+      _ change: @MainActor (any TrialEnvironment) async throws -> Void
+    ) async {
+      bridgedNetworkFailure = nil
+      await withCheckedContinuation { stopped in shutDown { stopped.resume() } }
+      do {
+        try await change(environment)
+      } catch {
+        bridgedNetworkFailure = PlainLanguage.trialBridgedNetworkFailed(error.localizedDescription)
+      }
+      bridgedNetwork = environment.bridgedNetwork()
+    }
+
     func receive(_ event: VMRunEvent) {
       switch event {
+      case .notice(let notice):
+        if notice.code == .bridgedNetworkUnavailable {
+          bridgedNetworkUnavailable = true
+          bridgedNetwork = environment.bridgedNetwork()
+        }
       case .progress(let step, let percent):
         if case .starting = phase {
           phase = .starting(TrialProgress(phase: step, percent: percent))

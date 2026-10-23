@@ -3,6 +3,7 @@ import AppKit
 import ApplicationServices
 import OmarchyAppleInstallerTrustCore
 import OmarchyInstallerUXCore
+import ServiceManagement
 import TryOmarchyKitClient
 
 /// Try on this Mac: the kit in Contents/Helpers, this app's own permissions,
@@ -11,6 +12,9 @@ import TryOmarchyKitClient
 final class LiveTrialEnvironment: TrialEnvironment {
   private let kit = TryOmarchyKit.embedded()
   private lazy var client = VMRunClient(kit: kit)
+  /// The kit's networking daemon, whose job build-app.sh copies into this
+  /// app's Contents/Library/LaunchDaemons.
+  private let networkDaemon = SMAppService.daemon(plistName: "dev.tryomarchy.kit.network.plist")
 
   var isAvailable: Bool { (try? kit.helperURL()) != nil }
 
@@ -73,6 +77,21 @@ final class LiveTrialEnvironment: TrialEnvironment {
     else { throw TrialVMFolder.Refusal.notTheDefaultFolder }
     try TrialVMFolder.trash(under: support)
   }
+
+  func bridgedNetwork() -> TrialBridgedNetwork {
+    switch networkDaemon.status {
+    case .enabled: .enabled
+    case .requiresApproval: .needsApproval
+    case .notRegistered, .notFound: .notRegistered
+    @unknown default: .notRegistered
+    }
+  }
+
+  func registerBridgedNetwork() throws { try networkDaemon.register() }
+
+  func openBridgedNetworkApproval() { SMAppService.openSystemSettingsLoginItems() }
+
+  func unregisterBridgedNetwork() async throws { try await networkDaemon.unregister() }
 
   private static func state(_ status: AVAuthorizationStatus) -> TrialPermissionState {
     switch status {
