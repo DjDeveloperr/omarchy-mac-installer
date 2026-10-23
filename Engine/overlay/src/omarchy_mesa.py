@@ -373,12 +373,10 @@ def loadable_calibration(found, factory=FACTORY_CACHE):
     return factory_calibration(found, factory) if standalone else found
 
 
-def collect(device, *, root_key_record=None, factory=FACTORY_CACHE):
+def collect(device, *, factory=FACTORY_CACHE):
     """{firmware path: bytes} for this Mac's Touch ID, read from the raw
-    iBoot System Container device, never written."""
-    # The production adapter supplies factory_root_key(), rebuilt from this
-    # Mac's own factory cache; collection without one still succeeds.
-    root = root_key(root_key_record) if root_key_record is not None else None
+    iBoot System Container device, never written. The sensor root key is never
+    among them: it is device-private, so the adapter stages it by itself."""
     fd = os.open(device, os.O_RDONLY)
     try:
         size = device_size(fd)
@@ -393,7 +391,4 @@ def collect(device, *, root_key_record=None, factory=FACTORY_CACHE):
             container += block
     finally:
         os.close(fd)
-    files = {FIRMWARE_NAME: loadable_calibration(calibration(container), factory)}
-    if root is not None:
-        files[ROOT_KEY_NAME] = root
-    return files
+    return {FIRMWARE_NAME: loadable_calibration(calibration(container), factory)}

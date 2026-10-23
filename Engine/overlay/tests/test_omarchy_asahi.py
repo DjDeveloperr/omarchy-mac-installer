@@ -2497,8 +2497,6 @@ class NeoTouchIdCalibrationTests(unittest.TestCase):
         self.run_hook("j613ap", collect, factory_root_key=lambda: b"comb", installer=installer)
         self.assertIsNone(installer.neo_sensor_root_key)
 
-
-
     def test_a_failed_collection_stops_installation(self):
         import omarchy_mesa
 

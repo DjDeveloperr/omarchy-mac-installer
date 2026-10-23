@@ -51,7 +51,7 @@ class RootKeyEnvelopeTests(unittest.TestCase):
         with self.assertRaisesRegex(MesaError, "too many root-key fields"):
             root_key(candidate)
 
-    def test_collect_includes_only_an_explicit_complete_root_key(self):
+    def test_collect_never_packages_the_root_key(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "container"
             path.write_bytes(img4())
@@ -59,10 +59,8 @@ class RootKeyEnvelopeTests(unittest.TestCase):
             factory.mkdir()
             factory_cache(factory)
             self.assertNotIn(ROOT_KEY_NAME, collect(path, factory=factory))
-            data = combined_root()
-            self.assertEqual(collect(path, root_key_record=data, factory=factory)[ROOT_KEY_NAME], data)
-            with self.assertRaises(MesaError):
-                collect(path, root_key_record=root_image(), factory=factory)
+            with self.assertRaises(TypeError):
+                collect(path, root_key_record=combined_root(), factory=factory)
 
 
 class FactoryRootKeyTests(unittest.TestCase):

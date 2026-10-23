@@ -868,8 +868,10 @@ def _collect_neo_touch_id(installer, pkg, collect=omarchy_mesa.collect,
 def _stage_neo_sensor_root_key(esp, key):
     """Write the Neo's sensor root key to the ESP outside the firmware archives.
 
-    It goes to a temporary name first and is renamed, so Linux never takes a
-    partial file for the key. A failure costs Touch ID only, never the install."""
+    It goes to a temporary name first and is renamed, so a write interrupted
+    before the rename never takes the key's name; Linux checks the key's DER
+    envelope against a power cut. A failure costs Touch ID only, never the
+    install."""
     final = os.path.join(esp, NEO_SENSOR_ROOT_KEY_STAGE)
     temporary = final + ".new"
     try:
