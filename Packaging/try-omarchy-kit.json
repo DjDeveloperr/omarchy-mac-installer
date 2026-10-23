@@ -2,9 +2,17 @@
   "format": 1,
   "client": {
     "repository": "omacom/try-omarchy",
-    "revision": "a0305c7f901bcaafa736b1fe4adc3d12cfe79968",
+    "revision": "13d63df8da2947f833c04025ff5ade187d39ba81",
     "path": "macos/Sources/TryOmarchyKitClient",
     "sha256": "c7c45b9bd16652e4e9e2e7e06fbfcd683aa8926f614c369c7668ac99e9657571"
   },
-  "kit": null
+  "kit": {
+    "release": "v1.3.0",
+    "revision": "13d63df8da2947f833c04025ff5ade187d39ba81",
+    "url": "https://github.com/omacom/try-omarchy/releases/download/v1.3.0/TryOmarchyKit.zip",
+    "bytes": 14334796,
+    "sha256": "f4b0412d8d563b3eff549a84a496cf502fb1a1e1ef37588e16f6316bdea40803",
+    "version": "v1.3.0",
+    "runProtocolVersion": 1
+  }
 }
