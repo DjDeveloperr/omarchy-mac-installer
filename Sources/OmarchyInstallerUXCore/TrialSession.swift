@@ -203,11 +203,21 @@
 
     public let install: Install
     public let installTitle: String
-    public let installDetail: String
     public let tryTitle: String
-    public let tryDetail: String
+    /// What Try has to say above the buttons once a VM exists: that it is
+    /// ready, or where its folder is.
+    public let tryLine: String?
+    /// The space free for the VM, once one exists, or the space a new one
+    /// still lacks.
+    public let spaceLine: String?
+    public let spaceIsShort: Bool
     /// Try is the likelier next step: a VM exists, or Install isn't on offer.
     public let tryIsPrimary: Bool
+
+    /// The line above the buttons when neither button has anything to say.
+    public var choiceLine: String? {
+      install == .available && tryLine == nil ? PlainLanguage.trialLandingChoice : nil
+    }
   }
 
   public enum TrialInstallMenuAction: Equatable, Sendable {
@@ -245,12 +255,16 @@
     /// Migrate to Native's notice, before a native install that leaves the
     /// VM's files where they are.
     public private(set) var showsMigrationNotice = false
+    /// The space last read, for the landing page.
+    private var lastSpace: TrialSpace?
     private var pendingInstall: (() -> Void)?
 
     public init(environment: any TrialEnvironment) {
       self.environment = environment
       guard environment.isAvailable else { return }
-      hasVM = environment.space().remembersVM
+      let space = environment.space()
+      hasVM = space.remembersVM
+      lastSpace = space
       vmRoot = environment.vmRoot()
       bridgedNetwork = environment.bridgedNetwork()
     }
@@ -305,15 +319,11 @@
       } else {
         install = .checking
       }
-      let tryDetail =
-        !hasVM
-        ? PlainLanguage.trialEntryDetail
-        : vmRoot?.isDefault == false
-          ? PlainLanguage.trialEntryChosenFolderDetail : PlainLanguage.trialEntryReadyDetail
       return TrialLanding(
-        install: install, installTitle: installTitle,
-        installDetail: hasVM ? PlainLanguage.trialMigrateDetail : PlainLanguage.trialInstallDetail,
-        tryTitle: PlainLanguage.trialEntry, tryDetail: tryDetail,
+        install: install, installTitle: installTitle, tryTitle: PlainLanguage.trialEntry,
+        tryLine: hasVM ? PlainLanguage.trialLandingVMLine(vmRoot) : nil,
+        spaceLine: lastSpace.flatMap(PlainLanguage.trialLandingSpace),
+        spaceIsShort: lastSpace?.isShort == true,
         tryIsPrimary: hasVM || install != .available)
     }
 
@@ -378,7 +388,7 @@
       launched = true
       guard environment.isAvailable, phase == .hidden else { return }
       let space = environment.space()
-      noteVM(space.remembersVM)
+      noteVM(space)
       let permissions = environment.permissions()
       guard space.remembersVM, space.isEnough,
         permissions.allAllowed || environment.hasStartedHere
@@ -431,7 +441,7 @@
       case .running:
         phase = .running(environment.permissions())
       default:
-        if !isActive { noteVM(environment.isAvailable && environment.space().remembersVM) }
+        if !isActive, environment.isAvailable { noteVM(environment.space()) }
       }
     }
 
@@ -444,10 +454,11 @@
       await vmBytesRefresh?.value
     }
 
-    private func noteVM(_ exists: Bool) {
-      hasVM = exists
+    private func noteVM(_ space: TrialSpace) {
+      lastSpace = space
+      hasVM = space.remembersVM
       vmRoot = environment.isAvailable ? environment.vmRoot() : nil
-      guard exists else { return }
+      guard hasVM else { return }
       vmBytesRefresh = Task { await refreshVMBytes() }
     }
 
@@ -540,8 +551,7 @@
     public func deleteVM() throws {
       guard canDeleteVM else { return }
       try environment.deleteVM()
-      hasVM = false
-      vmRoot = environment.vmRoot()
+      noteVM(environment.space())
       vmBytes = 0
       phase = .hidden
     }
@@ -649,7 +659,7 @@
         }
       case .ready:
         if !environment.hasStartedHere { environment.recordStartedHere() }
-        noteVM(environment.space().remembersVM)
+        noteVM(environment.space())
         if !shutdownRequested { phase = .running(environment.permissions()) }
       case .stopping:
         phase = .stopping
@@ -676,7 +686,7 @@
 
     private func readyPhase() -> TrialPhase {
       let space = environment.space()
-      noteVM(space.remembersVM)
+      noteVM(space)
       return .ready(space, environment.permissions())
     }
 

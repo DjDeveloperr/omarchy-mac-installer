@@ -63,8 +63,8 @@ struct OnePageInstallerView: View {
           if let trial, trial.phase != .hidden {
             TrialStage(trial: trial)
           } else if let trial, trial.showsLanding {
-            TrialLandingChoices(
-              trial: trial, canCheckAgain: session.canInspect, onInstall: continueToPlan,
+            TrialLandingMessage(
+              trial: trial, canCheckAgain: session.canInspect,
               onCheckAgain: { Task { await recheck() } })
           } else {
             stage
@@ -74,7 +74,9 @@ struct OnePageInstallerView: View {
         HStack(spacing: 16) {
           if let trial, trial.phase != .hidden {
             TrialActions(trial: trial, onInstall: continueToPlan)
-          } else if trial?.showsLanding != true {
+          } else if let trial, trial.showsLanding {
+            TrialLandingButtons(trial: trial, onInstall: continueToPlan)
+          } else {
             actions
           }
         }
