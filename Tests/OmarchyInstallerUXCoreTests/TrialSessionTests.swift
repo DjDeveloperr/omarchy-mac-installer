@@ -1047,5 +1047,57 @@
       XCTAssertEqual(trial.phase, .running(environment.permissionState))
       XCTAssertFalse(trial.showsWindow, "A refresh leaves the window where it is")
     }
+
+    /// Ordering the last window out asks the app whether to quit. Quitting
+    /// shuts Omarchy down, so while Omarchy runs the answer must be no.
+    func testClosingTheWindowOnReadyNeverShutsOmarchyDown() throws {
+      let environment = FakeTrialEnvironment()
+      environment.makeVM()
+      let trial = TrialSession(environment: environment)
+      XCTAssertTrue(trial.quitsWhenTheLastWindowCloses)
+      trial.openAtLaunch()
+      let send = try XCTUnwrap(environment.onEvent)
+      XCTAssertFalse(trial.quitsWhenTheLastWindowCloses, "Starting keeps the app open")
+      send(.ready)
+      XCTAssertFalse(trial.showsWindow)
+      XCTAssertFalse(trial.quitsWhenTheLastWindowCloses)
+      XCTAssertEqual(trial.phase, .running(environment.permissionState))
+      XCTAssertEqual(environment.shutdowns, 0)
+      trial.refresh()
+      XCTAssertEqual(trial.phase, .running(environment.permissionState))
+      XCTAssertEqual(environment.shutdowns, 0)
+
+      send(.stopping)
+      send(.exited(status: 0))
+      XCTAssertTrue(trial.quitsWhenTheLastWindowCloses)
+    }
+
+    func testOmarchysWindowIsTheOneDockTileWhileItRuns() throws {
+      let environment = FakeTrialEnvironment()
+      let trial = ready(environment)
+      XCTAssertTrue(trial.showsInDock)
+      trial.start()
+      var send = try XCTUnwrap(environment.onEvent)
+      XCTAssertTrue(trial.showsInDock, "The download shows in the installer")
+      send(.ready)
+      XCTAssertFalse(trial.showsInDock)
+      send(.exited(status: 0))
+      XCTAssertTrue(trial.showsInDock)
+
+      trial.start()
+      send = try XCTUnwrap(environment.onEvent)
+      send(.ready)
+      XCTAssertFalse(trial.showsInDock)
+      send(.error(VMRunError(code: .qemuExited, message: "QEMU stopped")))
+      send(.exited(status: 1))
+      XCTAssertTrue(trial.showsInDock)
+
+      trial.dismiss()
+      trial.start()
+      send = try XCTUnwrap(environment.onEvent)
+      send(.ready)
+      trial.shutDown()
+      XCTAssertTrue(trial.showsInDock, "Shutting down shows in the installer")
+    }
   }
 #endif

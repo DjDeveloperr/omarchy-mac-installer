@@ -1,8 +1,9 @@
 import AppKit
 import SwiftUI
 
-/// Orders the installer's window out and back as Try asks, and says when the
-/// person brings it back from the Window menu while it is out.
+/// Orders the installer's window out and back as Try asks, with the app out
+/// of the Dock while it is out, and says when the person brings it back while
+/// it is out.
 struct InstallerWindowVisibility: NSViewRepresentable {
   let shows: Bool
   let onShown: () -> Void
@@ -34,10 +35,12 @@ final class InstallerWindowTracker: NSView {
     self.shows = shows
     guard let window else { return }
     if shows {
+      NSApp.setActivationPolicy(.regular)
       window.makeKeyAndOrderFront(nil)
       NSApp.activate()
     } else {
       window.orderOut(nil)
+      NSApp.setActivationPolicy(.accessory)
     }
   }
 

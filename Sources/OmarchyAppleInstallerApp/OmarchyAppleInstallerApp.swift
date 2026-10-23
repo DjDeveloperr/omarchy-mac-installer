@@ -44,10 +44,11 @@ private final class InstallerApplicationDelegate: NSObject, NSApplicationDelegat
   }
 
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-    true
+    Self.trial?.quitsWhenTheLastWindowCloses ?? true
   }
 
-  /// The Dock icon brings back the window Try closed while Omarchy runs.
+  /// Opening the app again brings back the window Try closed while Omarchy
+  /// runs.
   func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
     guard !hasVisibleWindows, let trial = Self.trial, !trial.showsWindow else { return true }
     trial.reopenWindow()

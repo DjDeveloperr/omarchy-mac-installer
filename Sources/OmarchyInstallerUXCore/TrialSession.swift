@@ -234,6 +234,15 @@
     /// and comes back when Omarchy shuts down or fails, or when the person
     /// asks for it.
     public private(set) var showsWindow = true
+
+    /// The app keeps its Dock tile while its window shows. While Omarchy
+    /// runs, Omarchy's window is the one Dock tile, as in Try Omarchy.
+    public var showsInDock: Bool { showsWindow }
+
+    /// Closing the last window quits the app, except while Omarchy starts,
+    /// runs or shuts down. Try closes the window itself then, and that
+    /// must never quit or shut Omarchy down.
+    public var quitsWhenTheLastWindowCloses: Bool { !isActive }
     private let environment: any TrialEnvironment
     private var lastError: VMRunError?
     private var shutdownRequested = false
