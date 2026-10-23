@@ -248,11 +248,11 @@ struct OmarchyAppleInstallerApp: App {
           }
           .disabled(isSimulation || removalNeedsReview || showsRemoval || !trial.canDeleteVM)
           Button(PlainLanguage.trialRepairBridgedNetworkMenuItem) {
-            Task { await trial.repairBridgedNetwork() }
+            confirmBridgedNetworkChange(removing: false)
           }
-          .disabled(isSimulation || !trial.canChangeBridgedNetwork)
+          .disabled(isSimulation || !trial.canRepairBridgedNetwork)
           Button(PlainLanguage.trialRemoveBridgedNetworkMenuItem) {
-            Task { await trial.removeBridgedNetwork() }
+            confirmBridgedNetworkChange(removing: true)
           }
           .disabled(isSimulation || !trial.canChangeBridgedNetwork)
         }
@@ -322,6 +322,27 @@ struct OmarchyAppleInstallerApp: App {
     alert.addButton(withTitle: PlainLanguage.trialDeleteAction).hasDestructiveAction = true
     guard alert.runModal() == .alertSecondButtonReturn, trial.canDeleteVM else { return }
     deleteVM()
+  }
+
+  /// Repair and Remove shut Omarchy down, so they ask first, with Cancel as
+  /// the default button.
+  private func confirmBridgedNetworkChange(removing: Bool) {
+    let alert = NSAlert()
+    alert.messageText = PlainLanguage.trialBridgedNetworkChangeTitle(removing: removing)
+    alert.informativeText = trial.bridgedNetworkChangeMessage(removing: removing)
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: "Cancel")
+    alert.addButton(withTitle: PlainLanguage.trialBridgedNetworkChangeAction(removing: removing))
+      .hasDestructiveAction = removing
+    guard alert.runModal() == .alertSecondButtonReturn else { return }
+    guard removing ? trial.canChangeBridgedNetwork : trial.canRepairBridgedNetwork else { return }
+    Task {
+      if removing {
+        await trial.removeBridgedNetwork()
+      } else {
+        await trial.repairBridgedNetwork()
+      }
+    }
   }
 
   private func deleteVM() {

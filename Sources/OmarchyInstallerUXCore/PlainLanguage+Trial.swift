@@ -70,6 +70,25 @@
       }
     }
 
+    public static let trialBridgedNetworkFetchedKitLine =
+      "Omarchy is using shared networking. Bridged networking works only with the virtual machine this app came with, until the next update of this app."
+
+    public static func trialBridgedNetworkChangeTitle(removing: Bool) -> String {
+      removing ? "Remove bridged networking?" : "Repair bridged networking?"
+    }
+
+    public static func trialBridgedNetworkChangeAction(removing: Bool) -> String {
+      removing ? "Remove" : "Repair"
+    }
+
+    public static func trialBridgedNetworkChangeMessage(removing: Bool, shutsDown: Bool) -> String {
+      let change =
+        removing
+        ? "Omarchy uses shared networking from its next start."
+        : "Bridged networking is set up again, and the next start uses it."
+      return shutsDown ? "Omarchy shuts down first. \(change)" : change
+    }
+
     public static func trialBridgedNetworkFailed(_ reason: String) -> String {
       "Bridged networking couldn’t be changed: \(reason)"
     }

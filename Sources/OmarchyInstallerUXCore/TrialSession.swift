@@ -25,6 +25,9 @@
     /// Login Items in System Settings, where the daemon waits for approval.
     func openBridgedNetworkApproval()
     func unregisterBridgedNetwork() async throws
+    /// The running or last start runs a kit fetched after this app was
+    /// built, whose bridged networking the registered daemon does not serve.
+    var runsFetchedKit: Bool { get }
   }
 
   /// Where the kit's bridged-networking daemon stands with Service Management.
@@ -180,6 +183,8 @@
     public private(set) var bridgedNetwork: TrialBridgedNetwork = .notRegistered
     /// Why setting up, repairing or removing bridged networking failed.
     public private(set) var bridgedNetworkFailure: String?
+    /// Setting up, repairing or removing bridged networking is under way.
+    public private(set) var bridgedNetworkChanging = false
     /// The space the VM takes, for the plan review.
     public private(set) var vmBytes: Int64 = 0
     private let environment: any TrialEnvironment
@@ -427,22 +432,40 @@
     /// fell back to shared networking.
     public var bridgedNetworkLine: String? {
       guard bridgedNetworkUnavailable, isActive else { return nil }
+      if environment.runsFetchedKit { return PlainLanguage.trialBridgedNetworkFetchedKitLine }
       return bridgedNetworkFailure ?? PlainLanguage.trialBridgedNetworkLine(bridgedNetwork)
     }
 
-    public var bridgedNetworkActionTitle: String {
-      PlainLanguage.trialBridgedNetworkAction(bridgedNetwork)
+    /// The line's button. A fetched kit's bridged networking can't be set
+    /// up or repaired yet, so it has none.
+    public var bridgedNetworkActionTitle: String? {
+      guard !environment.runsFetchedKit, !bridgedNetworkChanging else { return nil }
+      return PlainLanguage.trialBridgedNetworkAction(bridgedNetwork)
     }
 
-    /// Repair and Remove in the menu, once the daemon is registered.
+    /// Remove in the menu, once the daemon is registered and nothing is
+    /// shutting down or changing it.
     public var canChangeBridgedNetwork: Bool {
       environment.isAvailable && bridgedNetwork != .notRegistered && phase != .stopping
+        && !bridgedNetworkChanging
+    }
+
+    /// Repair in the menu, which a running fetched kit can't use.
+    public var canRepairBridgedNetwork: Bool {
+      canChangeBridgedNetwork && !(isActive && environment.runsFetchedKit)
+    }
+
+    /// The confirmation's words before Repair or Remove, naming the shutdown
+    /// when Omarchy runs.
+    public func bridgedNetworkChangeMessage(removing: Bool) -> String {
+      PlainLanguage.trialBridgedNetworkChangeMessage(removing: removing, shutsDown: isActive)
     }
 
     /// Registers the daemon, or opens Login Items while it waits for approval.
     /// A daemon that is set up but still unavailable is repaired. The next
     /// start uses it.
     public func setUpBridgedNetwork() async {
+      guard !bridgedNetworkChanging, bridgedNetworkActionTitle != nil else { return }
       bridgedNetworkFailure = nil
       switch environment.bridgedNetwork() {
       case .notRegistered:
@@ -466,6 +489,7 @@
 
     /// Shuts Omarchy down, then registers the daemon again.
     public func repairBridgedNetwork() async {
+      guard !(isActive && environment.runsFetchedKit) else { return }
       await changeBridgedNetwork { environment in
         try await environment.unregisterBridgedNetwork()
         try environment.registerBridgedNetwork()
@@ -481,6 +505,9 @@
     private func changeBridgedNetwork(
       _ change: @MainActor (any TrialEnvironment) async throws -> Void
     ) async {
+      guard !bridgedNetworkChanging else { return }
+      bridgedNetworkChanging = true
+      defer { bridgedNetworkChanging = false }
       bridgedNetworkFailure = nil
       await withCheckedContinuation { stopped in shutDown { stopped.resume() } }
       do {

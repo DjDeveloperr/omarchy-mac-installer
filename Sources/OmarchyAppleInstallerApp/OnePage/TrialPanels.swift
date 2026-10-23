@@ -71,10 +71,12 @@ struct TrialStage: View {
               .foregroundStyle(OmarchyTheme.secondaryText)
               .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 8)
-            Button(trial.bridgedNetworkActionTitle) {
-              Task { await trial.setUpBridgedNetwork() }
+            if let action = trial.bridgedNetworkActionTitle {
+              Button(action) {
+                Task { await trial.setUpBridgedNetwork() }
+              }
+              .omarchySecondaryButton()
             }
-            .omarchySecondaryButton()
           }
         }
       }

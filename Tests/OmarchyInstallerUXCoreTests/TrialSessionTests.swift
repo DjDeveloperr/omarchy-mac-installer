@@ -19,6 +19,7 @@
     var network: TrialBridgedNetwork = .notRegistered
     var networkChanges: [String] = []
     var registerError: Error?
+    var runsFetchedKit = false
 
     func space() -> TrialSpace { currentSpace }
     func vmBytes() async -> Int64 { 9_400_000_000 }
@@ -611,8 +612,17 @@
       XCTAssertEqual(trial.phase, .stopping)
       XCTAssertEqual(environment.shutdowns, 1)
       XCTAssertEqual(environment.networkChanges, [])
+      XCTAssertTrue(trial.bridgedNetworkChanging)
+      XCTAssertFalse(trial.canChangeBridgedNetwork)
+      XCTAssertFalse(trial.canRepairBridgedNetwork)
+      XCTAssertNil(trial.bridgedNetworkActionTitle)
+      await trial.repairBridgedNetwork()
+      await trial.removeBridgedNetwork()
+      await trial.setUpBridgedNetwork()
+      XCTAssertEqual(environment.shutdowns, 1)
       send(.exited(status: 0))
       await repair.value
+      XCTAssertFalse(trial.bridgedNetworkChanging)
       XCTAssertEqual(environment.networkChanges, ["unregister", "register", "open login items"])
 
       environment.network = .enabled
@@ -621,6 +631,36 @@
       XCTAssertEqual(environment.networkChanges.last, "unregister")
       XCTAssertEqual(trial.bridgedNetwork, .notRegistered)
       XCTAssertFalse(trial.canChangeBridgedNetwork)
+    }
+
+    func testAFetchedKitsSharedNetworkingOffersNoRepair() async throws {
+      let environment = FakeTrialEnvironment()
+      environment.network = .enabled
+      environment.runsFetchedKit = true
+      let (trial, send) = try runningWithSharedNetworking(environment)
+      XCTAssertEqual(trial.bridgedNetworkLine, PlainLanguage.trialBridgedNetworkFetchedKitLine)
+      XCTAssertNil(trial.bridgedNetworkActionTitle)
+      XCTAssertFalse(trial.canRepairBridgedNetwork)
+      XCTAssertTrue(trial.canChangeBridgedNetwork)
+      await trial.setUpBridgedNetwork()
+      await trial.repairBridgedNetwork()
+      XCTAssertEqual(environment.shutdowns, 0)
+      XCTAssertEqual(environment.networkChanges, [])
+      XCTAssertEqual(trial.phase, .running(environment.permissionState))
+      send(.exited(status: 0))
+      XCTAssertTrue(trial.canRepairBridgedNetwork)
+    }
+
+    func testTheChangeConfirmationNamesTheShutdown() throws {
+      let environment = FakeTrialEnvironment()
+      environment.network = .enabled
+      let (trial, send) = try runningWithSharedNetworking(environment)
+      XCTAssertTrue(
+        trial.bridgedNetworkChangeMessage(removing: true).hasPrefix("Omarchy shuts down first."))
+      XCTAssertTrue(
+        trial.bridgedNetworkChangeMessage(removing: false).hasPrefix("Omarchy shuts down first."))
+      send(.exited(status: 0))
+      XCTAssertFalse(trial.bridgedNetworkChangeMessage(removing: true).contains("shuts down"))
     }
 
     func testEveryCodeAndPhaseHasWords() {
