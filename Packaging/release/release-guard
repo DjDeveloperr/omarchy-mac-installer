@@ -64,6 +64,8 @@ LAB_CATALOG_KEY = HERE / "lab-catalog-key.ed25519.pub"
 CANDIDATE_TRUST = ROOT / "image-builder/builder/candidate-trust"
 # Archives are read into memory up to this size; larger ones are a finding.
 ARCHIVE_LIMIT = 512 << 20
+# The keys the kit's networking job may set; anything else could change what launchd runs as root.
+NETWORK_JOB_KEYS = {"Label", "MachServices", "BundleProgram", "ProcessType", "ExitTimeOut", "RunAtLoad"}
 
 ENTITLEMENTS = (
     b"<key>get-task-allow</key>",
@@ -435,6 +437,9 @@ class Guard:
                 job = plistlib.loads(entry.read_bytes())
             except (OSError, ValueError, plistlib.InvalidFileException):
                 job = None
+            if isinstance(job, dict) and set(job) - NETWORK_JOB_KEYS:
+                self.find(label, "the Try Omarchy kit's networking job sets keys other than "
+                          + ", ".join(sorted(NETWORK_JOB_KEYS)))
             if (not isinstance(job, dict) or job.get("Label") != "dev.tryomarchy.kit.network"
                     or job.get("BundleProgram") != f"{kit.relative_to(app)}/Contents/MacOS/omarchy-network-daemon"
                     or not (kit / "Contents/MacOS/omarchy-network-daemon").is_file()):

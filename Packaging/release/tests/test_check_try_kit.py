@@ -221,6 +221,10 @@ class CheckTryKitTest(unittest.TestCase):
             "Label": check.NETWORK_SERVICE, "MachServices": {check.NETWORK_SERVICE: True},
             "BundleProgram": "Contents/MacOS/omarchy-network-daemon"}))
         self.refused("job does not name the kit's service and daemon")
+        job.write_bytes(plistlib.dumps({
+            "Label": check.NETWORK_SERVICE, "MachServices": {check.NETWORK_SERVICE: True},
+            "BundleProgram": f"{check.KIT}/{check.NETWORK_DAEMON}", "ProgramArguments": ["/bin/sh"]}))
+        self.refused("job sets keys it may not: ProgramArguments")
         job.unlink()
         self.refused(f"the app has no Contents/Library/LaunchDaemons/{check.NETWORK_SERVICE}.plist")
 

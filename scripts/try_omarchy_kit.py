@@ -60,6 +60,9 @@ EMBEDDED_KIT = f"Contents/Helpers/{KIT_BUNDLE}"
 KIT_NETWORK_DAEMON = "Contents/MacOS/omarchy-network-daemon"
 KIT_NETWORK_JOB = "Contents/Resources/network/launchd.plist"
 NETWORK_LABEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,127}$")
+# The keys a kit's networking job may set. Anything else, such as Program,
+# ProgramArguments or UserName, would change what launchd runs as root.
+NETWORK_JOB_KEYS = {"Label", "MachServices", "BundleProgram", "ProcessType", "ExitTimeOut", "RunAtLoad"}
 PROTOCOL_SOURCE = "VMRunProtocol.swift"
 DIGEST = re.compile(r"^[0-9a-f]{64}$")
 RELEASE = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+$")
@@ -316,6 +319,11 @@ def install_network_job(app: Path) -> Path:
     except (OSError, ValueError, plistlib.InvalidFileException):
         raise ValueError(f"the kit's {KIT_NETWORK_JOB} is missing or unreadable") from None
     label = job.get("Label") if isinstance(job, dict) else None
+    if isinstance(job, dict) and set(job) - NETWORK_JOB_KEYS:
+        raise ValueError(f"the kit's networking job sets keys it may not: {', '.join(sorted(set(job) - NETWORK_JOB_KEYS))}")
+    if isinstance(job, dict) and (job.get("ProcessType", "Interactive") not in ("Interactive", "Standard", "Background", "Adaptive")
+                                  or type(job.get("ExitTimeOut", 30)) is not int):
+        raise ValueError("the kit's networking job has an invalid ProcessType or ExitTimeOut")
     if (not isinstance(label, str) or not NETWORK_LABEL.match(label) or job.get("MachServices") != {label: True}
             or job.get("BundleProgram") != KIT_NETWORK_DAEMON):
         raise ValueError("the kit's networking job does not name its service and daemon")

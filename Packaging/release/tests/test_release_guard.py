@@ -217,6 +217,8 @@ class ReleaseGuardTest(unittest.TestCase):
         self.assertRefused("the Try Omarchy kit's networking job does not name the kit's daemon")
         (kit / "Contents/MacOS/omarchy-network-daemon").write_bytes(b"daemon fixture")
         self.assertEqual([], [finding for finding in self.findings() if "LaunchDaemons" in finding or "job" in finding])
+        self.write_plist(job, {"Label": "dev.tryomarchy.kit.network", "BundleProgram": program, "UserName": "root"})
+        self.assertRefused("the Try Omarchy kit's networking job sets keys other than")
         self.write_plist(job, {"Label": "dev.tryomarchy.kit.network", "BundleProgram": "Contents/MacOS/other"})
         self.assertRefused("the Try Omarchy kit's networking job does not name the kit's daemon")
         self.write_plist(self.app / "Contents/Library/LaunchDaemons/other.plist", {"Label": "other"})

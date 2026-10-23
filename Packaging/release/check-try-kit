@@ -54,6 +54,8 @@ NETWORK_DAEMON = "Contents/MacOS/omarchy-network-daemon"
 NETWORK_PINNED = {f"Contents/Resources/network/{name}"
                   for name in ("socket_vmnet", "omarchy-network-supervisor", "omarchy-network-client")}
 NETWORK_SERVICE = "dev.tryomarchy.kit.network"
+# The keys the kit's networking job may set; anything else could change what launchd runs as root.
+NETWORK_JOB_KEYS = {"Label", "MachServices", "BundleProgram", "ProcessType", "ExitTimeOut", "RunAtLoad"}
 RELEASE = re.compile(r"v(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})")
 MACHO = {b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca"}
 
@@ -194,6 +196,8 @@ class Check:
         except (OSError, ValueError, plistlib.InvalidFileException):
             self.find(f"the app has no Contents/Library/LaunchDaemons/{NETWORK_SERVICE}.plist")
             return
+        if isinstance(job, dict) and set(job) - NETWORK_JOB_KEYS:
+            self.find(f"the app's {NETWORK_SERVICE} job sets keys it may not: {', '.join(sorted(set(job) - NETWORK_JOB_KEYS))}")
         if (not isinstance(job, dict) or job.get("Label") != NETWORK_SERVICE
                 or job.get("MachServices") != {NETWORK_SERVICE: True}
                 or job.get("BundleProgram") != f"{KIT}/{NETWORK_DAEMON}"):

@@ -230,6 +230,18 @@ class KitArchiveTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no networking daemon"):
             kit.embed(self.archive(), self.directory / "app.app")
 
+    def test_a_networking_job_that_sets_other_keys_is_refused(self) -> None:
+        for changes in ({"Program": "/bin/sh"}, {"ProgramArguments": ["/bin/sh", "-c", "id"]},
+                        {"UserName": "root"}, {"KeepAlive": True}):
+            with self.subTest(changes=changes):
+                shutil.rmtree(self.source, ignore_errors=True)
+                self.write_job(self.kit_folder(), **changes)
+                app = self.directory / "app.app"
+                shutil.rmtree(app, ignore_errors=True)
+                with self.assertRaisesRegex(ValueError, "sets keys it may not"):
+                    kit.embed(self.archive(), app)
+                self.assertFalse((app / "Contents/Library/LaunchDaemons").exists())
+
     def test_an_archive_with_anything_beside_the_kit_is_refused(self) -> None:
         self.kit_folder()
         (self.source / "extra").write_text("extra")
