@@ -253,11 +253,21 @@
       XCTAssertEqual(choice.layout, embedded)
       XCTAssertFalse(choice.isFetched)
       XCTAssertEqual(choice.refusal?.hasPrefix("signature: "), true)
-      XCTAssertTrue(FileManager.default.fileExists(atPath: current.root.path))
+      XCTAssertFalse(FileManager.default.fileExists(atPath: current.root.path))
+      evaluator.fallback = FakeCodeEvaluator.Code()
+      let outcome = await updater().checkIfDue()
+      XCTAssertEqual(outcome, .installed(version("v1.3.0")))
+      XCTAssertEqual(try updater().kitForNextStart().layout.manifest().version, version("v1.3.0"))
+    }
+
+    func testAKitAnotherStartRunsStaysWhenItFailsACheck() async throws {
+      let (kits, current) = try await installFirstKit()
+      let running = kits.kitForNextStart()
+      XCTAssertTrue(running.isFetched)
       evaluator.fallback = FakeCodeEvaluator.Code(valid: false)
       XCTAssertEqual(updater().kitForNextStart().layout, embedded)
-      evaluator.fallback = FakeCodeEvaluator.Code()
-      XCTAssertEqual(updater().kitForNextStart().layout, current)
+      XCTAssertTrue(FileManager.default.fileExists(atPath: current.root.path))
+      withExtendedLifetime(running) {}
     }
 
     func testAKitTamperedWithAfterItsDownloadIsNotRun() async throws {

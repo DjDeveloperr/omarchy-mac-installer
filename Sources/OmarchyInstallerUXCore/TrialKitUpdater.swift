@@ -108,16 +108,26 @@
         store.removeUnused(keepingCurrent: false)
         return TrialKitChoice(layout: embedded)
       }
-      defer { store.removeUnused() }
-      guard let lease = store.lease(fetched), fetched.hasLauncher else {
+      var lease = store.lease(fetched)
+      guard lease != nil, fetched.hasLauncher else {
+        store.removeUnused()
         return TrialKitChoice(layout: embedded, refusal: "the fetched kit is missing or in use")
       }
       do {
         try startSignatures.verify(fetched.root)
       } catch {
-        return TrialKitChoice(layout: embedded, refusal: Self.describe(error))
+        lease = nil
+        return refuse(Self.describe(error))
       }
+      store.removeUnused()
       return TrialKitChoice(layout: fetched, version: manifest.version, lease: lease)
+    }
+
+    /// A fetched kit that fails its check at a start is removed, unless
+    /// another start runs it, so the next check downloads it again.
+    private func refuse(_ reason: String) -> TrialKitChoice {
+      store.removeUnused(keepingCurrent: false)
+      return TrialKitChoice(layout: embedded, refusal: reason)
     }
 
     public func checkIfDue() async -> TrialKitUpdateOutcome {
