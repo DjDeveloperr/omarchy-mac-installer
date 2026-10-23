@@ -1717,10 +1717,14 @@
     var tryExportChecks = [String: TryOmarchyExportCheck]()
     var tryExportCheckGates = [OperationGate?]()
     private(set) var checkedTryExports = [String]()
+    /// Each look's gate, by position; a gate holds that look open.
+    var tryExportLookGates = [OperationGate?]()
+    private(set) var cancelledTryExportChecks = 0
 
     func tryOmarchyExports() async -> TryOmarchyExportsDisplay {
       let look = tryExportLooks
       tryExportLooks += 1
+      if look < tryExportLookGates.count { await tryExportLookGates[look]?.wait() }
       return look < tryExportAnswers.count ? tryExportAnswers[look] : tryExportAnswers.last ?? .none
     }
 
@@ -1730,6 +1734,8 @@
       if check < tryExportCheckGates.count { await tryExportCheckGates[check]?.wait() }
       return tryExportChecks[id] ?? .verified
     }
+
+    func cancelTryOmarchyExportCheck() { cancelledTryExportChecks += 1 }
 
     func inspect() async throws -> HostDisplay {
       await inspectGate?.wait()

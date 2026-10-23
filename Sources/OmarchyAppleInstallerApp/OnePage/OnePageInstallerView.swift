@@ -158,7 +158,7 @@ struct OnePageInstallerView: View {
           onPrimary: { migrate(offer, trial) },
           onInstallWithoutMigrating: {
             Task {
-              await session.chooseTryExport(nil)
+              await session.declineTryExport()
               trial.continueToInstall()
             }
           },

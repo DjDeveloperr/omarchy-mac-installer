@@ -86,6 +86,7 @@
     public private(set) var tryExportCheck: TryOmarchyExportCheck = .idle
     private var tryExportDiscoveryRequest = 0
     private var tryExportCheckRequest = 0
+    private var tryExportOfferRequest = 0
 
     /// An export is chosen on the first page, before any plan exists.
     public var canChooseTryExport: Bool {
@@ -100,10 +101,17 @@
       let request = tryExportDiscoveryRequest
       let found = await environment.tryOmarchyExports()
       guard request == tryExportDiscoveryRequest else { return }
+      let before = tryExports.exports.first { $0.id == chosenTryExportID }
       tryExports = found
-      if let chosen = chosenTryExportID, !found.exports.contains(where: { $0.id == chosen }) {
+      guard let chosen = chosenTryExportID else { return }
+      guard let after = found.exports.first(where: { $0.id == chosen }) else {
         tryExportCheckRequest += 1
+        environment.cancelTryOmarchyExportCheck()
         chosenTryExportID = nil
+        tryExportCheck = .idle
+        return
+      }
+      if after != before, tryExportCheck == .verified {
         tryExportCheck = .idle
       }
     }
@@ -114,14 +122,21 @@
       return tryExports.exports.first { $0.id == id }
     }
 
-    /// Migrate to Native: looks again, then chooses and checks the newest
-    /// export, unless it is already chosen and checked.
+    /// Migrate to Native: looks again, then chooses the newest export and
+    /// checks it, every time, since its files may have changed since.
     public func offerNewestTryExport() async {
+      tryExportOfferRequest += 1
+      let request = tryExportOfferRequest
       await refreshTryExports()
-      guard let newest = tryExports.exports.first,
-        chosenTryExportID != newest.id || tryExportCheck != .verified
-      else { return }
+      guard request == tryExportOfferRequest, let newest = tryExports.exports.first else { return }
       await chooseTryExport(newest.id)
+    }
+
+    /// Install Without Migrating: drops the chosen export, and an offer still
+    /// looking can't choose one again.
+    public func declineTryExport() async {
+      tryExportOfferRequest += 1
+      await chooseTryExport(nil)
     }
 
     /// Chooses an export (or none) and checks its ciphertext against the
@@ -133,6 +148,7 @@
       tryExportCheckRequest += 1
       let request = tryExportCheckRequest
       guard let id else {
+        environment.cancelTryOmarchyExportCheck()
         chosenTryExportID = nil
         tryExportCheck = .idle
         return

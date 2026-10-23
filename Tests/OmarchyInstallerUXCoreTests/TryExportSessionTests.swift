@@ -181,8 +181,48 @@
 
       await session.offerNewestTryExport()
       XCTAssertEqual(
-        environment.checkedTryExports, [Self.older.id, Self.newer.id],
-        "A chosen export that passed its check isn't hashed again")
+        environment.checkedTryExports, [Self.older.id, Self.newer.id, Self.newer.id],
+        "Every offer hashes the export again, since its files may have changed")
+    }
+
+    func testAChangedExportLosesItsCheck() async {
+      let changed = TryOmarchyExportDisplay(
+        id: Self.newer.id, publishedAt: Self.newer.publishedAt.addingTimeInterval(60),
+        entries: Self.newer.entries, expandedBytes: Self.newer.expandedBytes,
+        bundleBytes: Self.newer.bundleBytes + 1)
+      let environment = MockInstallerEnvironment()
+      environment.tryExportAnswers = [
+        .found([Self.newer], unusable: 0), .found([Self.newer], unusable: 0),
+        .found([changed], unusable: 0),
+      ]
+      let session = await welcomed(environment)
+      await session.refreshTryExports()
+      await session.chooseTryExport(Self.newer.id)
+      XCTAssertEqual(session.tryExportCheck, .verified)
+
+      await session.refreshTryExports()
+      XCTAssertEqual(session.tryExportCheck, .verified, "The same export keeps its check")
+      await session.refreshTryExports()
+      XCTAssertEqual(session.chosenTryExportID, Self.newer.id)
+      XCTAssertEqual(session.tryExportCheck, .idle)
+      XCTAssertNil(session.chosenTryExport)
+    }
+
+    func testDecliningStopsAnOfferStillLooking() async {
+      let environment = MockInstallerEnvironment()
+      environment.tryExportAnswers = [.found([Self.newer], unusable: 0)]
+      let gate = OperationGate()
+      environment.tryExportLookGates = [gate]
+      let session = await welcomed(environment)
+
+      let offer = Task { await session.offerNewestTryExport() }
+      await gate.waitUntilEntered()
+      await session.declineTryExport()
+      await gate.release()
+      await offer.value
+      XCTAssertNil(session.chosenTryExportID)
+      XCTAssertEqual(environment.checkedTryExports, [])
+      XCTAssertEqual(environment.cancelledTryExportChecks, 1, "Declining stops a check under way")
     }
 
     func testThePlanShowsTheChosenExportOnlyOnceItsCheckPasses() async {
