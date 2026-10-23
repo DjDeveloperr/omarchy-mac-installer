@@ -6,6 +6,9 @@
   /// kit's `Contents/Helpers`, or a fetched kit's own folder. Every question
   /// about the kit's layout goes through here.
   public struct TrialKitLayout: Equatable, Sendable {
+    /// The one folder at the top of `TryOmarchyKit.zip`.
+    public static let archiveFolder = TryOmarchyKit.bundleName
+
     public let root: URL
 
     public init(root: URL) {

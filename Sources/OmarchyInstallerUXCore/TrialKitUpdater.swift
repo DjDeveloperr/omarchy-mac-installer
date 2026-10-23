@@ -57,22 +57,26 @@
     private let embedded: TrialKitLayout
     private let source: any TrialKitReleaseSource
     private let signatures: TrialKitSignatureCheck
+    private let startSignatures: TrialKitSignatureCheck
     private let network: any InstallerNetworkPathObserving
     private let now: @Sendable () -> Date
     private let networkWait: Duration
     private let lock = NSLock()
     private var checking = false
-    private var inUse: String?
 
+    /// `signatures` checks a download; `startSignatures`, by default the
+    /// same, checks the fetched kit again at every start.
     public init(
       store: TrialKitStore, embedded: TrialKitLayout, source: any TrialKitReleaseSource,
-      signatures: TrialKitSignatureCheck, network: any InstallerNetworkPathObserving,
+      signatures: TrialKitSignatureCheck, startSignatures: TrialKitSignatureCheck? = nil,
+      network: any InstallerNetworkPathObserving,
       now: @escaping @Sendable () -> Date = { Date() }, networkWait: Duration = .seconds(10)
     ) {
       self.store = store
       self.embedded = embedded
       self.source = source
       self.signatures = signatures
+      self.startSignatures = startSignatures ?? signatures
       self.network = network
       self.now = now
       self.networkWait = networkWait
@@ -88,23 +92,32 @@
       return fetched.version > embedded.version
     }
 
-    /// The kit the next start runs, which stays in place until Try starts
-    /// again. Fetched kits that it is not are removed.
-    public func kitForNextStart() -> TrialKitLayout {
-      var chosen = embedded
-      var name: String?
-      if let fetched = store.current(), let manifest = try? fetched.manifest(),
-        Self.prefers(manifest, over: try? embedded.manifest()), fetched.hasLauncher
-      {
-        chosen = fetched
-        name = fetched.root.lastPathComponent
+    /// The kit a start runs. A fetched kit is used only while it is newer
+    /// than the embedded one and its signatures still pass, since its folder
+    /// is writable by this user; its lease keeps it in place until released.
+    /// Fetched kits nothing runs, and older downloads, are removed. This
+    /// reads and hashes the kit, so it belongs off the main actor.
+    public func kitForNextStart() -> TrialKitChoice {
+      guard let fetched = store.current() else {
+        store.removeUnused()
+        return TrialKitChoice(layout: embedded)
       }
-      let idle = lock.withLock { () -> Bool in
-        inUse = name
-        return !checking
+      guard let manifest = try? fetched.manifest(),
+        Self.prefers(manifest, over: try? embedded.manifest())
+      else {
+        store.removeUnused(keepingCurrent: false)
+        return TrialKitChoice(layout: embedded)
       }
-      if idle { store.removeKits(keeping: Set([name].compactMap { $0 })) }
-      return chosen
+      defer { store.removeUnused() }
+      guard let lease = store.lease(fetched), fetched.hasLauncher else {
+        return TrialKitChoice(layout: embedded, refusal: "the fetched kit is missing or in use")
+      }
+      do {
+        try startSignatures.verify(fetched.root)
+      } catch {
+        return TrialKitChoice(layout: embedded, refusal: Self.describe(error))
+      }
+      return TrialKitChoice(layout: fetched, version: manifest.version, lease: lease)
     }
 
     public func checkIfDue() async -> TrialKitUpdateOutcome {
@@ -127,9 +140,13 @@
       guard await networkAllows() else { return .meteredNetwork }
       do {
         try store.recordCheck(at: date)
-        return try await fetchNewer(than: newestKept(embedded: embeddedManifest))
+        let (incoming, lease) = try store.freshIncoming()
+        defer {
+          try? FileManager.default.removeItem(at: incoming)
+          withExtendedLifetime(lease) {}
+        }
+        return try await fetchNewer(than: newestKept(embedded: embeddedManifest), into: incoming)
       } catch {
-        try? FileManager.default.removeItem(at: store.incoming)
         return .failed(Self.describe(error))
       }
     }
@@ -140,23 +157,17 @@
       return fetched.version
     }
 
-    private func fetchNewer(than have: TryOmarchyKitVersion?) async throws -> TrialKitUpdateOutcome
+    private func fetchNewer(than have: TryOmarchyKitVersion?, into incoming: URL) async throws
+      -> TrialKitUpdateOutcome
     {
-      let incoming = try store.freshIncoming()
       let manifestFile = incoming.appendingPathComponent("TryOmarchyKit.json")
       try await source.fetch(.latestManifest, to: manifestFile)
       let manifest = try TryOmarchyKitManifest.decode(Data(contentsOf: manifestFile))
       guard !manifest.version.isDevelopment else {
         throw TrialKitUpdateError.developmentRelease
       }
-      if let have, manifest.version <= have {
-        try? FileManager.default.removeItem(at: incoming)
-        return .upToDate(have)
-      }
-      guard manifest.isSupported else {
-        try? FileManager.default.removeItem(at: incoming)
-        return .needsNewerInstaller(manifest.version)
-      }
+      if let have, manifest.version <= have { return .upToDate(have) }
+      guard manifest.isSupported else { return .needsNewerInstaller(manifest.version) }
       let checksumFile = incoming.appendingPathComponent("TryOmarchyKit.zip.sha256")
       try await source.fetch(.checksum(manifest.version), to: checksumFile)
       let expected = try Self.digest(inChecksumFile: Data(contentsOf: checksumFile))
@@ -173,10 +184,12 @@
       }
       guard layout.hasLauncher else { throw TrialKitUpdateError.noLauncher }
       try signatures.verify(unpacked)
-      let adopted = try store.adopt(unpacked, version: manifest.version.description)
-      let running = lock.withLock { inUse }
-      store.removeKits(keeping: Set([adopted.root.lastPathComponent, running].compactMap { $0 }))
-      return .installed(manifest.version)
+      let adopted = try store.adopt(unpacked, version: manifest.version)
+      store.removeUnused()
+      guard let version = try? adopted.manifest().version, version >= manifest.version else {
+        return .failed("the fetched kit could not be switched to")
+      }
+      return version == manifest.version ? .installed(version) : .upToDate(version)
     }
 
     private func networkAllows() async -> Bool {
@@ -233,6 +246,28 @@
       default: "\(type(of: error))"
       }
     }
+  }
+
+  /// The kit a start runs, and, for a fetched kit, the lease that keeps its
+  /// folder in place while it runs.
+  public struct TrialKitChoice: Sendable {
+    public let layout: TrialKitLayout
+    public let version: TryOmarchyKitVersion?
+    public let lease: TrialKitLease?
+    /// Why the fetched kit was passed over for the embedded one.
+    public let refusal: String?
+
+    public init(
+      layout: TrialKitLayout, version: TryOmarchyKitVersion? = nil, lease: TrialKitLease? = nil,
+      refusal: String? = nil
+    ) {
+      self.layout = layout
+      self.version = version
+      self.lease = lease
+      self.refusal = refusal
+    }
+
+    public var isFetched: Bool { lease != nil }
   }
 
   public enum TrialKitUpdateError: Error, Equatable, Sendable {

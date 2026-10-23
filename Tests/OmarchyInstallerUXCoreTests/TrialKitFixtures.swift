@@ -4,6 +4,7 @@
   import OmarchyAppleInstallerTrustCore
   import TryOmarchyKitClient
   import XCTest
+  import zlib
   @testable import OmarchyInstallerUXCore
 
   /// A kit's folder as a release unpacks it, with stand-in Mach-O files, and
@@ -146,39 +147,61 @@
     }
   }
 
-  /// A ZIP archive written by hand, stored without compression, for entries
-  /// no archiver would make.
+  /// A ZIP archive written by hand, for entries no archiver would make: a
+  /// local header that disagrees with the central directory, an entry the
+  /// directory leaves out, or a size that lies.
   enum HandMadeZip {
+    static let top = TrialKitLayout.archiveFolder
+
     struct Entry {
       var name: String
       var mode: UInt32 = 0o100644
       var data = Data()
       var flags: UInt16 = 0
       var host: UInt16 = 3
+      var deflate = false
+      var declaredBytes: UInt32?
+      var localName: String?
+      var listed = true
+      var crc: UInt32?
     }
 
     static func data(_ entries: [Entry]) -> Data {
       var body = Data()
       var directory = Data()
+      var listed = 0
       for entry in entries {
         let name = Data(entry.name.utf8)
+        let localName = Data((entry.localName ?? entry.name).utf8)
+        let packed =
+          entry.deflate
+          ? (try! (entry.data as NSData).compressed(using: .zlib)) as Data : entry.data
+        let crc =
+          entry.crc
+          ?? entry.data.withUnsafeBytes {
+            UInt32(crc32(0, $0.bindMemory(to: Bytef.self).baseAddress, uInt($0.count)))
+          }
+        let unpacked = entry.declaredBytes ?? UInt32(entry.data.count)
+        let method: UInt16 = entry.deflate ? 8 : 0
         let offset = UInt32(body.count)
         body.append(u32(0x0403_4b50))
-        body.append(u16(20) + u16(entry.flags) + u16(0) + u16(0) + u16(0))
-        body.append(u32(0) + u32(UInt32(entry.data.count)) + u32(UInt32(entry.data.count)))
-        body.append(u16(UInt16(name.count)) + u16(0))
-        body.append(name + entry.data)
+        body.append(u16(20) + u16(entry.flags) + u16(method) + u16(0) + u16(0))
+        body.append(u32(crc) + u32(UInt32(packed.count)) + u32(unpacked))
+        body.append(u16(UInt16(localName.count)) + u16(0))
+        body.append(localName + packed)
+        guard entry.listed else { continue }
+        listed += 1
         directory.append(u32(0x0201_4b50))
-        directory.append(u16(entry.host << 8 | 20) + u16(20) + u16(entry.flags) + u16(0))
+        directory.append(u16(entry.host << 8 | 20) + u16(20) + u16(entry.flags) + u16(method))
         directory.append(u16(0) + u16(0))
-        directory.append(u32(0) + u32(UInt32(entry.data.count)) + u32(UInt32(entry.data.count)))
+        directory.append(u32(crc) + u32(UInt32(packed.count)) + u32(unpacked))
         directory.append(u16(UInt16(name.count)) + u16(0) + u16(0) + u16(0) + u16(0))
         directory.append(u32(entry.mode << 16) + u32(offset))
         directory.append(name)
       }
       var end = Data()
       end.append(u32(0x0605_4b50) + u16(0) + u16(0))
-      end.append(u16(UInt16(entries.count)) + u16(UInt16(entries.count)))
+      end.append(u16(UInt16(listed)) + u16(UInt16(listed)))
       end.append(u32(UInt32(directory.count)) + u32(UInt32(body.count)) + u16(0))
       return body + directory + end
     }
@@ -195,10 +218,12 @@
   final class LoopbackServer: @unchecked Sendable {
     private let listener: NWListener
     private let files: [String: Data]
+    private let redirects: [String: String]
     private let queue = DispatchQueue(label: "trial-kit-tests.server")
 
-    init(files: [String: Data]) throws {
+    init(files: [String: Data], redirects: [String: String] = [:]) throws {
       self.files = files
+      self.redirects = redirects
       let parameters = NWParameters.tcp
       parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: .any)
       listener = try NWListener(using: parameters)
@@ -239,8 +264,11 @@
           .split(separator: "\r\n").first ?? ""
         let path = line.split(separator: " ").dropFirst().first.map(String.init) ?? ""
         let body = self.files[path]
+        let status =
+          self.redirects[path].map { "302 Found\r\nLocation: \($0)" }
+          ?? (body == nil ? "404 Not Found" : "200 OK")
         var response = Data(
-          "HTTP/1.1 \(body == nil ? "404 Not Found" : "200 OK")\r\nContent-Length: \(body?.count ?? 0)\r\nConnection: close\r\n\r\n"
+          "HTTP/1.1 \(status)\r\nContent-Length: \(body?.count ?? 0)\r\nConnection: close\r\n\r\n"
             .utf8)
         response.append(body ?? Data())
         connection.send(

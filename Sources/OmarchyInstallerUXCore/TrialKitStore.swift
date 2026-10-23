@@ -1,18 +1,41 @@
 #if os(macOS)
   import Darwin
   import Foundation
+  import TryOmarchyKitClient
+
+  /// Holds a lock on a fetched kit's or a download's folder: shared while a
+  /// start runs the kit, exclusive while a check downloads into it. A folder
+  /// whose lock is held is never removed, whichever installer holds it.
+  public final class TrialKitLease: @unchecked Sendable {
+    private let descriptor: Int32
+
+    init?(folder: URL, exclusive: Bool) {
+      let path = folder.appendingPathComponent(TrialKitStore.lockName).path
+      let descriptor = open(path, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
+      guard descriptor >= 0 else { return nil }
+      guard flock(descriptor, (exclusive ? LOCK_EX : LOCK_SH) | LOCK_NB) == 0 else {
+        close(descriptor)
+        return nil
+      }
+      self.descriptor = descriptor
+    }
+
+    deinit { close(descriptor) }
+  }
 
   /// The kits this installer fetched, in its own folder under Application
   /// Support. Each kit unpacks into a folder of its own, and the `current`
-  /// link names the one in use; switching kits replaces the link in one
-  /// rename. `incoming` holds a download until it is checked, and
-  /// `last-check.json` when the releases were last asked.
+  /// link names the newest; switching kits replaces the link in one rename.
+  /// Each check downloads into an `incoming-<id>` folder of its own, and
+  /// `last-check.json` records when the releases were last asked. Installers
+  /// that share the folder change it under `.lock`.
   public struct TrialKitStore: Sendable {
     public static let folderName = "Try kits"
     public static let pointerName = "current"
-    static let incomingName = "incoming"
+    static let incomingPrefix = "incoming-"
     static let checkName = "last-check.json"
     static let kitPrefix = "kit-"
+    static let lockName = ".lock"
 
     public let directory: URL
 
@@ -31,7 +54,6 @@
     }
 
     private var pointer: URL { directory.appendingPathComponent(Self.pointerName) }
-    var incoming: URL { directory.appendingPathComponent(Self.incomingName, isDirectory: true) }
     private var checkRecord: URL { directory.appendingPathComponent(Self.checkName) }
 
     public func current() -> TrialKitLayout? {
@@ -48,46 +70,79 @@
     }
 
     static func isKitName(_ name: String) -> Bool {
-      name.hasPrefix(kitPrefix) && name.count <= 128
+      name.hasPrefix(kitPrefix) && isSafeName(name)
+    }
+
+    private static func isSafeName(_ name: String) -> Bool {
+      name.count <= 128 && !name.contains("..")
         && name.utf8.allSatisfy {
           $0.isASCIILetterOrDigit || $0 == UInt8(ascii: "-") || $0 == UInt8(ascii: ".")
         }
-        && !name.contains("..")
     }
 
-    func freshIncoming() throws -> URL {
+    /// The kit's folder, locked for a start until the lease is released.
+    func lease(_ kit: TrialKitLayout) -> TrialKitLease? {
+      TrialKitLease(folder: kit.root, exclusive: false)
+    }
+
+    /// A new, empty folder for one check's download, locked until the lease
+    /// is released.
+    func freshIncoming() throws -> (URL, TrialKitLease) {
       try createFolder()
-      try? FileManager.default.removeItem(at: incoming)
+      let folder = directory.appendingPathComponent(
+        Self.incomingPrefix + UUID().uuidString.lowercased(), isDirectory: true)
       try FileManager.default.createDirectory(
-        at: incoming, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-      return incoming
+        at: folder, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+      guard let lease = TrialKitLease(folder: folder, exclusive: true) else {
+        try? FileManager.default.removeItem(at: folder)
+        throw CocoaError(.fileLocking)
+      }
+      return (folder, lease)
     }
 
-    func adopt(_ unpacked: URL, version: String) throws -> TrialKitLayout {
-      let suffix = UUID().uuidString.prefix(8).lowercased()
-      let name = "\(Self.kitPrefix)\(version)-\(suffix)"
-      guard Self.isKitName(name) else { throw CocoaError(.fileWriteInvalidFileName) }
-      let destination = directory.appendingPathComponent(name, isDirectory: true)
-      try FileManager.default.moveItem(at: unpacked, to: destination)
-      let next = directory.appendingPathComponent(Self.pointerName + ".next")
-      try? FileManager.default.removeItem(at: next)
-      guard symlink(name, next.path) == 0, rename(next.path, pointer.path) == 0 else {
-        try? FileManager.default.removeItem(at: next)
-        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+    /// Moves a checked kit's folder in and points `current` at it, unless
+    /// another installer switched to a kit at least as new meanwhile. Returns
+    /// the kit `current` names afterwards.
+    func adopt(_ unpacked: URL, version: TryOmarchyKitVersion) throws -> TrialKitLayout {
+      try withLock {
+        if let current = current(), let have = try? current.manifest().version, have >= version {
+          try? FileManager.default.removeItem(at: unpacked)
+          return current
+        }
+        let suffix = UUID().uuidString.prefix(8).lowercased()
+        let name = "\(Self.kitPrefix)\(version)-\(suffix)"
+        guard Self.isKitName(name) else { throw CocoaError(.fileWriteInvalidFileName) }
+        let destination = directory.appendingPathComponent(name, isDirectory: true)
+        try FileManager.default.moveItem(at: unpacked, to: destination)
+        let next = directory.appendingPathComponent("\(Self.pointerName).next-\(suffix)")
+        guard symlink(name, next.path) == 0, rename(next.path, pointer.path) == 0 else {
+          let failure = POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+          try? FileManager.default.removeItem(at: next)
+          throw failure
+        }
+        return TrialKitLayout(root: destination)
       }
-      return TrialKitLayout(root: destination)
     }
 
-    /// Removes every fetched kit but the named ones, and any download left
-    /// in `incoming`.
-    func removeKits(keeping kept: Set<String>) {
-      guard isPlainFolder(directory),
-        let names = try? FileManager.default.contentsOfDirectory(atPath: directory.path)
-      else { return }
-      for name in names where name.hasPrefix(Self.kitPrefix) && !kept.contains(name) {
-        try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
+    /// Removes every fetched kit but the one `current` names, unless it is
+    /// no longer worth keeping, and every download, unless a start or a
+    /// check, in this installer or another, holds its lock.
+    func removeUnused(keepingCurrent: Bool = true) {
+      try? withLock {
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory.path)
+        else { return }
+        let kept = keepingCurrent ? currentName() : nil
+        for name in names
+        where (name.hasPrefix(Self.kitPrefix) || name.hasPrefix(Self.incomingPrefix))
+          && name != kept && Self.isSafeName(name)
+        {
+          let folder = directory.appendingPathComponent(name, isDirectory: true)
+          guard isPlainFolder(folder), let lease = TrialKitLease(folder: folder, exclusive: true)
+          else { continue }
+          try? FileManager.default.removeItem(at: folder)
+          withExtendedLifetime(lease) {}
+        }
       }
-      try? FileManager.default.removeItem(at: incoming)
     }
 
     public func lastCheck() -> Date? {
@@ -106,6 +161,17 @@
         withJSONObject: ["format": 1, "checkedAt": ISO8601DateFormatter().string(from: date)],
         options: [.sortedKeys])
       try data.write(to: checkRecord, options: .atomic)
+    }
+
+    private func withLock<Value>(_ body: () throws -> Value) throws -> Value {
+      try createFolder()
+      let descriptor = open(
+        directory.appendingPathComponent(Self.lockName).path,
+        O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
+      guard descriptor >= 0 else { throw CocoaError(.fileLocking) }
+      defer { close(descriptor) }
+      guard flock(descriptor, LOCK_EX) == 0 else { throw CocoaError(.fileLocking) }
+      return try body()
     }
 
     /// The folder and the workspace above it, private to this user, and

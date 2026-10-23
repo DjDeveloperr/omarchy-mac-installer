@@ -128,11 +128,11 @@
     ) {
       let status = (response as? HTTPURLResponse)?.statusCode ?? 0
       guard status == 200 else {
-        lock.withLock { failure = TrialKitDownloadError.httpStatus(status) }
+        lock.withLock { if failure == nil { failure = TrialKitDownloadError.httpStatus(status) } }
         return completionHandler(.cancel)
       }
       guard response.expectedContentLength <= limit else {
-        lock.withLock { failure = TrialKitDownloadError.tooLarge }
+        lock.withLock { if failure == nil { failure = TrialKitDownloadError.tooLarge } }
         return completionHandler(.cancel)
       }
       completionHandler(.allow)

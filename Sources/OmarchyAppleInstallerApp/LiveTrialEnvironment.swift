@@ -17,6 +17,11 @@ final class LiveTrialEnvironment: TrialEnvironment {
   private let embedded = TrialKitLayout.embedded()
   private let kits: TrialKitUpdater?
   private var client: VMRunClient?
+  /// Keeps a fetched kit's folder in place while it runs.
+  private var lease: TrialKitLease?
+  private var pendingStart: Task<Void, Never>?
+  private var startCancelled = false
+  private(set) var runsFetchedKit = false
   /// The kit's networking daemon, whose job build-app.sh copies into this
   /// app's Contents/Library/LaunchDaemons.
   private let networkDaemon = SMAppService.daemon(plistName: "dev.tryomarchy.kit.network.plist")
@@ -34,7 +39,9 @@ final class LiveTrialEnvironment: TrialEnvironment {
       store: TrialKitStore.under(
         applicationSupport: support, workspace: InstallerBuildProfile.current.workspaceName),
       embedded: embedded, source: TrialKitReleases(base: settings.releases),
-      signatures: TrialKitSignatureCheck(policy: settings.policy),
+      signatures: TrialKitSignatureCheck(
+        policy: settings.policy, evaluator: SecurityTrialKitCodeEvaluator(enforcesRevocation: true)),
+      startSignatures: TrialKitSignatureCheck(policy: settings.policy),
       network: NWInstallerNetworkPathObserver())
   }
 
@@ -80,19 +87,61 @@ final class LiveTrialEnvironment: TrialEnvironment {
 
   func requestCamera() async { await Self.request(.video, settings: "Privacy_Camera") }
 
+  /// Checks the Mac, then chooses and checks the kit off the main actor, since
+  /// a fetched kit's signatures are checked again at every start. Failures
+  /// from then on arrive as events.
   func start(onEvent: @escaping @MainActor (VMRunEvent) -> Void) throws {
     if let failure = VMRunClient.preflight() { throw failure }
-    let layout = kits?.kitForNextStart() ?? embedded
+    guard let kits else {
+      try run(TrialKitChoice(layout: embedded), onEvent: onEvent)
+      return
+    }
+    startCancelled = false
+    pendingStart = Task { [weak self] in
+      let choice = await Task.detached(priority: .userInitiated) { kits.kitForNextStart() }.value
+      guard let self else { return }
+      pendingStart = nil
+      guard !startCancelled else { return onEvent(.exited(status: 0)) }
+      do {
+        try run(choice, onEvent: onEvent)
+      } catch {
+        onEvent(
+          .error(
+            error as? VMRunError
+              ?? VMRunError(code: .launchFailed, message: error.localizedDescription)))
+        onEvent(.exited(status: 1))
+      }
+    }
+  }
+
+  private func run(_ choice: TrialKitChoice, onEvent: @escaping @MainActor (VMRunEvent) -> Void)
+    throws
+  {
+    if let refusal = choice.refusal {
+      Self.logger.error("Try passed over its fetched kit: \(refusal, privacy: .public)")
+    }
+    let layout = choice.layout
     let client =
       self.client.flatMap { $0.kit.bundleURL == layout.kit.bundleURL ? $0 : nil }
       ?? VMRunClient(kit: layout.kit)
     self.client = client
+    runsFetchedKit = choice.isFetched
+    lease = choice.lease
     Self.logger.info(
       "Starting Try with kit \((try? layout.manifest().version.description) ?? "unknown", privacy: .public)"
     )
-    // The main queue keeps the events in the order the client delivers them.
-    try client.start(VMRunConfiguration(productName: InstallerProductIdentity.appName)) { event in
-      DispatchQueue.main.async { onEvent(event) }
+    do {
+      // The main queue keeps the events in the order the client delivers them.
+      try client.start(VMRunConfiguration(productName: InstallerProductIdentity.appName)) {
+        [weak self] event in
+        DispatchQueue.main.async {
+          if case .exited = event { self?.lease = nil }
+          onEvent(event)
+        }
+      }
+    } catch {
+      lease = nil
+      throw error
     }
     if let kits {
       Task.detached(priority: .utility) {
@@ -102,7 +151,13 @@ final class LiveTrialEnvironment: TrialEnvironment {
     }
   }
 
-  func shutDown() { client?.shutDown() }
+  func shutDown() {
+    if pendingStart != nil {
+      startCancelled = true
+    } else {
+      client?.shutDown()
+    }
+  }
 
   func deleteVM() throws {
     guard

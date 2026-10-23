@@ -1,6 +1,5 @@
 #if os(macOS)
   import Foundation
-  import OmarchyAppleInstallerTrustCore
   import Security
 
   /// A team a fetched kit may be signed by, and the identifier every Mach-O
@@ -16,10 +15,6 @@
 
     public static let tryOmarchy = Self(
       teamIdentifier: "RZC79MPD34", codeIdentifier: "dev.tryomarchy.kit")
-    /// This installer, which signs its embedded kit as `<app>.vm-kit`.
-    public static let installer = Self(
-      teamIdentifier: InstallerProductIdentity.teamIdentifier,
-      codeIdentifier: InstallerProductIdentity.appIdentifier + ".vm-kit")
 
     public var requirement: String {
       "anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists"
@@ -35,7 +30,10 @@
     /// checking a locally built kit (`TrialKitUpdater.Settings`).
     case anyValidSignature
 
-    public static let release = Self.developerID([.tryOmarchy, .installer])
+    /// Fetched kits come only from Try Omarchy's releases. A kit this
+    /// installer signs keeps the networking files Try Omarchy signed, so it
+    /// is never one team's.
+    public static let release = Self.developerID([.tryOmarchy])
   }
 
   public struct TrialKitCodeCheck: Equatable, Sendable {
@@ -59,7 +57,14 @@
   /// validation and, for a bundle's executable, the bundle's sealed resources
   /// and nested code.
   public struct SecurityTrialKitCodeEvaluator: TrialKitCodeEvaluating {
-    public init() {}
+    /// Asks whether the signing certificates were revoked, which needs the
+    /// network: the check after a download does, the check at each start
+    /// follows the system's policy, so Try still starts offline.
+    public let enforcesRevocation: Bool
+
+    public init(enforcesRevocation: Bool = false) {
+      self.enforcesRevocation = enforcesRevocation
+    }
 
     public func check(_ code: URL, requirement: String?) -> TrialKitCodeCheck? {
       var staticCode: SecStaticCode?
@@ -67,7 +72,8 @@
         let staticCode
       else { return nil }
       let flags = SecCSFlags(
-        rawValue: kSecCSCheckAllArchitectures | kSecCSStrictValidate | kSecCSCheckNestedCode)
+        rawValue: kSecCSCheckAllArchitectures | kSecCSStrictValidate | kSecCSCheckNestedCode
+          | (enforcesRevocation ? SecCSFlags.enforceRevocationChecks.rawValue : 0))
       guard SecStaticCodeCheckValidity(staticCode, flags, nil) == errSecSuccess else { return nil }
       var satisfies = true
       if let requirement {

@@ -40,11 +40,12 @@
       try? FileManager.default.removeItem(at: base)
     }
 
-    private func updater() -> TrialKitUpdater {
+    private func updater(downloads: FakeCodeEvaluator? = nil) -> TrialKitUpdater {
       let clock = clock!
       return TrialKitUpdater(
         store: store, embedded: embedded, source: releases,
-        signatures: TrialKitSignatureCheck(policy: policy, evaluator: evaluator),
+        signatures: TrialKitSignatureCheck(policy: policy, evaluator: downloads ?? evaluator),
+        startSignatures: TrialKitSignatureCheck(policy: policy, evaluator: evaluator),
         network: network, now: { clock.now }, networkWait: .milliseconds(50))
     }
 
@@ -57,6 +58,11 @@
         .filter { $0.hasPrefix("kit-") }.sorted()
     }
 
+    private func downloads() throws -> [String] {
+      try FileManager.default.contentsOfDirectory(atPath: store.directory.path)
+        .filter { $0.hasPrefix("incoming") }
+    }
+
     private func version(_ text: String) -> TryOmarchyKitVersion { TryOmarchyKitVersion(text)! }
 
     // MARK: Checking and switching
@@ -64,11 +70,11 @@
     func testANewerReleaseIsUsedFromTheNextStartAndTheEmbeddedKitIsUntouched() async throws {
       try publish("v1.3.0")
       let kits = updater()
-      XCTAssertEqual(kits.kitForNextStart(), embedded)
+      XCTAssertEqual(kits.kitForNextStart().layout, embedded)
       let before = try Data(contentsOf: embedded.manifestURL)
       let outcome = await kits.checkIfDue()
       XCTAssertEqual(outcome, .installed(version("v1.3.0")))
-      let next = kits.kitForNextStart()
+      let next = kits.kitForNextStart().layout
       XCTAssertNotEqual(next, embedded)
       XCTAssertEqual(
         next.root.deletingLastPathComponent().standardizedFileURL,
@@ -76,7 +82,7 @@
       XCTAssertEqual(try next.manifest().version, version("v1.3.0"))
       XCTAssertTrue(next.hasLauncher)
       XCTAssertEqual(try Data(contentsOf: embedded.manifestURL), before)
-      XCTAssertFalse(FileManager.default.fileExists(atPath: store.incoming.path))
+      XCTAssertEqual(try downloads(), [])
       let pointer = try FileManager.default.destinationOfSymbolicLink(
         atPath: store.directory.appendingPathComponent("current").path)
       XCTAssertEqual(pointer, next.root.lastPathComponent)
@@ -122,7 +128,8 @@
       try publish("v1.3.0")
       let kits = updater()
       _ = await kits.checkIfDue()
-      _ = kits.kitForNextStart()
+      var running: TrialKitChoice? = kits.kitForNextStart()
+      XCTAssertEqual(running?.isFetched, true)
       let first = try fetchedKits()
       XCTAssertEqual(first.count, 1)
 
@@ -134,11 +141,44 @@
       clock.advance(hours: 25)
       let newer = await kits.checkIfDue()
       XCTAssertEqual(newer, .installed(version("v1.4.0")))
-      XCTAssertEqual(try fetchedKits().count, 2, "the kit in use stays until the next start")
+      XCTAssertEqual(try fetchedKits().count, 2, "the running kit stays while it runs")
+      let next = updater().kitForNextStart()
+      XCTAssertEqual(try next.layout.manifest().version, version("v1.4.0"))
       XCTAssertTrue(try fetchedKits().contains(first[0]))
-      XCTAssertEqual(try kits.kitForNextStart().manifest().version, version("v1.4.0"))
+      running = nil
+      XCTAssertNil(running)
+      XCTAssertEqual(try kits.kitForNextStart().layout.manifest().version, version("v1.4.0"))
       XCTAssertEqual(try fetchedKits().count, 1)
       XCTAssertFalse(try fetchedKits().contains(first[0]))
+    }
+
+    func testTwoInstallersSharingTheFolderKeepEachOthersKitsAndDownloads() async throws {
+      try publish("v1.3.0")
+      let first = updater()
+      _ = await first.checkIfDue()
+      let running = first.kitForNextStart()
+      XCTAssertTrue(running.isFetched)
+      try publish("v1.4.0")
+      clock.advance(hours: 25)
+      let second = updater()
+      let outcome = await second.checkIfDue()
+      XCTAssertEqual(outcome, .installed(version("v1.4.0")))
+      let (download, lease) = try store.freshIncoming()
+      _ = second.kitForNextStart()
+      XCTAssertTrue(FileManager.default.fileExists(atPath: running.layout.root.path))
+      XCTAssertTrue(FileManager.default.fileExists(atPath: download.path))
+      withExtendedLifetime(lease) {}
+      withExtendedLifetime(running) {}
+    }
+
+    func testAnOlderKitNeverReplacesANewerOneAnotherInstallerSwitchedTo() async throws {
+      try publish("v1.4.0")
+      _ = await updater().checkIfDue()
+      let older = base.appendingPathComponent("older")
+      try TrialKitFixture.make(at: older, version: "v1.3.0")
+      let kept = try store.adopt(older, version: version("v1.3.0"))
+      XCTAssertEqual(try kept.manifest().version, version("v1.4.0"))
+      XCTAssertFalse(FileManager.default.fileExists(atPath: older.path))
     }
 
     func testADevelopmentReleaseIsRefused() async throws {
@@ -163,20 +203,20 @@
       let kits = updater()
       let outcome = await kits.checkIfDue()
       XCTAssertEqual(outcome, .installed(version("v0.1.0")))
-      XCTAssertEqual(try kits.kitForNextStart().manifest().version, version("v0.1.0"))
+      XCTAssertEqual(try kits.kitForNextStart().layout.manifest().version, version("v0.1.0"))
     }
 
     func testAKitForANewerRunProtocolIsSkippedAndTheCurrentOneKept() async throws {
       try publish("v1.3.0")
       let kits = updater()
       _ = await kits.checkIfDue()
-      let current = kits.kitForNextStart()
+      let current = kits.kitForNextStart().layout
       try publish("v2.0.0", protocol: VMRunProtocol.version + 1)
       clock.advance(hours: 25)
       let outcome = await kits.checkIfDue()
       XCTAssertEqual(outcome, .needsNewerInstaller(version("v2.0.0")))
       XCTAssertFalse(releases.fetched.contains(.archive(version("v2.0.0"))))
-      XCTAssertEqual(kits.kitForNextStart(), current)
+      XCTAssertEqual(kits.kitForNextStart().layout, current)
     }
 
     func testCellularOrLowDataModeWaitsForTheNextStart() async throws {
@@ -203,7 +243,28 @@
       let kits = updater()
       _ = await kits.checkIfDue()
       clock.advance(hours: 25)
-      return (kits, kits.kitForNextStart())
+      return (kits, kits.kitForNextStart().layout)
+    }
+
+    func testAFetchedKitIsCheckedAgainAtEveryStart() async throws {
+      let (_, current) = try await installFirstKit()
+      evaluator.fallback.team = "AAAAAAAAAA"
+      let choice = updater().kitForNextStart()
+      XCTAssertEqual(choice.layout, embedded)
+      XCTAssertFalse(choice.isFetched)
+      XCTAssertEqual(choice.refusal?.hasPrefix("signature: "), true)
+      XCTAssertTrue(FileManager.default.fileExists(atPath: current.root.path))
+      evaluator.fallback = FakeCodeEvaluator.Code(valid: false)
+      XCTAssertEqual(updater().kitForNextStart().layout, embedded)
+      evaluator.fallback = FakeCodeEvaluator.Code()
+      XCTAssertEqual(updater().kitForNextStart().layout, current)
+    }
+
+    func testAKitTamperedWithAfterItsDownloadIsNotRun() async throws {
+      let (_, current) = try await installFirstKit()
+      try TrialKitFixture.machO.write(to: current.root.appendingPathComponent("planted.dylib"))
+      evaluator.code["planted.dylib"] = FakeCodeEvaluator.Code(team: nil, runtime: false)
+      XCTAssertEqual(updater().kitForNextStart().layout, embedded)
     }
 
     private func assertFails(
@@ -214,10 +275,9 @@
       guard case .failed = outcome else {
         return XCTFail("Expected a failure, got \(outcome)", file: file, line: line)
       }
-      XCTAssertEqual(kits.kitForNextStart(), current, file: file, line: line)
+      XCTAssertEqual(kits.kitForNextStart().layout, current, file: file, line: line)
       XCTAssertEqual(try fetchedKits(), [current.root.lastPathComponent], file: file, line: line)
-      XCTAssertFalse(
-        FileManager.default.fileExists(atPath: store.incoming.path), file: file, line: line)
+      XCTAssertEqual(try downloads(), [], file: file, line: line)
     }
 
     func testAFailedDownloadLeavesTheCurrentKit() async throws {
@@ -231,7 +291,7 @@
       let kits = updater()
       let outcome = await kits.checkIfDue()
       XCTAssertEqual(outcome, .failed("download: httpStatus(404)"))
-      XCTAssertEqual(kits.kitForNextStart(), embedded)
+      XCTAssertEqual(kits.kitForNextStart().layout, embedded)
     }
 
     func testADigestMismatchIsRefused() async throws {
@@ -274,17 +334,20 @@
     func testAnUnsignedOrUntrustedKitIsRefused() async throws {
       let (_, current) = try await installFirstKit()
       try publish("v1.4.0")
-      evaluator.fallback.team = "AAAAAAAAAA"
-      try await assertFails(updater(), keeping: current)
+      var untrusted = FakeCodeEvaluator()
+      untrusted.fallback.team = "AAAAAAAAAA"
+      try await assertFails(updater(downloads: untrusted), keeping: current)
       clock.advance(hours: 25)
-      evaluator.fallback = FakeCodeEvaluator.Code(valid: false)
-      try await assertFails(updater(), keeping: current)
+      untrusted.fallback = FakeCodeEvaluator.Code(valid: false)
+      try await assertFails(updater(downloads: untrusted), keeping: current)
     }
 
     func testAnUnsafeArchiveIsRefused() async throws {
       let (kits, current) = try await installFirstKit()
       try publish("v1.4.0")
-      let zip = HandMadeZip.data([HandMadeZip.Entry(name: "../escape", data: Data("x".utf8))])
+      let zip = HandMadeZip.data([
+        HandMadeZip.Entry(name: "\(HandMadeZip.top)/../escape", data: Data("x".utf8))
+      ])
       releases.serve(zip, as: .archive(version("v1.4.0")))
       releases.serve(
         Data("\(SHA256Hex.of(zip))  TryOmarchyKit.zip\n".utf8), as: .checksum(version("v1.4.0")))
@@ -302,7 +365,7 @@
         try FileManager.default.createSymbolicLink(
           atPath: pointer.path, withDestinationPath: target)
         XCTAssertNil(store.current(), target)
-        XCTAssertEqual(updater().kitForNextStart(), embedded, target)
+        XCTAssertEqual(updater().kitForNextStart().layout, embedded, target)
       }
     }
 
@@ -312,7 +375,7 @@
       _ = await kits.checkIfDue()
       try FileManager.default.removeItem(at: embedded.root)
       embedded = try TrialKitFixture.make(at: embedded.root, version: "v1.3.0").layout
-      XCTAssertEqual(updater().kitForNextStart(), embedded)
+      XCTAssertEqual(updater().kitForNextStart().layout, embedded)
       XCTAssertEqual(try fetchedKits(), [])
     }
 
@@ -351,16 +414,18 @@
       XCTAssertNoThrow(try verify(root))
     }
 
-    func testEitherTeamSignsTheWholeKit() throws {
-      let installer = FakeCodeEvaluator.Code(
-        team: TrialKitSigner.installer.teamIdentifier,
-        identifier: TrialKitSigner.installer.codeIdentifier)
-      XCTAssertNoThrow(try verify(signedKit([:])))
+    func testOneOfThePolicysTeamsSignsTheWholeKit() throws {
+      let other = TrialKitSigner(teamIdentifier: "BBBBBBBBBB", codeIdentifier: "dev.example.kit")
+      let policy = TrialKitSignaturePolicy.developerID([.tryOmarchy, other])
+      let signed = FakeCodeEvaluator.Code(
+        team: other.teamIdentifier, identifier: other.codeIdentifier)
+      XCTAssertNoThrow(try verify(signedKit([:]), policy: policy))
       try FileManager.default.removeItem(at: base.appendingPathComponent("signed"))
       XCTAssertNoThrow(
-        try verify(signedKit(["libextra.dylib": installer, TryOmarchyKit.helperName: installer])))
+        try verify(
+          signedKit(["libextra.dylib": signed, TryOmarchyKit.helperName: signed]), policy: policy))
       try FileManager.default.removeItem(at: base.appendingPathComponent("signed"))
-      XCTAssertThrowsError(try verify(signedKit(["libextra.dylib": installer]))) {
+      XCTAssertThrowsError(try verify(signedKit(["libextra.dylib": signed]), policy: policy)) {
         XCTAssertEqual($0 as? TrialKitSignatureRefusal, .mixedTeams)
       }
     }
@@ -412,11 +477,7 @@
       XCTAssertTrue(requirement.contains("certificate leaf[subject.OU] = \"RZC79MPD34\""))
       XCTAssertTrue(requirement.contains("identifier \"dev.tryomarchy.kit\""))
       XCTAssertTrue(requirement.contains("1.2.840.113635.100.6.1.13"))
-      XCTAssertEqual(
-        TrialKitSigner.installer.teamIdentifier, InstallerProductIdentity.teamIdentifier)
-      XCTAssertEqual(
-        TrialKitSigner.installer.codeIdentifier, InstallerProductIdentity.appIdentifier + ".vm-kit")
-      XCTAssertEqual(TrialKitSignaturePolicy.release, .developerID([.tryOmarchy, .installer]))
+      XCTAssertEqual(TrialKitSignaturePolicy.release, .developerID([.tryOmarchy]))
     }
 
     func testTheSecurityFrameworkRefusesAdHocCodeUnlessTheTestPolicyAllowsIt() throws {
@@ -427,6 +488,9 @@
       try TrialKitFixture.run("/usr/bin/codesign", ["--force", "--sign", "-", tool.path])
       let real = SecurityTrialKitCodeEvaluator()
       XCTAssertEqual(real.check(tool, requirement: nil)?.satisfiesRequirement, true)
+      XCTAssertEqual(
+        SecurityTrialKitCodeEvaluator(enforcesRevocation: true).check(tool, requirement: nil)?
+          .satisfiesRequirement, true)
       XCTAssertEqual(
         real.check(tool, requirement: TrialKitSigner.tryOmarchy.requirement)?.satisfiesRequirement,
         false)
@@ -457,38 +521,124 @@
         FileManager.default.fileExists(atPath: destination.path), file: file, line: line)
     }
 
-    func testAPlainArchiveIsListed() throws {
+    private func named(_ name: String) -> String { "\(HandMadeZip.top)/\(name)" }
+
+    func testAPlainArchiveUnpacksAsListedWithPrivateModesAndNoAppleDouble() throws {
       let zip = base.appendingPathComponent("plain.zip")
+      let firmware = Data(repeating: 7, count: 300_000)
       try HandMadeZip.data([
-        .init(name: "kit/", mode: 0o040755), .init(name: "kit/file", data: Data("x".utf8)),
-        .init(name: "kit/link", mode: 0o120755, data: Data("file".utf8)),
+        .init(name: "\(HandMadeZip.top)/", mode: 0o040755),
+        .init(name: named("file"), data: Data("x".utf8)),
+        .init(name: named("bin/tool"), mode: 0o100755, data: Data("#!/bin/sh\n".utf8)),
+        .init(name: named("firmware.fd"), data: firmware, deflate: true),
+        .init(name: named("._file"), data: Data("apple double".utf8)),
       ]).write(to: zip)
-      let entries = try TrialKitArchive.entries(of: zip)
-      XCTAssertEqual(entries.map(\.kind), [.directory, .file, .link])
+      XCTAssertEqual(
+        try TrialKitArchive.entries(of: zip).map(\.kind), [.directory, .file, .file, .file, .file])
+      let destination = base.appendingPathComponent("plain")
+      try TrialKitArchive.unpack(zip, into: destination)
+      let kit = destination.appendingPathComponent(HandMadeZip.top)
+      XCTAssertEqual(try Data(contentsOf: kit.appendingPathComponent("firmware.fd")), firmware)
+      XCTAssertFalse(
+        FileManager.default.fileExists(atPath: kit.appendingPathComponent("._file").path))
+      let mode = { (path: String) in
+        try
+          (FileManager.default.attributesOfItem(atPath: kit.appendingPathComponent(path).path)[
+            .posixPermissions] as? NSNumber)?.intValue
+      }
+      XCTAssertEqual(try mode("file"), 0o600)
+      XCTAssertEqual(try mode("bin/tool"), 0o700)
+      XCTAssertEqual(try mode("bin"), 0o700)
+    }
+
+    func testOnlyTheKitsFolderMayBeAtTheTop() throws {
+      try refuses([.init(name: "other/file", data: Data("x".utf8))])
+      try refuses([.init(name: "file", data: Data("x".utf8))])
+      try refuses([.init(name: named("file")), .init(name: "TryOmarchyKit.bundle.extra")])
     }
 
     func testUnsafeNamesAreRefused() throws {
-      for name in ["/etc/passwd", "../x", "kit/../../x", "kit/./x", "kit//x", "kit\\x", "kit/x\0y"]
-      {
+      for name in [
+        "/etc/passwd", "../x", named("../../x"), named("./x"), named("a//x"), named("a\\x"),
+        named("x\0y"),
+      ] {
         try refuses([.init(name: name, data: Data("x".utf8))])
       }
     }
 
-    func testEntriesBeneathALinkOrRepeatedAreRefused() throws {
-      try refuses([
-        .init(name: "kit", mode: 0o120755, data: Data("/tmp".utf8)), .init(name: "kit/x"),
-      ])
-      try refuses([.init(name: "Kit", mode: 0o120755, data: Data("a".utf8)), .init(name: "kit/x")])
-      try refuses([.init(name: "kit/x"), .init(name: "KIT/x")])
-      try refuses([.init(name: "kit/caf\u{E9}"), .init(name: "kit/cafe\u{301}")])
+    func testLinksAndRepeatedNamesAreRefused() throws {
+      try refuses([.init(name: named("link"), mode: 0o120755, data: Data("/tmp".utf8))])
+      try refuses([.init(name: named("x")), .init(name: named("X"))])
+      try refuses([.init(name: named("caf\u{E9}")), .init(name: named("cafe\u{301}"))])
     }
 
     func testOtherFileTypesModesAndEncryptionAreRefused() throws {
-      try refuses([.init(name: "fifo", mode: 0o010644)])
-      try refuses([.init(name: "device", mode: 0o020644)])
-      try refuses([.init(name: "setuid", mode: 0o104755)])
-      try refuses([.init(name: "writable", mode: 0o100666)])
-      try refuses([.init(name: "secret", flags: 1)])
+      try refuses([.init(name: named("fifo"), mode: 0o010644)])
+      try refuses([.init(name: named("device"), mode: 0o020644)])
+      try refuses([.init(name: named("setuid"), mode: 0o104755)])
+      try refuses([.init(name: named("writable"), mode: 0o100666)])
+      try refuses([.init(name: named("secret"), flags: 1)])
+    }
+
+    private func refusesUnpacking(
+      _ entries: [HandMadeZip.Entry], file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+      let zip = base.appendingPathComponent("\(UUID().uuidString).zip")
+      try HandMadeZip.data(entries).write(to: zip)
+      let destination = base.appendingPathComponent(UUID().uuidString)
+      XCTAssertThrowsError(
+        try TrialKitArchive.unpack(zip, into: destination), file: file, line: line)
+      XCTAssertFalse(
+        FileManager.default.fileExists(atPath: destination.path), file: file, line: line)
+      XCTAssertFalse(
+        FileManager.default.fileExists(atPath: base.appendingPathComponent("escaped.txt").path),
+        file: file, line: line)
+    }
+
+    func testALocalHeaderThatDisagreesWithTheDirectoryIsRefused() throws {
+      try refusesUnpacking([
+        .init(name: named("a.txt"), data: Data("x".utf8), localName: "../escaped.txt")
+      ])
+      try refusesUnpacking([
+        .init(name: named("a.txt"), data: Data("x".utf8), localName: named("b.txt"))
+      ])
+    }
+
+    func testAnEntryMissingFromTheDirectoryIsRefused() throws {
+      try refusesUnpacking([
+        .init(name: named("a.txt"), data: Data("x".utf8)),
+        .init(name: named("hidden"), data: Data("hidden".utf8), listed: false),
+        .init(name: named("b.txt"), data: Data("y".utf8)),
+      ])
+      try refusesUnpacking([
+        .init(name: named("a.txt"), data: Data("x".utf8)),
+        .init(name: named("hidden"), data: Data("hidden".utf8), listed: false),
+      ])
+    }
+
+    func testADeflateBombStopsAtItsDeclaredSize() throws {
+      let bomb = Data(count: 50 << 20)
+      let zip = base.appendingPathComponent("bomb.zip")
+      try HandMadeZip.data([
+        .init(name: named("bomb"), data: bomb, deflate: true, declaredBytes: 10)
+      ]).write(to: zip)
+      XCTAssertLessThan(
+        try FileManager.default.attributesOfItem(atPath: zip.path)[.size] as! Int, 1 << 20)
+      let destination = base.appendingPathComponent("bomb")
+      XCTAssertThrowsError(try TrialKitArchive.unpack(zip, into: destination)) {
+        XCTAssertEqual($0 as? TrialKitArchive.Refusal, .tooLarge)
+      }
+      XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+    }
+
+    func testAWrongChecksumOrShortEntryIsRefused() throws {
+      try refusesUnpacking([.init(name: named("a"), data: Data("abc".utf8), crc: 1)])
+      try refusesUnpacking([.init(name: named("a"), data: Data("abc".utf8), declaredBytes: 4)])
+      try refusesUnpacking([
+        .init(
+          name: named("a"), data: Data(repeating: 1, count: 1_000), deflate: true,
+          declaredBytes: 2_000)
+      ])
     }
 
     func testANonArchiveIsRefused() throws {
@@ -497,27 +647,13 @@
       XCTAssertThrowsError(try TrialKitArchive.entries(of: zip))
     }
 
-    func testAnUnpackedLinkMustStayInItsFolder() throws {
-      for (target, safe) in [
-        ("file", true), ("sub/file", true), ("../file", false), ("/etc", false),
-        ("sub/../../x", false),
-      ] {
-        let root = base.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(
-          at: root.appendingPathComponent("sub"), withIntermediateDirectories: true)
-        try FileManager.default.createSymbolicLink(
-          atPath: root.appendingPathComponent("sub/link").path, withDestinationPath: target)
-        if safe {
-          XCTAssertNoThrow(try TrialKitArchive.checkUnpacked(root), target)
-        } else {
-          XCTAssertThrowsError(try TrialKitArchive.checkUnpacked(root), target)
-        }
-      }
-    }
-
-    func testAnUnpackedHardLinkIsRefused() throws {
-      let root = base.appendingPathComponent("hard")
+    func testAnUnpackedLinkOrHardLinkIsRefused() throws {
+      let root = base.appendingPathComponent("links")
       try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+      try FileManager.default.createSymbolicLink(
+        atPath: root.appendingPathComponent("link").path, withDestinationPath: "file")
+      XCTAssertThrowsError(try TrialKitArchive.checkUnpacked(root))
+      try FileManager.default.removeItem(at: root.appendingPathComponent("link"))
       try Data("x".utf8).write(to: root.appendingPathComponent("a"))
       try FileManager.default.linkItem(
         at: root.appendingPathComponent("a"), to: root.appendingPathComponent("b"))
@@ -526,24 +662,21 @@
       }
     }
 
-    func testAnEscapingLinkInARealArchiveIsRefusedAndNothingUnpackedStays() throws {
-      let source = base.appendingPathComponent("source")
+    func testARealArchiveWithALinkIsRefusedBeforeAnythingIsWritten() throws {
+      let source = base.appendingPathComponent("source/\(HandMadeZip.top)")
       try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
       try FileManager.default.createSymbolicLink(
         atPath: source.appendingPathComponent("out").path, withDestinationPath: "../../outside")
       let zip = base.appendingPathComponent("link.zip")
-      try TrialKitFixture.run("/usr/bin/ditto", ["-c", "-k", source.path, zip.path])
-      XCTAssertNoThrow(try TrialKitArchive.entries(of: zip))
-      let destination = base.appendingPathComponent("incoming/kit")
-      try FileManager.default.createDirectory(
-        at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-      XCTAssertThrowsError(try TrialKitArchive.unpack(zip, into: destination)) {
-        XCTAssertEqual($0 as? TrialKitArchive.Refusal, .unsafeEntry("out"))
-      }
+      try TrialKitFixture.run(
+        "/usr/bin/ditto", ["-c", "-k", source.deletingLastPathComponent().path, zip.path])
+      XCTAssertThrowsError(try TrialKitArchive.entries(of: zip))
+      let destination = base.appendingPathComponent("unpacked")
+      XCTAssertThrowsError(try TrialKitArchive.unpack(zip, into: destination))
       XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
 
-    func testUnpackingDropsTheQuarantineAttribute() throws {
+    func testADittoArchiveUnpacksWithoutItsAttributes() throws {
       let kit = try TrialKitFixture.make(at: base.appendingPathComponent("q"), version: "v1.3.0")
       let value = Data("0081;00000000;Test;".utf8)
       _ = value.withUnsafeBytes {
@@ -552,12 +685,14 @@
       }
       let zip = base.appendingPathComponent("q.zip")
       try kit.archive(to: zip)
+      XCTAssertTrue(try TrialKitArchive.entries(of: zip).contains { $0.name.contains("/._") })
       let destination = base.appendingPathComponent("unpacked")
       try TrialKitArchive.unpack(zip, into: destination)
       let manifest = TrialKitLayout(root: destination).manifestURL.path
       XCTAssertEqual(getxattr(manifest, "com.apple.quarantine", nil, 0, 0, 0), -1)
       XCTAssertEqual(
         try TrialKitLayout(root: destination).manifest().version, TryOmarchyKitVersion("v1.3.0"))
+      XCTAssertTrue(TrialKitLayout(root: destination).hasLauncher)
     }
 
     // MARK: Releases
@@ -614,7 +749,7 @@
         network: network, now: { clock.now })
       let outcome = await kits.checkIfDue()
       XCTAssertEqual(outcome, .installed(version("v1.3.0")))
-      XCTAssertEqual(try kits.kitForNextStart().manifest().version, version("v1.3.0"))
+      XCTAssertEqual(try kits.kitForNextStart().layout.manifest().version, version("v1.3.0"))
 
       clock.advance(hours: 25)
       let missing = TrialKitUpdater(
@@ -624,7 +759,23 @@
         network: network, now: { clock.now })
       let failed = await missing.checkIfDue()
       XCTAssertEqual(failed, .failed("download: httpStatus(404)"))
-      XCTAssertEqual(try missing.kitForNextStart().manifest().version, version("v1.3.0"))
+      XCTAssertEqual(try missing.kitForNextStart().layout.manifest().version, version("v1.3.0"))
+    }
+
+    func testARedirectAwayFromHTTPSIsRefusedAsSuch() async throws {
+      let server = try LoopbackServer(
+        files: [:],
+        redirects: ["/latest/download/TryOmarchyKit.json": "http://example.com/TryOmarchyKit.json"])
+      let url = try await server.start()
+      defer { server.stop() }
+      let destination = base.appendingPathComponent("redirected.json")
+      do {
+        try await TrialKitReleases(base: url).fetch(.latestManifest, to: destination)
+        XCTFail("Expected the redirect to be refused")
+      } catch {
+        XCTAssertEqual(error as? TrialKitDownloadError, .refusedRedirect)
+      }
+      XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
 
     func testADownloadPastItsLimitIsStopped() async throws {
