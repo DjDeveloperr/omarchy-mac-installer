@@ -94,6 +94,7 @@ struct OmarchyAppleInstallerApp: App {
   @State private var trial = TrialSession(environment: LiveTrialEnvironment())
   @State private var installReason: TrialInstallReason?
   @State private var deletionFailure: String?
+  @State private var bridgedNetworkFailure: String?
 
   private var isSimulation: Bool {
     #if DEBUG
@@ -199,6 +200,15 @@ struct OmarchyAppleInstallerApp: App {
         Button("OK", role: .cancel) {}
       } message: { reason in
         Text(reason.detail)
+      }
+      .alert(
+        PlainLanguage.trialBridgedNetworkChangeFailed,
+        isPresented: presented($bridgedNetworkFailure),
+        presenting: bridgedNetworkFailure
+      ) { _ in
+        Button("OK", role: .cancel) {}
+      } message: { failure in
+        Text(failure)
       }
       .alert(
         PlainLanguage.trialDeleteFailed, isPresented: presented($deletionFailure),
@@ -368,11 +378,8 @@ struct OmarchyAppleInstallerApp: App {
     guard alert.runModal() == .alertSecondButtonReturn else { return }
     guard removing ? trial.canChangeBridgedNetwork : trial.canRepairBridgedNetwork else { return }
     Task {
-      if removing {
-        await trial.removeBridgedNetwork()
-      } else {
-        await trial.repairBridgedNetwork()
-      }
+      bridgedNetworkFailure =
+        removing ? await trial.removeBridgedNetwork() : await trial.repairBridgedNetwork()
     }
   }
 

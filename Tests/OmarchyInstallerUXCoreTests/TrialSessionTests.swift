@@ -19,6 +19,7 @@
     var network: TrialBridgedNetwork = .notRegistered
     var networkChanges: [String] = []
     var registerError: Error?
+    var unregisterError: Error?
     var runsFetchedKit = false
 
     func space() -> TrialSpace { currentSpace }
@@ -48,6 +49,7 @@
     func openBridgedNetworkApproval() { networkChanges.append("open login items") }
     func unregisterBridgedNetwork() async throws {
       networkChanges.append("unregister")
+      if let unregisterError { throw unregisterError }
       network = .notRegistered
     }
 
@@ -381,6 +383,21 @@
       trial.chooseInstall {}
       XCTAssertFalse(trial.showsMigrationNotice)
       XCTAssertEqual(landing(.checking, vm: true).landing.install, .checking)
+    }
+
+    func testMigrateToNativeChosenWhileStartingKeepsTheWindowWhenOmarchyIsReady() throws {
+      let environment = FakeTrialEnvironment()
+      environment.makeVM()
+      let trial = TrialSession(environment: environment)
+      trial.openAtLaunch()
+      trial.follow(.supported)
+      trial.start()
+      let send = try XCTUnwrap(environment.onEvent)
+
+      trial.chooseInstall {}
+      send(.ready)
+      XCTAssertTrue(trial.showsMigrationNotice)
+      XCTAssertTrue(trial.showsWindow, "The confirmation stays until the person answers it")
     }
 
     func testInstallWithoutMigratingShutsOmarchyDownFirst() throws {
@@ -904,6 +921,20 @@
       XCTAssertEqual(environment.networkChanges.last, "unregister")
       XCTAssertEqual(trial.bridgedNetwork, .notRegistered)
       XCTAssertFalse(trial.canChangeBridgedNetwork)
+    }
+
+    func testAFailedRemoveSaysWhyOnceOmarchyIsDown() async throws {
+      let environment = FakeTrialEnvironment()
+      environment.network = .enabled
+      environment.unregisterError = CocoaError(.fileWriteNoPermission)
+      let (trial, send) = try runningWithSharedNetworking(environment)
+      let remove = Task { await trial.removeBridgedNetwork() }
+      await Task.yield()
+      send(.exited(status: 0))
+      let failure = await remove.value
+      XCTAssertEqual(failure, CocoaError(.fileWriteNoPermission).localizedDescription)
+      XCTAssertFalse(trial.isActive)
+      XCTAssertNil(trial.bridgedNetworkLine, "The running page's line is gone with Omarchy")
     }
 
     func testAFetchedKitsSharedNetworkingOffersNoRepair() async throws {

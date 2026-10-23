@@ -610,35 +610,42 @@
       }
     }
 
-    /// Shuts Omarchy down, then registers the daemon again.
-    public func repairBridgedNetwork() async {
-      guard !(isActive && environment.runsFetchedKit) else { return }
-      await changeBridgedNetwork { environment in
+    /// Shuts Omarchy down, then registers the daemon again. Returns why it
+    /// failed: Omarchy is down by then, so the running page can't say it.
+    @discardableResult
+    public func repairBridgedNetwork() async -> String? {
+      guard !(isActive && environment.runsFetchedKit) else { return nil }
+      let failure = await changeBridgedNetwork { environment in
         try await environment.unregisterBridgedNetwork()
         try environment.registerBridgedNetwork()
       }
       if bridgedNetwork == .needsApproval { environment.openBridgedNetworkApproval() }
+      return failure
     }
 
-    /// Shuts Omarchy down, then unregisters the daemon.
-    public func removeBridgedNetwork() async {
+    /// Shuts Omarchy down, then unregisters the daemon. Returns why it failed.
+    @discardableResult
+    public func removeBridgedNetwork() async -> String? {
       await changeBridgedNetwork { environment in try await environment.unregisterBridgedNetwork() }
     }
 
     private func changeBridgedNetwork(
       _ change: @MainActor (any TrialEnvironment) async throws -> Void
-    ) async {
-      guard !bridgedNetworkChanging else { return }
+    ) async -> String? {
+      guard !bridgedNetworkChanging else { return nil }
       bridgedNetworkChanging = true
       defer { bridgedNetworkChanging = false }
       bridgedNetworkFailure = nil
       await withCheckedContinuation { stopped in shutDown { stopped.resume() } }
+      var reason: String?
       do {
         try await change(environment)
       } catch {
+        reason = error.localizedDescription
         bridgedNetworkFailure = PlainLanguage.trialBridgedNetworkFailed(error.localizedDescription)
       }
       bridgedNetwork = environment.bridgedNetwork()
+      return reason
     }
 
     func receive(_ event: VMRunEvent) {
@@ -656,7 +663,7 @@
         noteVM(environment.space())
         if !shutdownRequested {
           phase = .running(environment.permissions())
-          showsWindow = false
+          if !showsMigrationNotice { showsWindow = false }
         }
       case .stopping:
         phase = .stopping

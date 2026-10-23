@@ -64,6 +64,7 @@
     public static let trialDeleteTitle = "Delete the virtual machine?"
     public static let trialDeleteAction = "Move to Trash"
     public static let trialDeleteFailed = "The virtual machine couldn’t be deleted"
+    public static let trialBridgedNetworkChangeFailed = "Bridged networking couldn’t be changed"
     public static let trialRepairBridgedNetworkMenuItem = "Repair Bridged Networking"
     public static let trialRemoveBridgedNetworkMenuItem = "Remove Bridged Networking"
 
