@@ -58,17 +58,14 @@ struct OnePageInstallerView: View {
           .frame(maxWidth: 400)
           .padding(.top, 24)
           .padding(.bottom, 16)
-        header.padding(.bottom, installLine == nil ? 20 : 8)
-        if let installLine {
-          Text(installLine)
-            .font(OmarchyTheme.body)
-            .foregroundStyle(OmarchyTheme.secondaryText)
-            .multilineTextAlignment(.center)
-            .padding(.bottom, 20)
-        }
+        header.padding(.bottom, 20)
         VStack(alignment: .leading, spacing: 14) {
           if let trial, trial.phase != .hidden {
             TrialStage(trial: trial)
+          } else if let trial, trial.showsLanding {
+            TrialLandingChoices(
+              trial: trial, canCheckAgain: session.canInspect, onInstall: continueToPlan,
+              onCheckAgain: { Task { await recheck() } })
           } else {
             stage
           }
@@ -76,9 +73,8 @@ struct OnePageInstallerView: View {
         .frame(maxWidth: 560)
         HStack(spacing: 16) {
           if let trial, trial.phase != .hidden {
-            TrialActions(
-              trial: trial, onInstall: { Task { await session.continueToPlan() } })
-          } else {
+            TrialActions(trial: trial, onInstall: continueToPlan)
+          } else if trial?.showsLanding != true {
             actions
           }
         }
@@ -154,6 +150,18 @@ struct OnePageInstallerView: View {
         onCancel: { showsShutdownConfirmation = false }
       )
     }
+    .sheet(isPresented: migrationNoticeBinding) {
+      if let trial {
+        ConfirmationSheet(
+          title: PlainLanguage.trialMigrationNoticeTitle,
+          message: PlainLanguage.trialMigrationNoticeMessage,
+          action: PlainLanguage.trialInstallWithoutMigrating,
+          cancelIsDefault: true,
+          onConfirm: { trial.installWithoutMigrating() },
+          onCancel: { trial.dismissMigrationNotice() }
+        )
+      }
+    }
     .sheet(isPresented: $showsRecoveryRetryConfirmation) {
       ConfirmationSheet(
         title: PlainLanguage.recoveryRetryConfirmationTitle,
@@ -220,17 +228,12 @@ struct OnePageInstallerView: View {
       )
 
     case .welcome:
-      VStack(spacing: 6) {
-        Text(PlainLanguage.checkSubheadline)
-        if let trial, trial.isAvailable {
-          Text(PlainLanguage.trialChoiceDetail)
-        }
-      }
-      .font(OmarchyTheme.body)
-      .foregroundStyle(OmarchyTheme.secondaryText)
-      .multilineTextAlignment(.center)
-      .frame(maxWidth: .infinity)
-      .padding(.top, 6)
+      Text(PlainLanguage.checkSubheadline)
+        .font(OmarchyTheme.body)
+        .foregroundStyle(OmarchyTheme.secondaryText)
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity)
+        .padding(.top, 6)
 
     case .existingInstallRefused:
       if let handoff = pendingRecoveryHandoff {
@@ -337,7 +340,6 @@ struct OnePageInstallerView: View {
         .disabled(session.isBusy)
 
     case .welcome:
-      trialEntryButton
       Button(PlainLanguage.trialInstall) { Task { await session.continueToPlan() } }
         .omarchyPrimaryButton()
         .disabled(session.isBusy)
@@ -416,21 +418,19 @@ struct OnePageInstallerView: View {
 
   // MARK: Pieces
 
-  /// The choice page's second way: Try in a VM, beside Install on this Mac.
-  @ViewBuilder
-  private var trialEntryButton: some View {
-    if let trial, trial.isAvailable {
-      Button(trial.entryTitle) { trial.present() }
-        .omarchySecondaryButton()
-        .disabled(session.isBusy)
-    }
+  /// Install on this Mac, or Migrate to Native, from the landing page and
+  /// the running page: Omarchy shuts down first, then the plan follows.
+  private func continueToPlan() {
+    Task { await session.continueToPlan() }
   }
 
-  /// Why Omarchy can't be installed, under the Mac's name, while the Try
-  /// page is the only page.
-  private var installLine: String? {
-    guard let trial, trial.phase != .hidden else { return nil }
-    return trial.installLine
+  private var migrationNoticeBinding: Binding<Bool> {
+    Binding(
+      get: { trial?.showsMigrationNotice == true },
+      set: { presented in
+        if !presented { trial?.dismissMigrationNotice() }
+      }
+    )
   }
 
   private func statusPanel(title: String) -> some View {

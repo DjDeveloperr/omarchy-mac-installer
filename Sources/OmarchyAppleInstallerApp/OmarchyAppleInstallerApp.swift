@@ -230,7 +230,7 @@ struct OmarchyAppleInstallerApp: App {
         }
       #endif
       CommandMenu("Installation") {
-        Button(PlainLanguage.trialInstallMenuItem) { installFromMenu() }
+        Button(trial.installMenuTitle) { installFromMenu() }
           .disabled(
             isSimulation || removalNeedsReview || showsRemoval
               || trial.installMenuAction == .unavailable)
@@ -295,13 +295,14 @@ struct OmarchyAppleInstallerApp: App {
   }
 
   /// Install on this Mac from the menu: shuts Omarchy down and continues into
-  /// the plan, or says why this Mac can't install.
+  /// the plan, or says why this Mac can't install. Migrate to Native first
+  /// shows its notice on the page.
   private func installFromMenu() {
     switch trial.installMenuAction {
     case .unavailable:
       break
     case .install:
-      trial.leaveForInstall { Task { await liveSession?.continueToPlan() } }
+      trial.chooseInstall { Task { await liveSession?.continueToPlan() } }
     case .explain(let reason):
       installReason = reason
     }

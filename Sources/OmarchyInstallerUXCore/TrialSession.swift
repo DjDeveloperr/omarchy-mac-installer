@@ -139,15 +139,15 @@
     case failed(TrialFailure)
   }
 
-  /// What the installer found it can do on this Mac, which decides where Try
-  /// sits: one of two modes, or the only one.
+  /// What the installer found it can do on this Mac, which decides what the
+  /// landing page's Install button offers.
   public enum TrialInstallStatus: Equatable, Sendable {
     case checking
-    /// Install is on offer, so the first page is the choice.
+    /// Install is on offer.
     case supported
-    /// Omarchy can't be installed on this Mac, and Try is the only mode.
+    /// Omarchy can't be installed on this Mac.
     case unsupported(FailureDisplay)
-    /// Omarchy is installed natively, and Try is the only mode.
+    /// Omarchy is installed natively.
     case installed
     /// An install waits for its Recovery step, whose steps take the page.
     case finishingInstall
@@ -183,11 +183,31 @@
     }
   }
 
-  /// Why Install on this Mac can't go ahead, for the menu item.
+  /// Why Install on this Mac can't go ahead: one line under the landing
+  /// page's button, and the details behind it and behind the menu item.
   public struct TrialInstallReason: Equatable, Sendable {
+    public let line: String
     public let headline: String
     public let detail: String
     public let canCheckAgain: Bool
+  }
+
+  /// The landing page: Install on this Mac, or Migrate to Native once a VM
+  /// exists, on the left, and Try in a VM on the right.
+  public struct TrialLanding: Equatable, Sendable {
+    public enum Install: Equatable, Sendable {
+      case checking
+      case available
+      case unavailable(TrialInstallReason)
+    }
+
+    public let install: Install
+    public let installTitle: String
+    public let installDetail: String
+    public let tryTitle: String
+    public let tryDetail: String
+    /// Try is the likelier next step: a VM exists, or Install isn't on offer.
+    public let tryIsPrimary: Bool
   }
 
   public enum TrialInstallMenuAction: Equatable, Sendable {
@@ -222,9 +242,10 @@
     private var afterExit: [() -> Void] = []
     private var launched = false
     private var vmBytesRefresh: Task<Void, Never>?
-    /// Try opened on its own because the Mac can't install, so it steps
-    /// aside if a new check finds that it can.
-    private var openedAsOnlyMode = false
+    /// Migrate to Native's notice, before a native install that leaves the
+    /// VM's files where they are.
+    public private(set) var showsMigrationNotice = false
+    private var pendingInstall: (() -> Void)?
 
     public init(environment: any TrialEnvironment) {
       self.environment = environment
@@ -235,8 +256,6 @@
     }
 
     public var isAvailable: Bool { environment.isAvailable }
-
-    public var entryTitle: String { PlainLanguage.trialEntry }
 
     /// Omarchy is starting, running or shutting down.
     public var isActive: Bool {
@@ -258,15 +277,54 @@
       return PlainLanguage.trialStart
     }
 
-    /// The Try page goes back to the choice page only while there is one: on
-    /// a Mac Omarchy can be installed on, before a VM exists.
-    public var canGoBack: Bool {
-      guard case .ready = phase else { return true }
-      return installStatus == .supported && !hasVM
+    /// Install on this Mac, or Migrate to Native, beside Shut Down on the
+    /// running page.
+    public var canInstall: Bool { installStatus == .supported }
+
+    /// Install on this Mac, or Migrate to Native once a VM exists.
+    public var installTitle: String {
+      hasVM ? PlainLanguage.trialMigrate : PlainLanguage.trialInstall
     }
 
-    /// Install on this Mac, beside Shut Down on the running page.
-    public var canInstall: Bool { installStatus == .supported }
+    public var installMenuTitle: String {
+      hasVM ? PlainLanguage.trialMigrateMenuItem : PlainLanguage.trialInstallMenuItem
+    }
+
+    /// The landing page is the first page, unless Try or the installer's own
+    /// page has the floor.
+    public var showsLanding: Bool {
+      environment.isAvailable && phase == .hidden && !installerNeedsPage
+    }
+
+    public var landing: TrialLanding {
+      let install: TrialLanding.Install
+      if installStatus == .supported {
+        install = .available
+      } else if let installReason {
+        install = .unavailable(installReason)
+      } else {
+        install = .checking
+      }
+      let tryDetail =
+        !hasVM
+        ? PlainLanguage.trialEntryDetail
+        : vmRoot?.isDefault == false
+          ? PlainLanguage.trialEntryChosenFolderDetail : PlainLanguage.trialEntryReadyDetail
+      return TrialLanding(
+        install: install, installTitle: installTitle,
+        installDetail: hasVM ? PlainLanguage.trialMigrateDetail : PlainLanguage.trialInstallDetail,
+        tryTitle: PlainLanguage.trialEntry, tryDetail: tryDetail,
+        tryIsPrimary: hasVM || install != .available)
+    }
+
+    /// Why this Mac can't install, once the inspection says so.
+    public var installReason: TrialInstallReason? {
+      switch installStatus {
+      case .unsupported(let failure): PlainLanguage.trialInstallReason(failure)
+      case .installed: PlainLanguage.trialInstalledReason
+      case .checking, .supported, .finishingInstall, .installerPage: nil
+      }
+    }
 
     /// Delete Virtual Machine moves only the default folder.
     public var canDeleteVM: Bool {
@@ -299,9 +357,6 @@
       return failure.canTryAgain && !installerNeedsPage
     }
 
-    /// The line under the Mac's name while Try is the only mode.
-    public var installLine: String? { PlainLanguage.trialInstallLine(installStatus) }
-
     /// Omarchy started before the inspection found an install waiting for its
     /// Recovery step. The steps appear once Omarchy shuts down.
     public var finishInstallAfterShutDown: Bool {
@@ -309,81 +364,50 @@
     }
 
     public var installMenuAction: TrialInstallMenuAction {
-      switch installStatus {
-      case .checking, .finishingInstall, .installerPage: .unavailable
-      case .supported: .install
-      case .unsupported(let failure):
-        .explain(
-          TrialInstallReason(
-            headline: failure.headline,
-            detail: [failure.plainDetail, failure.remedy].compactMap { $0 }.joined(
-              separator: " "),
-            canCheckAgain: true))
-      case .installed:
-        .explain(
-          TrialInstallReason(
-            headline: PlainLanguage.existingInstallHeadline,
-            detail: PlainLanguage.trialInstalledDetail, canCheckAgain: false))
-      }
+      if installStatus == .supported { return .install }
+      return installReason.map { .explain($0) } ?? .unavailable
     }
 
-    /// The remembered choice: with a VM, the app opens into Try, while the
-    /// installer inspects the Mac in the background. Omarchy starts at once
-    /// when this app has every permission the Try page offers, or started it
-    /// before; otherwise the Try page waits with Allow and Start. Runs once
-    /// per launch.
+    /// The remembered choice: with a VM, the app opens into Try and starts
+    /// Omarchy at once, while the installer inspects the Mac in the
+    /// background, when this app has every permission the Try page offers or
+    /// started Omarchy before. Otherwise the landing page shows, and Try opens
+    /// the Try page with Allow and Start. Runs once per launch.
     public func openAtLaunch() {
       guard !launched else { return }
       launched = true
       guard environment.isAvailable, phase == .hidden else { return }
       let space = environment.space()
       noteVM(space.remembersVM)
-      guard space.remembersVM else { return }
       let permissions = environment.permissions()
+      guard space.remembersVM, space.isEnough,
+        permissions.allAllowed || environment.hasStartedHere
+      else { return }
       phase = .ready(space, permissions)
-      if space.isEnough, permissions.allAllowed || environment.hasStartedHere { start() }
+      start()
     }
 
-    /// Follows the installer's inspection. On a Mac that can't install, and
-    /// on one with Omarchy installed, the Try page opens at once.
+    /// Follows the installer's inspection. The installer's plan, install and
+    /// Recovery steps take the page whenever Omarchy isn't running.
     public func follow(_ status: TrialInstallStatus) {
       installStatus = status
-      guard environment.isAvailable, !isActive else { return }
-      switch status {
-      case .unsupported, .installed:
-        if phase == .hidden {
-          present()
-          openedAsOnlyMode = true
-        }
-      case .supported:
-        if openedAsOnlyMode, !hasVM, case .ready = phase {
-          openedAsOnlyMode = false
-          phase = .hidden
-        }
-      case .finishingInstall, .installerPage:
-        if phase != .hidden {
-          openedAsOnlyMode = false
-          phase = .hidden
-        }
-      case .checking:
-        break
-      }
+      guard environment.isAvailable, !isActive, installerNeedsPage else { return }
+      phase = .hidden
     }
 
+    /// Try in a VM: the Try page, with its permissions and space.
     public func present() {
       guard environment.isAvailable, phase == .hidden else { return }
-      openedAsOnlyMode = false
       phase = readyPhase()
     }
 
     /// Back: from a failure to the Try page, or to the installer's page when
-    /// it needs the floor, and from the Try page to the choice page when there
-    /// is one.
+    /// it needs the floor, and from the Try page to the landing page.
     public func dismiss() {
       switch phase {
       case .failed:
         phase = installerNeedsPage ? .hidden : readyPhase()
-      case .ready where canGoBack:
+      case .ready:
         phase = .hidden
       default:
         break
@@ -475,10 +499,35 @@
       guard canInstall else { return }
       shutDown { [weak self] in
         guard let self else { return }
-        openedAsOnlyMode = false
         phase = .hidden
         install()
       }
+    }
+
+    /// The left button and the menu item. Once a VM exists they read Migrate
+    /// to Native, which first says that moving the VM's files is still to
+    /// come.
+    public func chooseInstall(then install: @escaping () -> Void) {
+      guard canInstall else { return }
+      guard hasVM else {
+        leaveForInstall(then: install)
+        return
+      }
+      pendingInstall = install
+      showsMigrationNotice = true
+    }
+
+    /// Install Without Migrating: the VM stays where it is, and the install
+    /// goes ahead as Install on this Mac does.
+    public func installWithoutMigrating() {
+      guard showsMigrationNotice, let install = pendingInstall else { return }
+      dismissMigrationNotice()
+      leaveForInstall(then: install)
+    }
+
+    public func dismissMigrationNotice() {
+      showsMigrationNotice = false
+      pendingInstall = nil
     }
 
     /// The confirmation's words, naming the space the VM takes.
@@ -487,17 +536,14 @@
       return PlainLanguage.trialDeleteMessage(bytes: vmBytes)
     }
 
-    /// Moves the VM to the Trash and returns to the first launch: the choice
-    /// page, or the Try page on a Mac that can't install.
+    /// Moves the VM to the Trash and returns to the landing page.
     public func deleteVM() throws {
       guard canDeleteVM else { return }
       try environment.deleteVM()
       hasVM = false
       vmRoot = environment.vmRoot()
       vmBytes = 0
-      openedAsOnlyMode = false
       phase = .hidden
-      follow(installStatus)
     }
 
     /// The running page's line about bridged networking, while this start
@@ -603,6 +649,7 @@
         }
       case .ready:
         if !environment.hasStartedHere { environment.recordStartedHere() }
+        noteVM(environment.space().remembersVM)
         if !shutdownRequested { phase = .running(environment.permissions()) }
       case .stopping:
         phase = .stopping
@@ -633,15 +680,10 @@
       return .ready(space, environment.permissions())
     }
 
-    /// Where Try rests once Omarchy has shut down: the Try page while Try is
-    /// the only mode or a VM is the remembered choice, else the choice page.
+    /// Where Try rests once Omarchy has shut down: the Try page, with Start
+    /// and Back, unless the installer's page needs the floor.
     private func restingPhase() -> TrialPhase {
-      let ready = readyPhase()
-      switch installStatus {
-      case .unsupported, .installed: return ready
-      case .finishingInstall, .installerPage: return .hidden
-      case .supported, .checking: return hasVM ? ready : .hidden
-      }
+      installerNeedsPage ? .hidden : readyPhase()
     }
 
     /// The Recovery steps of an unfinished install, or the installer's plan,

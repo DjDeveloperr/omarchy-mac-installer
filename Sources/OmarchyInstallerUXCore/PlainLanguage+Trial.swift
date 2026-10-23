@@ -35,17 +35,37 @@
     public static let trialStoppingDetail =
       "Omarchy is closing its apps. If it hasn’t stopped within a minute, it’s stopped for you."
     public static let trialInstall = "Install on this Mac"
-    public static let trialChoiceDetail =
-      "Or try it first in a virtual machine, in a window beside macOS, without changing your disk."
     public static let trialPermissionsNextStart =
       "A permission you allow now takes effect the next time Omarchy starts."
-    public static let trialInstalledLine = "Omarchy is already installed on this Mac."
+    public static let trialInstalledLine = "Omarchy is installed on this Mac."
     public static let trialInstalledDetail =
       "To install it again, first remove it: choose Installation → Remove Omarchy… in the menu bar."
+
+    // MARK: Try — the landing page
+
+    public static let trialInstallDetail = "Put Omarchy on this Mac’s own disk, beside macOS."
+    public static let trialEntryDetail =
+      "Omarchy opens in a window beside macOS, without changing your disk."
+    public static let trialEntryReadyDetail = "Omarchy is set up and ready."
+    public static let trialEntryChosenFolderDetail =
+      "Omarchy is set up in the folder chosen in Try Omarchy."
+    public static let trialCheckingInstall = inspectingHeadline
+    public static let trialInstallDetails = "Details"
+    public static let trialModelLine = "Omarchy can’t be installed on this Mac model yet."
+
+    // MARK: Try — Migrate to Native
+
+    public static let trialMigrate = "Migrate to Native"
+    public static let trialMigrateDetail = "Move to Omarchy on this Mac’s own disk, beside macOS."
+    public static let trialMigrationNoticeTitle = "Moving your files to a native install is coming"
+    public static let trialMigrationNoticeMessage =
+      "A later version will move the home folder from Omarchy’s virtual machine onto this Mac before installing. Installing now leaves the virtual machine in place, and you can keep opening it from Try."
+    public static let trialInstallWithoutMigrating = "Install Without Migrating"
 
     // MARK: Try — the Installation menu
 
     public static let trialInstallMenuItem = "Install on this Mac…"
+    public static let trialMigrateMenuItem = "Migrate to Native…"
     public static let trialCheckAgainMenuItem = checkAgain
     public static let trialDeleteMenuItem = "Delete Virtual Machine…"
     public static let trialDeleteTitle = "Delete the virtual machine?"
@@ -103,25 +123,35 @@
     public static func trialDeleteMessage(bytes: Int64) -> String {
       let frees =
         bytes >= 100_000_000
-        ? " Emptying the Trash frees up to \(gigabytes(bytes))." : ""
+        ? " Emptying the Trash frees up to \(size(bytes))." : ""
       return
         "Omarchy’s virtual machine, with everything saved in it, moves to the Trash.\(frees) The next start downloads Omarchy again."
     }
 
-    /// The line under the Mac's name while Try is the only mode.
-    public static func trialInstallLine(_ status: TrialInstallStatus) -> String? {
-      switch status {
-      case .unsupported(let failure):
-        if failure.isBlockedModel { return "Omarchy can’t be installed on this Mac model yet." }
-        if failure.headline == notReadyHeadline {
-          return "Omarchy can’t be installed on this Mac right now."
-        }
-        return failure.headline
-      case .installed:
-        return trialInstalledLine
-      case .checking, .supported, .finishingInstall, .installerPage:
-        return nil
+    /// Why this Mac can't install: the failure's own headline, or for a Mac
+    /// that isn't ready, the first sentence of what holds it back.
+    public static func trialInstallReason(_ failure: FailureDisplay) -> TrialInstallReason {
+      let line: String
+      if failure.isBlockedModel {
+        line = trialModelLine
+      } else if failure.headline == notReadyHeadline {
+        line = firstSentence(failure.plainDetail)
+      } else {
+        line = failure.headline
       }
+      return TrialInstallReason(
+        line: line, headline: failure.headline,
+        detail: [failure.plainDetail, failure.remedy].compactMap { $0 }.joined(separator: " "),
+        canCheckAgain: true)
+    }
+
+    public static let trialInstalledReason = TrialInstallReason(
+      line: trialInstalledLine, headline: existingInstallHeadline, detail: trialInstalledDetail,
+      canCheckAgain: false)
+
+    private static func firstSentence(_ text: String) -> String {
+      guard let end = text.range(of: ". ") else { return text }
+      return String(text[..<end.lowerBound]) + "."
     }
 
     public static func trialSpace(_ space: TrialSpace) -> String {
@@ -135,17 +165,18 @@
       case nil:
         break
       }
-      let required = gigabytes(space.requiredBytes)
+      let required = size(space.requiredBytes)
       guard let free = space.freeBytes else {
         return "Omarchy needs \(required) of free space."
       }
       return space.hasVM
-        ? "\(gigabytes(free)) is free on the disk that holds Omarchy’s virtual machine."
-        : "Omarchy needs \(required) of free space for its download and disk. \(gigabytes(free)) is free."
+        ? "\(size(free)) is free on the disk that holds Omarchy’s virtual machine."
+        : "Omarchy needs \(required) of free space for its download and disk. \(size(free)) is free."
     }
 
     public static func trialSpaceShortfall(_ space: TrialSpace) -> String {
-      "Free up \(gigabytes(space.requiredBytes - (space.freeBytes ?? 0))) more to try Omarchy."
+      let shortfall = UInt64(max(0, space.requiredBytes - (space.freeBytes ?? 0)))
+      return "Free up \(bytesRoundedUp(shortfall)) more to try Omarchy."
     }
 
     /// The plan review's note on the VM, which the native install leaves in
@@ -160,7 +191,7 @@
         root?.isDefault == false
         ? "in the folder chosen in Try Omarchy" : "in Application Support › Try Omarchy"
       return
-        "Omarchy’s virtual machine uses up to \(gigabytes(bytes)) of macOS’s space, already counted above. Installing keeps it, \(place)."
+        "Omarchy’s virtual machine uses up to \(size(bytes)) of macOS’s space, already counted above. Installing keeps it, \(place)."
     }
 
     public static func trialProgressTitle(_ phase: VMRunPhase) -> String {
@@ -217,8 +248,9 @@
       }
     }
 
-    private static func gigabytes(_ bytes: Int64) -> String {
-      String(format: "%.0f GB", max(0, Double(bytes)) / 1_000_000_000)
+    /// The header's rounding, so the same disk reads the same everywhere.
+    private static func size(_ bytes: Int64) -> String {
+      self.bytes(UInt64(max(0, bytes)))
     }
   }
 #endif

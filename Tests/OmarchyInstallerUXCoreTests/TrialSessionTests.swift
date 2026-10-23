@@ -86,7 +86,7 @@
     func testTheTryScreenShowsSpaceAndOptionalPermissions() async {
       let environment = FakeTrialEnvironment()
       let trial = ready(environment)
-      XCTAssertEqual(trial.entryTitle, "Try in a VM")
+      XCTAssertEqual(trial.landing.tryTitle, "Try in a VM")
       guard case .ready(let space, let permissions) = trial.phase else {
         return XCTFail("Expected the Try screen")
       }
@@ -102,9 +102,9 @@
       XCTAssertEqual(updated.accessibility, .allowed)
       XCTAssertEqual(updated.microphone, .allowed)
       trial.follow(.supported)
-      XCTAssertTrue(trial.canGoBack)
       trial.dismiss()
       XCTAssertEqual(trial.phase, .hidden)
+      XCTAssertTrue(trial.showsLanding)
     }
 
     func testTooLittleSpaceKeepsStartDisabled() {
@@ -158,7 +158,7 @@
       XCTAssertEqual(environment.shutdowns, 1)
       send(.stopping)
       send(.exited(status: 0))
-      XCTAssertEqual(trial.phase, .hidden)
+      guard case .ready = trial.phase else { return XCTFail("The Try page stays, with Start") }
       XCTAssertEqual(continued, 2)
       XCTAssertFalse(trial.isActive)
 
@@ -207,93 +207,256 @@
       XCTAssertEqual(failure.code, .macOSTooOld)
     }
 
-    // MARK: The first page
+    // MARK: The landing page
 
-    func testASupportedMacOffersInstallOrTry() {
+    private func landing(_ status: TrialInstallStatus, vm: Bool = false) -> TrialSession {
       let environment = FakeTrialEnvironment()
+      if vm { environment.makeVM(startedHere: false) }
       let trial = TrialSession(environment: environment)
       trial.openAtLaunch()
-      trial.follow(.checking)
-      trial.follow(.supported)
-      XCTAssertEqual(trial.phase, .hidden)
-      XCTAssertNil(trial.installLine)
-      XCTAssertEqual(trial.installMenuAction, .install)
-      XCTAssertEqual(trial.entryTitle, "Try in a VM")
-      XCTAssertEqual(PlainLanguage.trialInstall, "Install on this Mac")
-      trial.present()
-      XCTAssertTrue(trial.canGoBack)
-      trial.dismiss()
-      XCTAssertEqual(trial.phase, .hidden)
+      trial.follow(status)
+      return trial
     }
 
-    func testAnUnsupportedMacOpensTheTryPageAtOnce() {
-      let environment = FakeTrialEnvironment()
-      let trial = TrialSession(environment: environment)
-      trial.follow(.checking)
-      XCTAssertEqual(trial.phase, .hidden)
-      XCTAssertEqual(trial.installMenuAction, .unavailable)
-      trial.follow(.unsupported(tooLittleSpace))
-      guard case .ready = trial.phase else { return XCTFail("Expected the Try page") }
-      XCTAssertFalse(trial.canGoBack)
-      trial.dismiss()
-      guard case .ready = trial.phase else { return XCTFail("There is no page to go back to") }
-      XCTAssertEqual(trial.installLine, "Free up at least 30 GB to install Omarchy")
-      XCTAssertEqual(
-        trial.installMenuAction,
-        .explain(
-          TrialInstallReason(
-            headline: "Free up at least 30 GB to install Omarchy",
-            detail: "Omarchy needs 60 GB. Remove files, then choose Check again.",
-            canCheckAgain: true)))
-
-      // Check Again finds room: the choice page takes over.
-      trial.follow(.checking)
-      guard case .ready = trial.phase else { return XCTFail("Expected the Try page") }
-      trial.follow(.supported)
-      XCTAssertEqual(trial.phase, .hidden)
-    }
-
-    func testAnUnsupportedModelSaysSoInOneLine() {
-      let failure = PlainLanguage.unsupportedModel(deviceIdentifier: "apple,j999")
-      XCTAssertEqual(
-        PlainLanguage.trialInstallLine(.unsupported(failure)),
-        "Omarchy can’t be installed on this Mac model yet.")
-    }
-
-    func testAMacWithOmarchyInstalledOpensTheTryPage() {
-      let environment = FakeTrialEnvironment()
-      let trial = TrialSession(environment: environment)
-      trial.follow(.installed)
-      guard case .ready = trial.phase else { return XCTFail("Expected the Try page") }
-      XCTAssertFalse(trial.canGoBack)
-      XCTAssertFalse(trial.canInstall)
-      XCTAssertEqual(trial.installLine, "Omarchy is already installed on this Mac.")
-      guard case .explain(let reason) = trial.installMenuAction else {
-        return XCTFail("Install explains why it can't")
+    func testTheLandingPageOffersInstallAndTryInEveryInspectionState() {
+      let notReady = FailureDisplay(
+        headline: PlainLanguage.notReadyHeadline,
+        plainDetail:
+          "The disk compatibility check failed. Installation is unavailable. Details: engine")
+      let statuses: [TrialInstallStatus] = [
+        .checking, .supported,
+        .unsupported(PlainLanguage.unsupportedModel(deviceIdentifier: "apple,j999")),
+        .unsupported(tooLittleSpace), .unsupported(notReady), .installed,
+        .unsupported(PlainLanguage.failure(for: URLError(.notConnectedToInternet))),
+      ]
+      for status in statuses {
+        let trial = landing(status)
+        XCTAssertEqual(trial.phase, .hidden, "\(status)")
+        XCTAssertTrue(trial.showsLanding, "\(status)")
+        XCTAssertEqual(trial.landing.installTitle, "Install on this Mac")
+        XCTAssertEqual(
+          trial.landing.installDetail, "Put Omarchy on this Mac’s own disk, beside macOS.")
+        XCTAssertEqual(trial.landing.tryTitle, "Try in a VM")
+        XCTAssertEqual(
+          trial.landing.tryDetail,
+          "Omarchy opens in a window beside macOS, without changing your disk.")
       }
-      XCTAssertEqual(reason.headline, "Omarchy is already installed")
-      XCTAssertFalse(reason.canCheckAgain)
+      XCTAssertEqual(landing(.checking).landing.install, .checking)
+      XCTAssertEqual(landing(.supported).landing.install, .available)
+      XCTAssertFalse(landing(.supported).landing.tryIsPrimary)
+      XCTAssertTrue(landing(.installed).landing.tryIsPrimary)
+      XCTAssertEqual(PlainLanguage.trialCheckingInstall, "Checking this Mac…")
+      XCTAssertFalse(landing(.finishingInstall).showsLanding)
+      XCTAssertFalse(landing(.installerPage).showsLanding)
+    }
+
+    func testInstallIsDisabledWithItsReason() throws {
+      func reason(_ status: TrialInstallStatus) throws -> TrialInstallReason {
+        guard case .unavailable(let reason) = landing(status).landing.install else {
+          XCTFail("Install is on offer for \(status)")
+          throw CancellationError()
+        }
+        return reason
+      }
+      let model = try reason(
+        .unsupported(
+          PlainLanguage.unsupportedModel(
+            deviceIdentifier: "apple,j999", supportedDeviceIdentifiers: ["apple,j314s"])))
+      XCTAssertEqual(model.line, "Omarchy can’t be installed on this Mac model yet.")
+      XCTAssertEqual(model.headline, PlainLanguage.blockedHeadline)
+      XCTAssertTrue(model.detail.contains("This release supports these Macs"))
+      XCTAssertTrue(model.canCheckAgain)
+
+      let space = try reason(.unsupported(tooLittleSpace))
+      XCTAssertEqual(space.line, "Free up at least 30 GB to install Omarchy")
+      XCTAssertEqual(space.detail, "Omarchy needs 60 GB. Remove files, then choose Check again.")
+      XCTAssertTrue(space.canCheckAgain)
+
+      let notReady = try reason(
+        .unsupported(
+          FailureDisplay(
+            headline: PlainLanguage.notReadyHeadline,
+            plainDetail:
+              "The disk compatibility check failed. Installation is unavailable. Details: engine")))
+      XCTAssertEqual(notReady.line, "The disk compatibility check failed.")
+      let externalDisk = try reason(
+        .unsupported(
+          FailureDisplay(
+            headline: PlainLanguage.notReadyHeadline,
+            plainDetail: "Start this installer from macOS on your Mac’s internal storage.")))
+      XCTAssertEqual(
+        externalDisk.line, "Start this installer from macOS on your Mac’s internal storage.")
+
+      let offline = try reason(
+        .unsupported(PlainLanguage.failure(for: URLError(.notConnectedToInternet))))
+      XCTAssertEqual(offline.line, "The network request didn’t finish")
+      XCTAssertTrue(offline.canCheckAgain)
+
+      let installed = try reason(.installed)
+      XCTAssertEqual(installed.line, "Omarchy is installed on this Mac.")
+      XCTAssertEqual(installed.headline, "Omarchy is already installed")
+      XCTAssertFalse(installed.canCheckAgain)
+
+      let trial = landing(.unsupported(tooLittleSpace))
+      XCTAssertEqual(trial.installMenuAction, .explain(space))
+      var installs = 0
+      trial.chooseInstall { installs += 1 }
+      XCTAssertEqual(installs, 0)
+      XCTAssertFalse(trial.showsMigrationNotice)
+    }
+
+    func testTryOpensTheTryPageAndBackReturns() {
+      for status: TrialInstallStatus in [
+        .checking, .supported, .installed, .unsupported(tooLittleSpace),
+      ] {
+        let trial = landing(status)
+        trial.present()
+        guard case .ready = trial.phase else { return XCTFail("Try opens the Try page") }
+        XCTAssertFalse(trial.showsLanding)
+        trial.dismiss()
+        XCTAssertEqual(trial.phase, .hidden)
+        XCTAssertTrue(trial.showsLanding)
+      }
+    }
+
+    func testCheckAgainMovesOnlyTheInstallButton() {
+      let trial = landing(.unsupported(tooLittleSpace))
+      trial.follow(.checking)
+      XCTAssertEqual(trial.landing.install, .checking)
+      trial.follow(.supported)
+      XCTAssertEqual(trial.phase, .hidden)
+      XCTAssertEqual(trial.landing.install, .available)
+      XCTAssertEqual(trial.installMenuAction, .install)
+    }
+
+    func testWithoutAVMInstallGoesStraightToThePlan() {
+      let trial = landing(.supported)
+      XCTAssertEqual(trial.installMenuTitle, "Install on this Mac…")
+      var installs = 0
+      trial.chooseInstall { installs += 1 }
+      XCTAssertEqual(installs, 1)
+      XCTAssertFalse(trial.showsMigrationNotice)
+    }
+
+    func testWithAVMTheLeftButtonIsMigrateToNative() {
+      let trial = landing(.supported, vm: true)
+      XCTAssertTrue(trial.showsLanding, "Without its permissions the VM waits on the landing page")
+      XCTAssertEqual(trial.landing.installTitle, "Migrate to Native")
+      XCTAssertEqual(trial.installTitle, "Migrate to Native")
+      XCTAssertEqual(trial.installMenuTitle, "Migrate to Native…")
+      XCTAssertEqual(trial.landing.install, .available)
+      XCTAssertEqual(trial.landing.tryTitle, "Try in a VM")
+      XCTAssertEqual(trial.landing.tryDetail, "Omarchy is set up and ready.")
+      XCTAssertTrue(trial.landing.tryIsPrimary)
+
+      var installs = 0
+      trial.chooseInstall { installs += 1 }
+      XCTAssertTrue(trial.showsMigrationNotice)
+      XCTAssertEqual(installs, 0)
+      XCTAssertEqual(
+        PlainLanguage.trialMigrationNoticeTitle, "Moving your files to a native install is coming")
+      XCTAssertEqual(PlainLanguage.trialInstallWithoutMigrating, "Install Without Migrating")
+      trial.dismissMigrationNotice()
+      trial.installWithoutMigrating()
+      XCTAssertEqual(installs, 0, "Cancel leaves the page as it was")
+
+      trial.chooseInstall { installs += 1 }
+      trial.installWithoutMigrating()
+      XCTAssertFalse(trial.showsMigrationNotice)
+      XCTAssertEqual(installs, 1)
+      XCTAssertEqual(trial.phase, .hidden)
+    }
+
+    func testMigrateToNativeIsDisabledLikeInstall() {
+      let trial = landing(.unsupported(tooLittleSpace), vm: true)
+      XCTAssertEqual(trial.landing.installTitle, "Migrate to Native")
+      guard case .unavailable(let reason) = trial.landing.install else {
+        return XCTFail("Migrate to Native waits for room, as Install does")
+      }
+      XCTAssertEqual(reason.line, "Free up at least 30 GB to install Omarchy")
+      trial.chooseInstall {}
+      XCTAssertFalse(trial.showsMigrationNotice)
+      XCTAssertEqual(landing(.checking, vm: true).landing.install, .checking)
+    }
+
+    func testInstallWithoutMigratingShutsOmarchyDownFirst() throws {
+      let environment = FakeTrialEnvironment()
+      environment.makeVM()
+      let trial = TrialSession(environment: environment)
+      trial.openAtLaunch()
+      let send = try XCTUnwrap(environment.onEvent)
+      send(.ready)
+      trial.follow(.supported)
+      XCTAssertEqual(trial.installTitle, "Migrate to Native")
+
+      var installs = 0
+      trial.chooseInstall { installs += 1 }
+      XCTAssertEqual(trial.phase, .running(environment.permissionState))
+      XCTAssertEqual(environment.shutdowns, 0)
+      trial.installWithoutMigrating()
+      XCTAssertEqual(trial.phase, .stopping)
+      XCTAssertEqual(environment.shutdowns, 1)
+      XCTAssertEqual(installs, 0)
+      send(.exited(status: 0))
+      XCTAssertEqual(trial.phase, .hidden)
+      XCTAssertEqual(installs, 1)
+    }
+
+    func testTheFirstStartTurnsInstallIntoMigrate() throws {
+      let environment = FakeTrialEnvironment()
+      let trial = ready(environment)
+      trial.follow(.supported)
+      XCTAssertEqual(trial.installMenuTitle, "Install on this Mac…")
+      trial.start()
+      let send = try XCTUnwrap(environment.onEvent)
+      environment.makeVM()
+      send(.ready)
+      XCTAssertEqual(trial.installTitle, "Migrate to Native")
+      XCTAssertEqual(trial.installMenuTitle, "Migrate to Native…")
+    }
+
+    func testTheTwoFreeSpaceNumbersAgree() throws {
+      for free: UInt64 in [14_500_000_000, 15_400_000_000, 15_600_000_000, 464_200_000_000] {
+        let chip = PlainLanguage.chipAndFreeSpace(chip: "Apple M1 Pro", freeBytes: free)
+        let line = PlainLanguage.trialSpace(
+          TrialSpace(requiredBytes: 1_073_741_824, freeBytes: Int64(free), hasVM: true))
+        let number = PlainLanguage.bytes(free)
+        XCTAssertEqual(chip, "Apple M1 Pro · \(number) free")
+        XCTAssertEqual(line, "\(number) is free on the disk that holds Omarchy’s virtual machine.")
+      }
+      XCTAssertEqual(PlainLanguage.bytes(14_500_000_000), "15 GB")
+
+      let folder = FileManager.default.temporaryDirectory.appendingPathComponent(
+        "landing-space-\(UUID().uuidString)")
+      try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+      defer { try? FileManager.default.removeItem(at: folder) }
+      let root = TrialVMRoot(url: folder, isDefault: true, sharesMacOSVolume: true)
+      let tryReading = try XCTUnwrap(TrialSpace.of(root).freeBytes)
+      let headerReading = try XCTUnwrap(VolumeFreeSpace.bytes(at: folder))
+      XCTAssertLessThan(abs(tryReading - headerReading), 100_000_000, "One reading for both")
     }
 
     func testTheInstallersOwnPageTakesTheFloor() {
       let environment = FakeTrialEnvironment()
       let trial = TrialSession(environment: environment)
       trial.follow(.installed)
+      trial.present()
       trial.follow(.installerPage)
       XCTAssertEqual(trial.phase, .hidden)
+      XCTAssertFalse(trial.showsLanding)
       XCTAssertEqual(trial.installMenuAction, .unavailable)
     }
 
-    func testCheckAgainOnAMacWithAVMKeepsTheTryPage() {
+    func testCheckAgainOnTheTryPageKeepsIt() {
       let environment = FakeTrialEnvironment()
-      environment.makeVM()
+      environment.makeVM(startedHere: false)
       let trial = TrialSession(environment: environment)
+      trial.openAtLaunch()
       trial.follow(.unsupported(tooLittleSpace))
-      guard case .ready = trial.phase else { return XCTFail("Expected the Try page") }
+      trial.present()
       trial.follow(.checking)
       trial.follow(.supported)
-      guard case .ready = trial.phase else { return XCTFail("A VM keeps the Try page") }
-      XCTAssertFalse(trial.canGoBack)
+      guard case .ready = trial.phase else { return XCTFail("The Try page stays") }
       XCTAssertTrue(trial.canInstall)
     }
 
@@ -309,7 +472,6 @@
       trial.follow(.finishingInstall)
       XCTAssertEqual(trial.phase, .running(environment.permissionState))
       XCTAssertTrue(trial.finishInstallAfterShutDown)
-      XCTAssertNil(trial.installLine)
       XCTAssertEqual(trial.installMenuAction, .unavailable)
       trial.shutDown()
       send(.exited(status: 0))
@@ -423,8 +585,10 @@
 
       send(.exited(status: 0))
       guard case .ready = trial.phase else { return XCTFail("A VM keeps the Try page") }
-      XCTAssertFalse(trial.canGoBack)
       XCTAssertEqual(trial.startTitle, "Start")
+      trial.dismiss()
+      XCTAssertTrue(trial.showsLanding)
+      XCTAssertEqual(trial.landing.installTitle, "Migrate to Native")
     }
 
     func testAnAutoStartThatFailsBeforeTheInspectionKeepsTheVM() async {
@@ -444,18 +608,21 @@
       guard case .failed = trial.phase else { return XCTFail("The failure stays on the page") }
       trial.dismiss()
       guard case .ready = trial.phase else { return XCTFail("Back leads to the Try page") }
-      XCTAssertFalse(trial.canGoBack)
       XCTAssertEqual(trial.startTitle, "Start")
     }
 
     // MARK: Coming from Try Omarchy
 
-    func testAVMFromTryOmarchyWaitsOnTheTryPageWhilePermissionsAreMissing() throws {
+    func testAVMFromTryOmarchyWaitsOnTheLandingPageWhilePermissionsAreMissing() throws {
       let environment = FakeTrialEnvironment()
       environment.makeVM(startedHere: false)
       let trial = TrialSession(environment: environment)
       trial.openAtLaunch()
       XCTAssertNil(environment.onEvent, "Nothing starts before this app has its permissions")
+      XCTAssertTrue(trial.showsLanding)
+      XCTAssertEqual(trial.landing.installTitle, "Migrate to Native")
+      XCTAssertEqual(trial.landing.tryDetail, "Omarchy is set up and ready.")
+      trial.present()
       guard case .ready(let space, let permissions) = trial.phase else {
         return XCTFail("Expected the Try page")
       }
@@ -467,7 +634,6 @@
       trial.follow(.checking)
       trial.follow(.supported)
       guard case .ready = trial.phase else { return XCTFail("The Try page stays") }
-      XCTAssertFalse(trial.canGoBack)
 
       trial.start()
       let send = try XCTUnwrap(environment.onEvent)
@@ -505,7 +671,8 @@
       send(.ready)
       send(.exited(status: 0))
       guard case .ready = trial.phase else { return XCTFail("A moved VM keeps the Try page") }
-      XCTAssertFalse(trial.canGoBack)
+      XCTAssertEqual(
+        trial.landing.tryDetail, "Omarchy is set up in the folder chosen in Try Omarchy.")
       XCTAssertEqual(trial.startTitle, "Start")
       await trial.settled()
       XCTAssertEqual(trial.vmBytes, 9_400_000_000)
@@ -535,6 +702,8 @@
       XCTAssertTrue(trial.hasVM, "The VM is still the remembered choice")
       trial.openAtLaunch()
       XCTAssertNil(environment.onEvent, "Nothing starts without the drive")
+      XCTAssertTrue(trial.showsLanding)
+      trial.present()
       guard case .ready(let space, _) = trial.phase else { return XCTFail("Expected the Try page") }
       XCTAssertFalse(trial.canStart)
       XCTAssertFalse(space.isShort)
@@ -545,7 +714,6 @@
         "Omarchy’s virtual machine is on a drive that isn’t connected. Connect it, then start again."
       )
       trial.follow(.supported)
-      XCTAssertFalse(trial.canGoBack)
       XCTAssertFalse(trial.canDeleteVM)
 
       environment.root = movedRoot
@@ -595,7 +763,6 @@
       guard case .failed(let failure) = trial.phase else { return XCTFail("Expected a failure") }
       XCTAssertEqual(failure.headline, "Omarchy is open in Try Omarchy")
       XCTAssertTrue(trial.canTryAgain)
-      XCTAssertTrue(trial.canGoBack)
 
       environment.onEvent = nil
       trial.tryAgain()
@@ -702,14 +869,16 @@
       XCTAssertEqual(trial.vmBytes, 0)
     }
 
-    func testDeletingOnAnUnsupportedMacKeepsTheTryPage() throws {
+    func testDeletingOnAnUnsupportedMacReturnsToTheLandingPage() throws {
       let environment = FakeTrialEnvironment()
       environment.makeVM()
       let trial = TrialSession(environment: environment)
       trial.follow(.unsupported(tooLittleSpace))
+      trial.present()
       try trial.deleteVM()
-      guard case .ready(let space, _) = trial.phase else { return XCTFail("Expected Try") }
-      XCTAssertFalse(space.hasVM)
+      XCTAssertTrue(trial.showsLanding)
+      XCTAssertEqual(trial.landing.installTitle, "Install on this Mac")
+      trial.present()
       XCTAssertEqual(trial.startTitle, "Download and start")
     }
 

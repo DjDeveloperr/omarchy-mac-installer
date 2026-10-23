@@ -955,6 +955,11 @@
 
     // MARK: Formatting
 
+    /// The header's chip and the space free on macOS's disk.
+    public static func chipAndFreeSpace(chip: String, freeBytes: UInt64) -> String {
+      "\(chip) · \(bytes(freeBytes)) free"
+    }
+
     /// Whole-number sizes: "137 GB", "18 MB". Decimal places only add noise
     /// at the scale people choose disk space in.
     public static func bytes(_ value: UInt64) -> String {
