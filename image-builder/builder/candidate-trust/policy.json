@@ -21,7 +21,7 @@
   "boot_packages": [
     "linux-aurora",
     "linux-aurora-headers",
-    "aura",
+    "m1n1-aurora",
     "uboot-aurora",
     "limine-mkinitcpio-hook"
   ],
@@ -38,12 +38,14 @@
     "linux-asahi",
     "m1n1",
     "grub",
-    "m1n1-aurora",
+    "aura",
+    "m1n1-neo",
     "uboot-asahi"
   ],
   "minimum_versions": {
     "omarchy-mac-boot": "20260921-10",
-    "limine-mkinitcpio-hook": "1.39.0-2"
+    "limine-mkinitcpio-hook": "1.39.0-2",
+    "m1n1-aurora": "1.6.1.aurora20-3"
   },
   "channel": {
     "lanes": [

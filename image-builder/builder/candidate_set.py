@@ -66,8 +66,8 @@ REVISION_FILES = {
 # Boot payloads the image is assembled and inspected from, and the one package
 # that may carry each: every Mac boots the Aurora stack.
 REQUIRED_OWNERS = {
-    'usr/lib/asahi-boot/m1n1.bin': 'aura',
-    'usr/share/aura/stage1/aura-raw.bin': 'aura',
+    'usr/lib/asahi-boot/m1n1.bin': 'm1n1-aurora',
+    'usr/share/m1n1-aurora/stage1/m1n1-raw.bin': 'm1n1-aurora',
     'usr/lib/asahi-boot/u-boot-nodtb.bin': 'uboot-aurora',
     'usr/lib/omarchy/initcpio/omarchy-mac-encrypt': 'omarchy-mac-boot',
     'usr/lib/omarchy/mac-first-boot/omarchy-mac-first-boot': 'omarchy-mac-boot',

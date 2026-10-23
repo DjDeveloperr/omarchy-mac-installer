@@ -43,9 +43,10 @@ class AuroraPackageRolesTests(unittest.TestCase):
             "mesa-aurora", "vulkan-aurora", "aurora-bless",
         })
         self.assertNotIn("hardware_profiles", policy)
-        self.assertIn("aura", policy["boot_packages"])
+        self.assertIn("m1n1-aurora", policy["boot_packages"])
         self.assertIn("uboot-aurora", policy["boot_packages"])
-        self.assertTrue({"m1n1", "m1n1-aurora", "uboot-asahi"} <= set(policy["refused_packages"]))
+        self.assertTrue({"m1n1", "aura", "m1n1-neo", "uboot-asahi"} <= set(policy["refused_packages"]))
+        self.assertEqual(policy["minimum_versions"]["m1n1-aurora"], "1.6.1.aurora20-3")
         # Every supported Mac's kernel device tree, one per board of scripts/supported-models.json.
         supported = json.loads((ROOT / "scripts/supported-models.json").read_text())["supported"]
         self.assertEqual(sorted("apple," + tree.split("-", 1)[1] for tree in policy["device_trees"]), sorted(supported))
