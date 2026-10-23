@@ -30,7 +30,7 @@ struct TrialStage: View {
         .font(OmarchyTheme.body)
         .foregroundStyle(OmarchyTheme.secondaryText)
         .fixedSize(horizontal: false, vertical: true)
-      if space.isShort {
+      if !space.isEnough {
         Text(PlainLanguage.trialSpaceShortfall(space))
           .font(OmarchyTheme.body)
           .foregroundStyle(OmarchyTheme.caution)
@@ -122,34 +122,57 @@ struct TrialStage: View {
   }
 }
 
-/// The landing page: Install on this Mac, or Migrate to Native once a VM
-/// exists, on the left, and Try in a VM on the right, each with a line under
-/// it. Install says why it can't go ahead, or that the check still runs.
-struct TrialLandingChoices: View {
+/// The landing page's lines above its buttons: why Install can't go ahead,
+/// or that the check still runs, what Try has, and the space for it. With
+/// nothing to say, one line names both choices. The space keeps its height
+/// in every state.
+struct TrialLandingMessage: View {
   let trial: TrialSession
   let canCheckAgain: Bool
-  let onInstall: () -> Void
   let onCheckAgain: () -> Void
   @State private var details: TrialInstallReason?
 
   var body: some View {
     let landing = trial.landing
-    HStack(alignment: .top, spacing: 16) {
-      choice(
-        title: landing.installTitle, detail: landing.installDetail,
-        isPrimary: !landing.tryIsPrimary, isEnabled: landing.install == .available,
-        action: { trial.chooseInstall(then: onInstall) }
-      ) {
-        installState(landing.install)
-      }
-      choice(
-        title: landing.tryTitle, detail: landing.tryDetail, isPrimary: landing.tryIsPrimary,
-        isEnabled: true, action: { trial.present() }
-      ) {
+    VStack(spacing: 6) {
+      switch landing.install {
+      case .checking:
+        HStack(spacing: 8) {
+          ProgressView().controlSize(.small)
+          Text(PlainLanguage.trialCheckingInstall)
+            .foregroundStyle(OmarchyTheme.secondaryText)
+        }
+      case .available:
         EmptyView()
+      case .unavailable(let reason):
+        HStack(alignment: .firstTextBaseline, spacing: 14) {
+          Text(reason.line)
+            .foregroundStyle(reason.canCheckAgain ? OmarchyTheme.caution : OmarchyTheme.text)
+          HStack(spacing: 12) {
+            if reason.canCheckAgain {
+              Button(PlainLanguage.checkAgain, action: onCheckAgain)
+                .disabled(!canCheckAgain)
+            }
+            Button(PlainLanguage.trialInstallDetails) { details = reason }
+          }
+          .buttonStyle(.link)
+          .font(OmarchyTheme.detail)
+          .foregroundStyle(OmarchyTheme.accent)
+          .fixedSize()
+        }
+      }
+      if let line = landing.tryLine ?? landing.choiceLine {
+        Text(line)
+          .foregroundStyle(OmarchyTheme.secondaryText)
+      }
+      if let line = landing.spaceLine {
+        Text(line)
+          .foregroundStyle(landing.spaceIsShort ? OmarchyTheme.caution : OmarchyTheme.secondaryText)
       }
     }
-    .fixedSize(horizontal: false, vertical: true)
+    .font(OmarchyTheme.body)
+    .multilineTextAlignment(.center)
+    .frame(maxWidth: .infinity, minHeight: 72)
     .alert(details?.headline ?? "", isPresented: detailsShown, presenting: details) { reason in
       if reason.canCheckAgain {
         Button(PlainLanguage.checkAgain) { onCheckAgain() }
@@ -160,60 +183,38 @@ struct TrialLandingChoices: View {
     }
   }
 
-  private func choice<Extra: View>(
-    title: String, detail: String, isPrimary: Bool, isEnabled: Bool,
-    action: @escaping () -> Void, @ViewBuilder extra: () -> Extra
-  ) -> some View {
-    Panel {
-      VStack(alignment: .leading, spacing: 10) {
-        Button(title, action: action)
-          .buttonStyle(
-            OmarchyButtonStyle(kind: isPrimary ? .primary : .secondary, fillsWidth: true)
-          )
-          .disabled(!isEnabled)
-          .keyboardShortcut(isPrimary && isEnabled ? .defaultAction : nil)
-        Text(detail)
-          .font(OmarchyTheme.body)
-          .foregroundStyle(OmarchyTheme.secondaryText)
-          .fixedSize(horizontal: false, vertical: true)
-        extra()
-      }
-      .frame(maxHeight: .infinity, alignment: .top)
-    }
-  }
-
-  @ViewBuilder
-  private func installState(_ install: TrialLanding.Install) -> some View {
-    switch install {
-    case .checking:
-      HStack(spacing: 8) {
-        ProgressView().controlSize(.small)
-        Text(PlainLanguage.trialCheckingInstall)
-          .font(OmarchyTheme.detail)
-          .foregroundStyle(OmarchyTheme.secondaryText)
-      }
-    case .available:
-      EmptyView()
-    case .unavailable(let reason):
-      Text(reason.line)
-        .font(OmarchyTheme.body)
-        .foregroundStyle(reason.canCheckAgain ? OmarchyTheme.caution : OmarchyTheme.text)
-        .fixedSize(horizontal: false, vertical: true)
-      HStack(spacing: 14) {
-        if reason.canCheckAgain {
-          Button(PlainLanguage.checkAgain, action: onCheckAgain)
-            .disabled(!canCheckAgain)
-        }
-        Button(PlainLanguage.trialInstallDetails) { details = reason }
-      }
-      .buttonStyle(.link)
-      .font(OmarchyTheme.detail)
-      .foregroundStyle(OmarchyTheme.accent)
-    }
-  }
-
   private var detailsShown: Binding<Bool> {
     Binding(get: { details != nil }, set: { if !$0 { details = nil } })
+  }
+}
+
+/// The landing page's two buttons, side by side and the same width: Install
+/// on this Mac, or Migrate to Native once a VM exists, and Try it in a VM.
+struct TrialLandingButtons: View {
+  let trial: TrialSession
+  let onInstall: () -> Void
+
+  var body: some View {
+    let landing = trial.landing
+    button(
+      landing.installTitle, isPrimary: !landing.tryIsPrimary,
+      isEnabled: landing.install == .available
+    ) {
+      trial.chooseInstall(then: onInstall)
+    }
+    button(landing.tryTitle, isPrimary: landing.tryIsPrimary, isEnabled: true) {
+      trial.present()
+    }
+  }
+
+  private func button(
+    _ title: String, isPrimary: Bool, isEnabled: Bool, action: @escaping () -> Void
+  ) -> some View {
+    Button(title, action: action)
+      .buttonStyle(OmarchyButtonStyle(kind: isPrimary ? .primary : .secondary, fillsWidth: true))
+      .frame(width: 240)
+      .disabled(!isEnabled)
+      .keyboardShortcut(isPrimary && isEnabled ? .defaultAction : nil)
   }
 }
 

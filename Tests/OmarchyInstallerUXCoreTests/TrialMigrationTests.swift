@@ -86,8 +86,7 @@
         .appendingPathComponent("trial-outbox-\(UUID().uuidString)", isDirectory: true)
       defer { try? FileManager.default.removeItem(at: root) }
       let outbox = root.appendingPathComponent("native-exports", isDirectory: true)
-      let vm = TrialVMRoot(url: root, isDefault: true, sharesMacOSVolume: true)
-      XCTAssertFalse(vm.hasExportInOutbox, "No outbox yet")
+      XCTAssertFalse(TrialExportOutbox.hasExport(in: root), "No outbox yet")
 
       try FileManager.default.createDirectory(at: outbox, withIntermediateDirectories: true)
       try FileManager.default.createDirectory(
@@ -100,16 +99,16 @@
         at: outbox.appendingPathComponent(newer.id.uppercased() + "x"),
         withIntermediateDirectories: false)
       XCTAssertFalse(
-        vm.hasExportInOutbox, "An export in progress, a file, a link and a stray name don't count")
+        TrialExportOutbox.hasExport(in: root),
+        "An export in progress, a file, a link and a stray name don't count")
 
       try FileManager.default.removeItem(at: outbox.appendingPathComponent(newer.id))
       try FileManager.default.createDirectory(
         at: outbox.appendingPathComponent(newer.id), withIntermediateDirectories: false)
-      XCTAssertTrue(vm.hasExportInOutbox)
+      XCTAssertTrue(TrialExportOutbox.hasExport(in: root))
 
-      let missing = TrialVMRoot(
-        url: root, isDefault: false, sharesMacOSVolume: false, missing: .removed)
-      XCTAssertFalse(missing.hasExportInOutbox)
+      XCTAssertFalse(
+        TrialExportOutbox.hasExport(in: root.appendingPathComponent("missing", isDirectory: true)))
     }
   }
 #endif

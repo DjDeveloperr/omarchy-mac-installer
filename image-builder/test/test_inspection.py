@@ -67,7 +67,7 @@ class InspectionTest(unittest.TestCase):
         return report
 
     def stage2(self, m1n1=None, dtbs=None, uboot=None, tail=b""):
-        m1n1 = m1n1 if m1n1 is not None else fixtures.default_contents()["aura"]["usr/lib/asahi-boot/m1n1.bin"]
+        m1n1 = m1n1 if m1n1 is not None else fixtures.default_contents()["m1n1-aurora"]["usr/lib/asahi-boot/m1n1.bin"]
         uboot = uboot if uboot is not None else fixtures.default_contents()["uboot-aurora"]["usr/lib/asahi-boot/u-boot-nodtb.bin"]
         if dtbs is None:
             dtbs = sorted(["s8000-n66", *fixtures.MODELS], key=str.encode)

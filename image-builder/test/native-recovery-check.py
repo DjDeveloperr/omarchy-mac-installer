@@ -33,7 +33,7 @@ def check(template, output):
             database, digest = fixtures.make_channel(work / 'edge', signers[1])
             summary = channel.snapshot(database, digest, 'edge', work / 'edge/packages',
                                        work / 'frozen', trust)
-            assert {'omarchy-dev', 'omarchy-settings-dev', 'aura', 'uboot-aurora'} <= {
+            assert {'omarchy-dev', 'omarchy-settings-dev', 'm1n1-aurora', 'uboot-aurora'} <= {
                 package['name'] for package in summary['packages']}
             root = work / 'root'
             fixtures.make_root(root, work / 'frozen')

@@ -1,5 +1,6 @@
 #if os(macOS)
   import Foundation
+  import TryOmarchyKitClient
   import XCTest
   @testable import OmarchyInstallerUXCore
 
@@ -112,89 +113,45 @@
 
     // MARK: Where the VM lives
 
-    func testAMovedVMIsFoundAndItsVolumeHasTheSpaceCheck() throws {
-      let moved = base.appendingPathComponent("Elsewhere/Try Omarchy", isDirectory: true)
-      try FileManager.default.createDirectory(
-        at: moved.appendingPathComponent("shell"), withIntermediateDirectories: true)
-      try Data().write(to: moved.appendingPathComponent("shell/disk.img"))
-      let location = TrialVMRoot.resolved(moved, defaultRoot: root)
-      XCTAssertFalse(location.isDefault)
-      XCTAssertTrue(location.sharesMacOSVolume)
-
+    func testTheDefaultFolderHasTheSpaceCheck() throws {
       var asked: [URL] = []
-      let space = TrialSpace.of(location) { url in
+      let space = TrialSpace.of(root) { url in
         asked.append(url)
         return 2_000_000_000
       }
-      XCTAssertEqual(asked, [moved], "Free space is read on the volume that holds the VM")
+      XCTAssertEqual(asked, [root], "Free space is read on the volume that holds the VM")
       XCTAssertTrue(space.hasVM)
       XCTAssertEqual(space.requiredBytes, 1_073_741_824)
       XCTAssertTrue(space.isEnough)
 
-      XCTAssertTrue(TrialVMRoot.resolved(root, defaultRoot: root).isDefault)
       XCTAssertFalse(TrialSpace.of(nil).hasVM)
       XCTAssertNil(TrialSpace.of(nil).freeBytes)
     }
 
-    func testAnEmptyChosenFolderNeedsSpaceForANewVM() throws {
-      let chosen = base.appendingPathComponent("Chosen", isDirectory: true)
-      try FileManager.default.createDirectory(at: chosen, withIntermediateDirectories: true)
-      let space = TrialSpace.of(TrialVMRoot.resolved(chosen, defaultRoot: root)) { _ in
-        20_000_000_000
-      }
+    func testAnEmptyFolderNeedsSpaceForANewVM() throws {
+      try FileManager.default.removeItem(at: root)
+      let space = TrialSpace.of(root) { _ in 20_000_000_000 }
       XCTAssertFalse(space.hasVM)
       XCTAssertEqual(space.requiredBytes, 15_000_000_000)
+      XCTAssertTrue(space.isEnough)
     }
 
-    func testAVolumeElsewhereIsNotMacOSs() {
-      let elsewhere = URL(fileURLWithPath: "/dev/fd/Try Omarchy", isDirectory: true)
-      XCTAssertNotEqual(TrialVMRoot.device(of: elsewhere), TrialVMRoot.device(of: root))
-      XCTAssertFalse(TrialVMRoot.resolved(elsewhere, defaultRoot: root).sharesMacOSVolume)
-    }
+    func testTheStartNamesTheDefaultFolder() throws {
+      let configuration = try TrialRunConfiguration.make(
+        productName: "Trial Test", defaultRoot: root)
+      XCTAssertEqual(configuration.storageRoot, root.path)
+      XCTAssertEqual(configuration.productName, "Trial Test")
+      let line = try XCTUnwrap(
+        JSONSerialization.jsonObject(with: configuration.encodedLine()) as? [String: Any])
+      XCTAssertEqual(line["storageRoot"] as? String, root.path)
 
-    func testAChosenFolderThatIsNotThereIsNamed() throws {
-      let volumes = base.appendingPathComponent("Volumes", isDirectory: true)
-      let connected = volumes.appendingPathComponent("Connected", isDirectory: true)
-      try FileManager.default.createDirectory(at: connected, withIntermediateDirectories: true)
-      XCTAssertEqual(
-        TrialVMRoot.missing(
-          volumes.appendingPathComponent("Studio/Try Omarchy"), volumes: volumes),
-        .disconnectedDrive)
-      XCTAssertEqual(
-        TrialVMRoot.missing(connected.appendingPathComponent("Try Omarchy"), volumes: volumes),
-        .removed)
-      XCTAssertNil(TrialVMRoot.missing(connected, volumes: volumes))
-      XCTAssertEqual(
-        TrialVMRoot.missing(base.appendingPathComponent("Gone"), volumes: volumes), .removed)
+      let live = try TrialRunConfiguration.make(productName: "Trial Test")
+      XCTAssertEqual(live.storageRoot, try XCTUnwrap(TryOmarchyStorage.defaultRoot()).path)
+      XCTAssertTrue(live.storageRoot?.hasSuffix("/Application Support/Try Omarchy/VM/v1") == true)
 
-      let unplugged = URL(
-        fileURLWithPath: "/Volumes/\(UUID().uuidString)/Try Omarchy", isDirectory: true)
-      let location = TrialVMRoot.resolved(unplugged, defaultRoot: root)
-      XCTAssertEqual(location.missing, .disconnectedDrive)
-      XCTAssertFalse(location.isDefault)
-      let space = TrialSpace.of(location) { _ in
-        XCTFail("No free space is read for a drive that isn't there")
-        return nil
-      }
-      XCTAssertEqual(space.missingFolder, .disconnectedDrive)
-      XCTAssertFalse(space.hasVM)
-      XCTAssertTrue(space.remembersVM)
-      XCTAssertFalse(space.isEnough)
-
-      try FileManager.default.removeItem(at: root)
-      XCTAssertNil(
-        TrialVMRoot.resolved(root, defaultRoot: root).missing, "The default is never missing")
-    }
-
-    func testAStartIsRecordedInThisAppsFolder() throws {
-      let record = TrialStartRecord.under(applicationSupport: base, workspace: "installer")
-      XCTAssertEqual(
-        record.file.path, base.appendingPathComponent("installer/Try started").path)
-      XCTAssertFalse(record.exists)
-      try record.record()
-      XCTAssertTrue(record.exists)
-      try record.record()
-      XCTAssertTrue(record.exists)
+      XCTAssertThrowsError(
+        try TrialRunConfiguration.make(productName: "Trial Test", defaultRoot: nil)
+      ) { XCTAssertEqual(($0 as? VMRunError)?.code, .storageUnavailable) }
     }
   }
 #endif

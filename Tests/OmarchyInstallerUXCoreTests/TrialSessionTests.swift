@@ -4,18 +4,9 @@
   import XCTest
   @testable import OmarchyInstallerUXCore
 
-  private let defaultRoot = TrialVMRoot(
-    url: URL(fileURLWithPath: "/Users/someone/Library/Application Support/Try Omarchy/VM/v1"),
-    isDefault: true, sharesMacOSVolume: true)
-  private let movedRoot = TrialVMRoot(
-    url: URL(fileURLWithPath: "/Volumes/Studio/Try Omarchy"), isDefault: false,
-    sharesMacOSVolume: false)
-
   @MainActor
   private final class FakeTrialEnvironment: TrialEnvironment {
     var isAvailable = true
-    var root: TrialVMRoot? = defaultRoot
-    var startedHere = false
     var currentSpace = TrialSpace(
       requiredBytes: 15_000_000_000, freeBytes: 40_000_000_000, hasVM: false)
     var permissionState = TrialPermissions(
@@ -28,18 +19,16 @@
     var network: TrialBridgedNetwork = .notRegistered
     var networkChanges: [String] = []
     var registerError: Error?
+    var unregisterError: Error?
     var runsFetchedKit = false
     var exportInOutbox = false
 
-    func vmRoot() -> TrialVMRoot? { root }
     func space() -> TrialSpace { currentSpace }
     func vmBytes() async -> Int64 { 9_400_000_000 }
     func permissions() -> TrialPermissions { permissionState }
     func requestAccessibility() { permissionState.accessibility = .allowed }
     func requestMicrophone() async { permissionState.microphone = .allowed }
     func requestCamera() async {}
-    var hasStartedHere: Bool { startedHere }
-    func recordStartedHere() { startedHere = true }
     func start(onEvent: @escaping @MainActor (VMRunEvent) -> Void) throws {
       if let startError { throw startError }
       self.onEvent = onEvent
@@ -62,12 +51,12 @@
     func openBridgedNetworkApproval() { networkChanges.append("open login items") }
     func unregisterBridgedNetwork() async throws {
       networkChanges.append("unregister")
+      if let unregisterError { throw unregisterError }
       network = .notRegistered
     }
 
     /// A VM this app has started before, unless it comes from Try Omarchy.
-    func makeVM(startedHere: Bool = true) {
-      self.startedHere = startedHere
+    func makeVM() {
       currentSpace = TrialSpace(
         requiredBytes: 1_073_741_824, freeBytes: currentSpace.freeBytes, hasVM: true)
     }
@@ -88,14 +77,14 @@
     func testTheTryScreenShowsSpaceAndOptionalPermissions() async {
       let environment = FakeTrialEnvironment()
       let trial = ready(environment)
-      XCTAssertEqual(trial.landing.tryTitle, "Try in a VM")
+      XCTAssertEqual(trial.landing.tryTitle, "Try it in a VM")
       guard case .ready(let space, let permissions) = trial.phase else {
         return XCTFail("Expected the Try screen")
       }
       XCTAssertTrue(space.isEnough)
       XCTAssertEqual(permissions.camera, .refused)
       XCTAssertTrue(trial.canStart)
-      XCTAssertEqual(trial.startTitle, "Download and start")
+      XCTAssertEqual(trial.startTitle, "Download and launch")
       trial.requestAccessibility()
       await trial.requestMicrophone()
       guard case .ready(_, let updated) = trial.phase else {
@@ -126,7 +115,7 @@
       let environment = FakeTrialEnvironment()
       environment.currentSpace = TrialSpace(
         requiredBytes: 1_073_741_824, freeBytes: 5_000_000_000, hasVM: true)
-      XCTAssertEqual(ready(environment).startTitle, "Start")
+      XCTAssertEqual(ready(environment).startTitle, "Launch")
     }
 
     func testWithoutAKitThereIsNoTrial() {
@@ -160,7 +149,7 @@
       XCTAssertEqual(environment.shutdowns, 1)
       send(.stopping)
       send(.exited(status: 0))
-      guard case .ready = trial.phase else { return XCTFail("The Try page stays, with Start") }
+      guard case .ready = trial.phase else { return XCTFail("The Try page stays, with Launch") }
       XCTAssertEqual(continued, 2)
       XCTAssertFalse(trial.isActive)
 
@@ -213,10 +202,11 @@
 
     private func landing(_ status: TrialInstallStatus, vm: Bool = false) -> TrialSession {
       let environment = FakeTrialEnvironment()
-      if vm { environment.makeVM(startedHere: false) }
+      if vm { environment.makeVM() }
       let trial = TrialSession(environment: environment)
       trial.openAtLaunch()
       trial.follow(status)
+      if vm { trial.dismiss() }
       return trial
     }
 
@@ -236,13 +226,29 @@
         XCTAssertEqual(trial.phase, .hidden, "\(status)")
         XCTAssertTrue(trial.showsLanding, "\(status)")
         XCTAssertEqual(trial.landing.installTitle, "Install on this Mac")
-        XCTAssertEqual(
-          trial.landing.installDetail, "Put Omarchy on this Mac’s own disk, beside macOS.")
-        XCTAssertEqual(trial.landing.tryTitle, "Try in a VM")
-        XCTAssertEqual(
-          trial.landing.tryDetail,
-          "Omarchy opens in a window beside macOS, without changing your disk.")
+        XCTAssertEqual(trial.landing.tryTitle, "Try it in a VM")
+        XCTAssertNil(trial.landing.tryLine)
       }
+      XCTAssertEqual(
+        landing(.supported).landing.choiceLine,
+        "Install Omarchy on this Mac, or try it in a window beside macOS.")
+      XCTAssertNil(landing(.checking).landing.choiceLine)
+      XCTAssertNil(landing(.installed).landing.choiceLine)
+      XCTAssertNil(landing(.supported, vm: true).landing.choiceLine)
+    }
+
+    func testTheLandingPageNamesTheSpaceForTry() {
+      XCTAssertNil(landing(.supported).landing.spaceLine, "Enough room needs no line")
+      XCTAssertEqual(
+        landing(.supported, vm: true).landing.spaceLine,
+        "40 GB is free on the disk that holds Omarchy’s virtual machine.")
+      let environment = FakeTrialEnvironment()
+      environment.currentSpace = TrialSpace(
+        requiredBytes: 15_000_000_000, freeBytes: 10_000_000_000, hasVM: false)
+      let trial = TrialSession(environment: environment)
+      trial.openAtLaunch()
+      XCTAssertEqual(trial.landing.spaceLine, "Try needs 15 GB of free space. 10 GB is free.")
+      XCTAssertTrue(trial.landing.spaceIsShort)
       XCTAssertEqual(landing(.checking).landing.install, .checking)
       XCTAssertEqual(landing(.supported).landing.install, .available)
       XCTAssertFalse(landing(.supported).landing.tryIsPrimary)
@@ -342,13 +348,13 @@
 
     func testWithAVMTheLeftButtonIsMigrateToNative() {
       let trial = landing(.supported, vm: true)
-      XCTAssertTrue(trial.showsLanding, "Without its permissions the VM waits on the landing page")
+      XCTAssertTrue(trial.showsLanding, "Back from the Try page leads here")
       XCTAssertEqual(trial.landing.installTitle, "Migrate to Native")
       XCTAssertEqual(trial.installTitle, "Migrate to Native")
       XCTAssertEqual(trial.installMenuTitle, "Migrate to Native…")
       XCTAssertEqual(trial.landing.install, .available)
-      XCTAssertEqual(trial.landing.tryTitle, "Try in a VM")
-      XCTAssertEqual(trial.landing.tryDetail, "Omarchy is set up and ready.")
+      XCTAssertEqual(trial.landing.tryTitle, "Try it in a VM")
+      XCTAssertEqual(trial.landing.tryLine, "Omarchy is set up and ready.")
       XCTAssertTrue(trial.landing.tryIsPrimary)
 
       var installs = 0
@@ -380,11 +386,27 @@
       XCTAssertEqual(landing(.checking, vm: true).landing.install, .checking)
     }
 
+    func testMigrateToNativeChosenWhileStartingKeepsTheWindowWhenOmarchyIsReady() throws {
+      let environment = FakeTrialEnvironment()
+      environment.makeVM()
+      let trial = TrialSession(environment: environment)
+      trial.openAtLaunch()
+      trial.follow(.supported)
+      trial.start()
+      let send = try XCTUnwrap(environment.onEvent)
+
+      trial.chooseInstall {}
+      send(.ready)
+      XCTAssertTrue(trial.showsMigrationNotice)
+      XCTAssertTrue(trial.showsWindow, "The confirmation stays until the person answers it")
+    }
+
     func testInstallWithoutMigratingShutsOmarchyDownFirst() throws {
       let environment = FakeTrialEnvironment()
       environment.makeVM()
       let trial = TrialSession(environment: environment)
       trial.openAtLaunch()
+      trial.start()
       let send = try XCTUnwrap(environment.onEvent)
       send(.ready)
       trial.follow(.supported)
@@ -409,6 +431,7 @@
       environment.exportInOutbox = true
       let trial = TrialSession(environment: environment)
       trial.openAtLaunch()
+      trial.start()
       let send = try XCTUnwrap(environment.onEvent)
       send(.ready)
       trial.follow(.supported)
@@ -448,6 +471,7 @@
       environment.makeVM()
       let trial = TrialSession(environment: environment)
       trial.openAtLaunch()
+      trial.start()
       try XCTUnwrap(environment.onEvent)(.ready)
       trial.follow(.supported)
       trial.chooseInstall {}
@@ -488,8 +512,7 @@
         "landing-space-\(UUID().uuidString)")
       try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
       defer { try? FileManager.default.removeItem(at: folder) }
-      let root = TrialVMRoot(url: folder, isDefault: true, sharesMacOSVolume: true)
-      let tryReading = try XCTUnwrap(TrialSpace.of(root).freeBytes)
+      let tryReading = try XCTUnwrap(TrialSpace.of(folder).freeBytes)
       let headerReading = try XCTUnwrap(VolumeFreeSpace.bytes(at: folder))
       XCTAssertLessThan(abs(tryReading - headerReading), 100_000_000, "One reading for both")
     }
@@ -507,7 +530,7 @@
 
     func testCheckAgainOnTheTryPageKeepsIt() {
       let environment = FakeTrialEnvironment()
-      environment.makeVM(startedHere: false)
+      environment.makeVM()
       let trial = TrialSession(environment: environment)
       trial.openAtLaunch()
       trial.follow(.unsupported(tooLittleSpace))
@@ -525,6 +548,7 @@
       environment.makeVM()
       let trial = TrialSession(environment: environment)
       trial.openAtLaunch()
+      trial.start()
       let send = try XCTUnwrap(environment.onEvent)
       send(.ready)
       trial.follow(.finishingInstall)
@@ -544,6 +568,7 @@
       environment.makeVM()
       let trial = TrialSession(environment: environment)
       trial.openAtLaunch()
+      trial.start()
       let send = try XCTUnwrap(environment.onEvent)
       send(.ready)
       trial.follow(.finishingInstall)
@@ -560,6 +585,7 @@
       environment.makeVM()
       let trial = TrialSession(environment: environment)
       trial.openAtLaunch()
+      trial.start()
       let send = try XCTUnwrap(environment.onEvent)
       send(.ready)
       trial.follow(.installerPage)
@@ -621,40 +647,71 @@
 
     // MARK: The remembered choice
 
-    func testAVMOpensTryAndStartsAtOnce() throws {
+    func testAVMOpensOnTheTryPageWithStart() throws {
       let environment = FakeTrialEnvironment()
       environment.makeVM()
       let trial = TrialSession(environment: environment)
       XCTAssertTrue(trial.hasVM)
       trial.openAtLaunch()
-      XCTAssertTrue(trial.isActive)
-      let send = try XCTUnwrap(environment.onEvent)
-      environment.onEvent = nil
-      trial.openAtLaunch()
-      XCTAssertNil(environment.onEvent)
+      guard case .ready(let space, let permissions) = trial.phase else {
+        return XCTFail("A VM opens on the Try page")
+      }
+      XCTAssertTrue(space.hasVM)
+      XCTAssertEqual(permissions, environment.permissionState)
+      XCTAssertNil(environment.onEvent, "Nothing starts before Launch")
+      XCTAssertFalse(trial.isActive)
+      XCTAssertEqual(trial.startTitle, "Launch")
+      XCTAssertTrue(trial.canStart)
+      XCTAssertEqual(trial.subheadline, PlainLanguage.trialReadySubheadline)
 
       // The inspection finishes in the background without moving the page.
       trial.follow(.checking)
       trial.follow(.supported)
+      guard case .ready = trial.phase else { return XCTFail("The Try page stays") }
+      trial.openAtLaunch()
+      XCTAssertNil(environment.onEvent, "Once per launch")
+
+      trial.start()
+      let send = try XCTUnwrap(environment.onEvent)
       send(.ready)
       XCTAssertEqual(trial.phase, .running(environment.permissionState))
       XCTAssertTrue(trial.canInstall)
       XCTAssertFalse(trial.canDeleteVM)
-
       send(.exited(status: 0))
       guard case .ready = trial.phase else { return XCTFail("A VM keeps the Try page") }
-      XCTAssertEqual(trial.startTitle, "Start")
+
       trial.dismiss()
       XCTAssertTrue(trial.showsLanding)
       XCTAssertEqual(trial.landing.installTitle, "Migrate to Native")
     }
 
-    func testAnAutoStartThatFailsBeforeTheInspectionKeepsTheVM() async {
+    func testEveryPermissionStillWaitsForStart() {
+      let environment = FakeTrialEnvironment()
+      environment.makeVM()
+      environment.permissionState = TrialPermissions(
+        accessibility: .allowed, microphone: .allowed, camera: .allowed)
+      let trial = TrialSession(environment: environment)
+      trial.openAtLaunch()
+      guard case .ready = trial.phase else { return XCTFail("A VM opens on the Try page") }
+      XCTAssertNil(environment.onEvent)
+    }
+
+    func testWithoutAVMTheLandingPageOpens() {
+      let environment = FakeTrialEnvironment()
+      let trial = TrialSession(environment: environment)
+      trial.openAtLaunch()
+      XCTAssertEqual(trial.phase, .hidden)
+      XCTAssertTrue(trial.showsLanding)
+      XCTAssertNil(environment.onEvent)
+    }
+
+    func testAStartThatFailsBeforeTheInspectionKeepsTheVM() async {
       let environment = FakeTrialEnvironment()
       environment.makeVM()
       environment.startError = VMRunError(code: .launchFailed, message: "kit missing")
       let trial = TrialSession(environment: environment)
       trial.openAtLaunch()
+      trial.start()
       guard case .failed(let failure) = trial.phase else { return XCTFail("Expected a failure") }
       XCTAssertEqual(failure.code, .launchFailed)
       await trial.settled()
@@ -666,119 +723,26 @@
       guard case .failed = trial.phase else { return XCTFail("The failure stays on the page") }
       trial.dismiss()
       guard case .ready = trial.phase else { return XCTFail("Back leads to the Try page") }
-      XCTAssertEqual(trial.startTitle, "Start")
+      XCTAssertEqual(trial.startTitle, "Launch")
     }
 
     // MARK: Coming from Try Omarchy
 
-    func testAVMFromTryOmarchyWaitsOnTheLandingPageWhilePermissionsAreMissing() throws {
+    func testAVMFromTryOmarchyOpensOnTheTryPage() throws {
       let environment = FakeTrialEnvironment()
-      environment.makeVM(startedHere: false)
+      environment.makeVM()
       let trial = TrialSession(environment: environment)
       trial.openAtLaunch()
-      XCTAssertNil(environment.onEvent, "Nothing starts before this app has its permissions")
-      XCTAssertTrue(trial.showsLanding)
-      XCTAssertEqual(trial.landing.installTitle, "Migrate to Native")
-      XCTAssertEqual(trial.landing.tryDetail, "Omarchy is set up and ready.")
-      trial.present()
       guard case .ready(let space, let permissions) = trial.phase else {
         return XCTFail("Expected the Try page")
       }
       XCTAssertTrue(space.hasVM)
       XCTAssertFalse(permissions.allAllowed)
-      XCTAssertEqual(trial.subheadline, PlainLanguage.trialReadySubheadline)
       XCTAssertTrue(trial.subheadline.hasPrefix("Omarchy is set up and ready."))
-      XCTAssertEqual(trial.startTitle, "Start")
-      trial.follow(.checking)
-      trial.follow(.supported)
-      guard case .ready = trial.phase else { return XCTFail("The Try page stays") }
-
-      trial.start()
-      let send = try XCTUnwrap(environment.onEvent)
-      XCTAssertFalse(environment.startedHere)
-      send(.ready)
-      XCTAssertTrue(environment.startedHere, "A start from this app is remembered")
-
-      let next = TrialSession(environment: environment)
-      environment.onEvent = nil
-      next.openAtLaunch()
-      XCTAssertNotNil(environment.onEvent, "The next launch starts at once")
-    }
-
-    func testAVMFromTryOmarchyStartsAtOnceWithEveryPermission() {
-      let environment = FakeTrialEnvironment()
-      environment.makeVM(startedHere: false)
-      environment.permissionState = TrialPermissions(
-        accessibility: .allowed, microphone: .allowed, camera: .allowed)
-      let trial = TrialSession(environment: environment)
-      trial.openAtLaunch()
-      XCTAssertTrue(trial.isActive)
-      XCTAssertNotNil(environment.onEvent)
-    }
-
-    func testAMovedVMIsFound() async throws {
-      let environment = FakeTrialEnvironment()
-      environment.makeVM()
-      environment.root = movedRoot
-      let trial = TrialSession(environment: environment)
-      XCTAssertTrue(trial.hasVM)
-      XCTAssertEqual(trial.vmRoot, movedRoot)
-      trial.follow(.supported)
-      trial.openAtLaunch()
-      let send = try XCTUnwrap(environment.onEvent)
-      send(.ready)
-      send(.exited(status: 0))
-      guard case .ready = trial.phase else { return XCTFail("A moved VM keeps the Try page") }
-      XCTAssertEqual(
-        trial.landing.tryDetail, "Omarchy is set up in the folder chosen in Try Omarchy.")
-      XCTAssertEqual(trial.startTitle, "Start")
-      await trial.settled()
-      XCTAssertEqual(trial.vmBytes, 9_400_000_000)
-      XCTAssertEqual(
-        trial.diskNotice,
-        "Omarchy’s virtual machine is on another disk, in the folder chosen in Try Omarchy. Installing keeps it."
-      )
-      XCTAssertEqual(
-        PlainLanguage.trialDiskNotice(
-          bytes: 9_400_000_000,
-          root: TrialVMRoot(url: movedRoot.url, isDefault: false, sharesMacOSVolume: true)),
-        "Omarchy’s virtual machine uses up to 9 GB of macOS’s space, already counted above. Installing keeps it, in the folder chosen in Try Omarchy."
-      )
-    }
-
-    func testAVMOnADriveThatIsNotConnectedSaysSo() {
-      let environment = FakeTrialEnvironment()
-      environment.root = TrialVMRoot(
-        url: movedRoot.url, isDefault: false, sharesMacOSVolume: false,
-        missing: .disconnectedDrive)
-      environment.currentSpace = TrialSpace(
-        requiredBytes: 1_073_741_824, freeBytes: nil, hasVM: false,
-        missingFolder: .disconnectedDrive)
-      environment.permissionState = TrialPermissions(
-        accessibility: .allowed, microphone: .allowed, camera: .allowed)
-      let trial = TrialSession(environment: environment)
-      XCTAssertTrue(trial.hasVM, "The VM is still the remembered choice")
-      trial.openAtLaunch()
-      XCTAssertNil(environment.onEvent, "Nothing starts without the drive")
+      trial.dismiss()
       XCTAssertTrue(trial.showsLanding)
-      trial.present()
-      guard case .ready(let space, _) = trial.phase else { return XCTFail("Expected the Try page") }
-      XCTAssertFalse(trial.canStart)
-      XCTAssertFalse(space.isShort)
-      XCTAssertEqual(trial.startTitle, "Start")
-      XCTAssertEqual(trial.subheadline, PlainLanguage.trialChosenFolderSubheadline)
-      XCTAssertEqual(
-        PlainLanguage.trialSpace(space),
-        "Omarchy’s virtual machine is on a drive that isn’t connected. Connect it, then start again."
-      )
-      trial.follow(.supported)
-      XCTAssertFalse(trial.canDeleteVM)
-
-      environment.root = movedRoot
-      environment.currentSpace = TrialSpace(
-        requiredBytes: 1_073_741_824, freeBytes: 400_000_000_000, hasVM: true)
-      trial.refresh()
-      XCTAssertTrue(trial.canStart, "Connecting the drive enables Start")
+      XCTAssertEqual(trial.landing.installTitle, "Migrate to Native")
+      XCTAssertEqual(trial.landing.tryLine, "Omarchy is set up and ready.")
     }
 
     func testTheSpaceLineNamesTheVMsDisk() {
@@ -788,33 +752,12 @@
         "400 GB is free on the disk that holds Omarchy’s virtual machine.")
     }
 
-    func testDeleteIsDisabledForAMovedVM() throws {
-      let environment = FakeTrialEnvironment()
-      environment.makeVM()
-      environment.root = movedRoot
-      let trial = TrialSession(environment: environment)
-      trial.follow(.supported)
-      XCTAssertTrue(trial.hasVM)
-      XCTAssertFalse(trial.canDeleteVM)
-      XCTAssertEqual(
-        trial.deleteVMLine,
-        "This virtual machine is in a folder chosen in Try Omarchy. Manage it from Try Omarchy or the Finder."
-      )
-      try trial.deleteVM()
-      XCTAssertEqual(environment.deletions, 0)
-      XCTAssertTrue(trial.hasVM)
-
-      environment.root = defaultRoot
-      trial.refresh()
-      XCTAssertTrue(trial.canDeleteVM)
-      XCTAssertNil(trial.deleteVMLine)
-    }
-
     func testOmarchyOpenInTryOmarchyOffersTryAgain() throws {
       let environment = FakeTrialEnvironment()
       environment.makeVM()
       let trial = TrialSession(environment: environment)
       trial.openAtLaunch()
+      trial.start()
       let send = try XCTUnwrap(environment.onEvent)
       send(.error(VMRunError(code: .vmAlreadyOpen, message: "this VM is already open")))
       send(.exited(status: 1))
@@ -841,6 +784,7 @@
       let trial = TrialSession(environment: environment)
       trial.follow(.supported)
       trial.openAtLaunch()
+      trial.start()
       let send = try XCTUnwrap(environment.onEvent)
       send(.ready)
       var installs = 0
@@ -856,6 +800,7 @@
       environment.makeVM()
       let trial = TrialSession(environment: environment)
       trial.openAtLaunch()
+      trial.start()
       let send = try XCTUnwrap(environment.onEvent)
       send(.ready)
 
@@ -907,6 +852,8 @@
       let trial = TrialSession(environment: environment)
       trial.follow(.supported)
       trial.openAtLaunch()
+      XCTAssertTrue(trial.canDeleteVM)
+      trial.start()
       XCTAssertFalse(trial.canDeleteVM)
       let send = try XCTUnwrap(environment.onEvent)
       send(.ready)
@@ -937,7 +884,7 @@
       XCTAssertTrue(trial.showsLanding)
       XCTAssertEqual(trial.landing.installTitle, "Install on this Mac")
       trial.present()
-      XCTAssertEqual(trial.startTitle, "Download and start")
+      XCTAssertEqual(trial.startTitle, "Download and launch")
     }
 
     func testAFailedDeletionKeepsTheVM() {
@@ -1036,6 +983,20 @@
       XCTAssertFalse(trial.canChangeBridgedNetwork)
     }
 
+    func testAFailedRemoveSaysWhyOnceOmarchyIsDown() async throws {
+      let environment = FakeTrialEnvironment()
+      environment.network = .enabled
+      environment.unregisterError = CocoaError(.fileWriteNoPermission)
+      let (trial, send) = try runningWithSharedNetworking(environment)
+      let remove = Task { await trial.removeBridgedNetwork() }
+      await Task.yield()
+      send(.exited(status: 0))
+      let failure = await remove.value
+      XCTAssertEqual(failure, CocoaError(.fileWriteNoPermission).localizedDescription)
+      XCTAssertFalse(trial.isActive)
+      XCTAssertNil(trial.bridgedNetworkLine, "The running page's line is gone with Omarchy")
+    }
+
     func testAFetchedKitsSharedNetworkingOffersNoRepair() async throws {
       let environment = FakeTrialEnvironment()
       environment.network = .enabled
@@ -1075,11 +1036,171 @@
       for phase in VMRunPhase.allCases {
         XCTAssertFalse(PlainLanguage.trialProgressTitle(phase).isEmpty)
       }
-      XCTAssertNil(PlainLanguage.trialDiskNotice(bytes: 0, root: defaultRoot))
+      XCTAssertNil(PlainLanguage.trialDiskNotice(bytes: 0))
       XCTAssertEqual(
-        PlainLanguage.trialDiskNotice(bytes: 9_400_000_000, root: defaultRoot),
+        PlainLanguage.trialDiskNotice(bytes: 9_400_000_000),
         "Omarchy’s virtual machine uses up to 9 GB of macOS’s space, already counted above. Installing keeps it, in Application Support › Try Omarchy."
       )
+    }
+
+    // MARK: The installer's window while Omarchy runs
+
+    func testTheWindowClosesWhileOmarchyRunsAndReturnsWhenItShutsDown() throws {
+      let environment = FakeTrialEnvironment()
+      let trial = ready(environment)
+      XCTAssertTrue(trial.showsWindow)
+      trial.start()
+      let send = try XCTUnwrap(environment.onEvent)
+      send(.progress(.downloading, percent: 10))
+      XCTAssertTrue(trial.showsWindow, "The download shows on the page")
+      send(.ready)
+      XCTAssertFalse(trial.showsWindow, "Omarchy's own window takes over")
+      XCTAssertTrue(trial.canShutDown)
+
+      trial.shutDown()
+      XCTAssertTrue(trial.showsWindow, "Shutting down shows on the page")
+      XCTAssertFalse(trial.canShutDown)
+      send(.exited(status: 0))
+      XCTAssertTrue(trial.showsWindow)
+      guard case .ready = trial.phase else { return XCTFail("The Try page returns, with Launch") }
+    }
+
+    func testTheWindowReturnsWhenOmarchyShutsItselfDownOrFails() throws {
+      let environment = FakeTrialEnvironment()
+      let trial = ready(environment)
+      trial.start()
+      var send = try XCTUnwrap(environment.onEvent)
+      send(.ready)
+      send(.stopping)
+      XCTAssertTrue(trial.showsWindow)
+      XCTAssertEqual(trial.phase, .stopping)
+      send(.exited(status: 0))
+      XCTAssertTrue(trial.showsWindow)
+
+      trial.start()
+      send = try XCTUnwrap(environment.onEvent)
+      send(.ready)
+      XCTAssertFalse(trial.showsWindow)
+      send(.error(VMRunError(code: .qemuExited, message: "QEMU stopped")))
+      send(.exited(status: 1))
+      XCTAssertTrue(trial.showsWindow)
+      guard case .failed = trial.phase else { return XCTFail("The failure shows on the page") }
+    }
+
+    func testTheWindowStaysWhenShutDownComesBeforeOmarchyIsUp() throws {
+      let environment = FakeTrialEnvironment()
+      let trial = ready(environment)
+      trial.start()
+      let send = try XCTUnwrap(environment.onEvent)
+      trial.shutDown()
+      send(.ready)
+      XCTAssertTrue(trial.showsWindow)
+      XCTAssertEqual(trial.phase, .stopping)
+    }
+
+    func testReopeningShowsTheRunningPageReadAgain() throws {
+      let environment = FakeTrialEnvironment()
+      environment.makeVM()
+      let trial = TrialSession(environment: environment)
+      trial.openAtLaunch()
+      trial.start()
+      let send = try XCTUnwrap(environment.onEvent)
+      send(.ready)
+      XCTAssertFalse(trial.showsWindow, "The remembered start closes the window too")
+
+      environment.permissionState.microphone = .allowed
+      trial.reopenWindow()
+      XCTAssertTrue(trial.showsWindow)
+      XCTAssertEqual(trial.phase, .running(environment.permissionState))
+      XCTAssertTrue(trial.isActive)
+    }
+
+    func testMigrateFromTheMenuBringsTheWindowBackForItsNotice() throws {
+      let environment = FakeTrialEnvironment()
+      environment.makeVM()
+      let trial = TrialSession(environment: environment)
+      trial.openAtLaunch()
+      trial.start()
+      let send = try XCTUnwrap(environment.onEvent)
+      send(.ready)
+      trial.follow(.supported)
+      trial.chooseInstall {}
+      XCTAssertTrue(trial.showsMigrationNotice)
+      XCTAssertTrue(trial.showsWindow)
+    }
+
+    /// A grant made in System Settings shows once the app is active again or
+    /// System Settings closes, both of which refresh the page.
+    func testAGrantInSystemSettingsShowsOnRefresh() throws {
+      let environment = FakeTrialEnvironment()
+      let trial = ready(environment)
+      environment.permissionState.accessibility = .allowed
+      guard case .ready(_, let before) = trial.phase else { return XCTFail("The Try page") }
+      XCTAssertEqual(before.accessibility, .notAsked)
+      trial.refresh()
+      guard case .ready(_, let after) = trial.phase else { return XCTFail("The Try page") }
+      XCTAssertEqual(after.accessibility, .allowed)
+
+      trial.start()
+      let send = try XCTUnwrap(environment.onEvent)
+      send(.ready)
+      environment.permissionState.camera = .allowed
+      trial.refresh()
+      XCTAssertEqual(trial.phase, .running(environment.permissionState))
+      XCTAssertFalse(trial.showsWindow, "A refresh leaves the window where it is")
+    }
+
+    /// Ordering the last window out asks the app whether to quit. Quitting
+    /// shuts Omarchy down, so while Omarchy runs the answer must be no.
+    func testClosingTheWindowOnReadyNeverShutsOmarchyDown() throws {
+      let environment = FakeTrialEnvironment()
+      environment.makeVM()
+      let trial = TrialSession(environment: environment)
+      XCTAssertTrue(trial.quitsWhenTheLastWindowCloses)
+      trial.openAtLaunch()
+      trial.start()
+      let send = try XCTUnwrap(environment.onEvent)
+      XCTAssertFalse(trial.quitsWhenTheLastWindowCloses, "Starting keeps the app open")
+      send(.ready)
+      XCTAssertFalse(trial.showsWindow)
+      XCTAssertFalse(trial.quitsWhenTheLastWindowCloses)
+      XCTAssertEqual(trial.phase, .running(environment.permissionState))
+      XCTAssertEqual(environment.shutdowns, 0)
+      trial.refresh()
+      XCTAssertEqual(trial.phase, .running(environment.permissionState))
+      XCTAssertEqual(environment.shutdowns, 0)
+
+      send(.stopping)
+      send(.exited(status: 0))
+      XCTAssertTrue(trial.quitsWhenTheLastWindowCloses)
+    }
+
+    func testOmarchysWindowIsTheOneDockTileWhileItRuns() throws {
+      let environment = FakeTrialEnvironment()
+      let trial = ready(environment)
+      XCTAssertTrue(trial.showsInDock)
+      trial.start()
+      var send = try XCTUnwrap(environment.onEvent)
+      XCTAssertTrue(trial.showsInDock, "The download shows in the installer")
+      send(.ready)
+      XCTAssertFalse(trial.showsInDock)
+      send(.exited(status: 0))
+      XCTAssertTrue(trial.showsInDock)
+
+      trial.start()
+      send = try XCTUnwrap(environment.onEvent)
+      send(.ready)
+      XCTAssertFalse(trial.showsInDock)
+      send(.error(VMRunError(code: .qemuExited, message: "QEMU stopped")))
+      send(.exited(status: 1))
+      XCTAssertTrue(trial.showsInDock)
+
+      trial.dismiss()
+      trial.start()
+      send = try XCTUnwrap(environment.onEvent)
+      send(.ready)
+      trial.shutDown()
+      XCTAssertTrue(trial.showsInDock, "Shutting down shows in the installer")
     }
   }
 #endif

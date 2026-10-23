@@ -44,7 +44,15 @@ private final class InstallerApplicationDelegate: NSObject, NSApplicationDelegat
   }
 
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-    true
+    Self.trial?.quitsWhenTheLastWindowCloses ?? true
+  }
+
+  /// Opening the app again brings back the window Try closed while Omarchy
+  /// runs.
+  func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+    guard !hasVisibleWindows, let trial = Self.trial, !trial.showsWindow else { return true }
+    trial.reopenWindow()
+    return false
   }
 
   func applicationDidFinishLaunching(_ notification: Notification) {
@@ -86,6 +94,7 @@ struct OmarchyAppleInstallerApp: App {
   @State private var trial = TrialSession(environment: LiveTrialEnvironment())
   @State private var installReason: TrialInstallReason?
   @State private var deletionFailure: String?
+  @State private var bridgedNetworkFailure: String?
 
   private var isSimulation: Bool {
     #if DEBUG
@@ -143,10 +152,26 @@ struct OmarchyAppleInstallerApp: App {
         }
       }
       .id(generation)
+      .background(
+        InstallerWindowVisibility(shows: trial.showsWindow, onShown: { trial.reopenWindow() })
+      )
       .onReceive(
         NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)
       ) { _ in
         liveSession?.cancelPrefetchOnQuit()
+      }
+      .onReceive(
+        NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+      ) { _ in
+        trial.refresh()
+      }
+      .onReceive(
+        NSWorkspace.shared.notificationCenter.publisher(
+          for: NSWorkspace.didTerminateApplicationNotification)
+      ) { notification in
+        let app =
+          notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+        if app?.bundleIdentifier == "com.apple.systempreferences" { trial.refresh() }
       }
       .disabled(showsRemoval)
       .windowDismissBehavior(
@@ -175,6 +200,15 @@ struct OmarchyAppleInstallerApp: App {
         Button("OK", role: .cancel) {}
       } message: { reason in
         Text(reason.detail)
+      }
+      .alert(
+        PlainLanguage.trialBridgedNetworkChangeFailed,
+        isPresented: presented($bridgedNetworkFailure),
+        presenting: bridgedNetworkFailure
+      ) { _ in
+        Button("OK", role: .cancel) {}
+      } message: { failure in
+        Text(failure)
       }
       .alert(
         PlainLanguage.trialDeleteFailed, isPresented: presented($deletionFailure),
@@ -239,17 +273,19 @@ struct OmarchyAppleInstallerApp: App {
             isSimulation || removalNeedsReview || showsRemoval || !installStatusIsUnsupported
               || liveSession?.canInspect != true)
         Divider()
-        Button("Remove Omarchy…") { showsRemoval = true }
-          .disabled(removalNeedsReview || showsRemoval || liveSession?.canOpenRemoval != true)
+        Button("Remove Omarchy…") {
+          trial.reopenWindow()
+          showsRemoval = true
+        }
+        .disabled(removalNeedsReview || showsRemoval || liveSession?.canOpenRemoval != true)
         if trial.isAvailable {
           Divider()
+          Button(PlainLanguage.trialShutDown) { trial.shutDown() }
+            .disabled(!trial.canShutDown)
           Button(PlainLanguage.trialDeleteMenuItem) {
             Task { confirmDeletion(await trial.deletionMessage()) }
           }
           .disabled(isSimulation || removalNeedsReview || showsRemoval || !trial.canDeleteVM)
-          if let line = trial.deleteVMLine {
-            Text(line)
-          }
           Button(PlainLanguage.trialRepairBridgedNetworkMenuItem) {
             confirmBridgedNetworkChange(removing: false)
           }
@@ -304,6 +340,7 @@ struct OmarchyAppleInstallerApp: App {
     case .install:
       trial.chooseInstall { Task { await liveSession?.continueToPlan() } }
     case .explain(let reason):
+      trial.reopenWindow()
       installReason = reason
     }
   }
@@ -341,11 +378,8 @@ struct OmarchyAppleInstallerApp: App {
     guard alert.runModal() == .alertSecondButtonReturn else { return }
     guard removing ? trial.canChangeBridgedNetwork : trial.canRepairBridgedNetwork else { return }
     Task {
-      if removing {
-        await trial.removeBridgedNetwork()
-      } else {
-        await trial.repairBridgedNetwork()
-      }
+      bridgedNetworkFailure =
+        removing ? await trial.removeBridgedNetwork() : await trial.repairBridgedNetwork()
     }
   }
 

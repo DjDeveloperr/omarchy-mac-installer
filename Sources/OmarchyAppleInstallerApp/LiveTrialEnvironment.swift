@@ -8,14 +8,13 @@ import TryOmarchyKitClient
 import os
 
 /// Try on this Mac: the kit in Contents/Helpers or a newer one it fetched,
-/// this app's own permissions, and the VM folder Try Omarchy resolves.
+/// this app's own permissions, and Try Omarchy's default VM folder.
 @MainActor
 final class LiveTrialEnvironment: TrialEnvironment {
   private nonisolated static let logger = Logger(
     subsystem: InstallerProductIdentity.appIdentifier, category: "try-kit")
   private let embedded = TrialKitLayout.embedded()
   private let kits: TrialKitUpdater?
-  private let startRecord: TrialStartRecord?
   private var client: VMRunClient?
   /// Keeps a fetched kit's folder in place while it runs.
   private var lease: TrialKitLease?
@@ -32,11 +31,8 @@ final class LiveTrialEnvironment: TrialEnvironment {
         .first
     else {
       kits = nil
-      startRecord = nil
       return
     }
-    startRecord = TrialStartRecord.under(
-      applicationSupport: support, workspace: InstallerBuildProfile.current.workspaceName)
     let settings = TrialKitUpdater.Settings.from(environment: environment)
     kits = TrialKitUpdater(
       store: TrialKitStore.under(
@@ -50,19 +46,16 @@ final class LiveTrialEnvironment: TrialEnvironment {
 
   var isAvailable: Bool { embedded.hasLauncher }
 
-  func vmRoot() -> TrialVMRoot? {
-    guard let root = TryOmarchyStorage.resolvedRoot() else { return nil }
-    return TrialVMRoot.resolved(root, defaultRoot: TryOmarchyStorage.defaultRoot())
-  }
+  private func vmRoot() -> URL? { TryOmarchyStorage.defaultRoot() }
 
   func space() -> TrialSpace { TrialSpace.of(vmRoot()) }
 
-  func hasExportInOutbox() -> Bool { vmRoot()?.hasExportInOutbox ?? false }
+  func hasExportInOutbox() -> Bool { vmRoot().map(TrialExportOutbox.hasExport(in:)) ?? false }
 
   func vmBytes() async -> Int64 {
-    guard let root = vmRoot(), root.missing == nil else { return 0 }
+    guard let root = vmRoot() else { return 0 }
     return await Task.detached(priority: .utility) {
-      TryOmarchyStorage.allocatedBytes(at: root.url)
+      TryOmarchyStorage.allocatedBytes(at: root)
     }.value
   }
 
@@ -73,31 +66,23 @@ final class LiveTrialEnvironment: TrialEnvironment {
       camera: Self.state(AVCaptureDevice.authorizationStatus(for: .video)))
   }
 
-  /// macOS shows its own prompt once, then only System Settings can grant it.
+  /// Asks macOS from this app's own process, which shows macOS's prompt and
+  /// lists this app in System Settings, where only the person can turn it on.
+  /// System Settings opens once macOS has added the row, as in Try Omarchy.
   func requestAccessibility() {
+    guard !AXIsProcessTrusted() else { return }
     // The value of kAXTrustedCheckOptionPrompt, which Swift 6 treats as mutable.
     _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
-    if let settings = URL(
-      string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
-    {
-      NSWorkspace.shared.open(settings)
-    }
+    guard
+      let settings = URL(
+        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+    else { return }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { NSWorkspace.shared.open(settings) }
   }
 
   func requestMicrophone() async { await Self.request(.audio, settings: "Privacy_Microphone") }
 
   func requestCamera() async { await Self.request(.video, settings: "Privacy_Camera") }
-
-  var hasStartedHere: Bool { startRecord?.exists ?? false }
-
-  func recordStartedHere() {
-    do {
-      try startRecord?.record()
-    } catch {
-      Self.logger.error(
-        "Try couldn’t record its first start: \(error.localizedDescription, privacy: .public)")
-    }
-  }
 
   /// Checks the Mac, then chooses and checks the kit off the main actor, since
   /// a fetched kit's signatures are checked again at every start. Failures
@@ -143,8 +128,10 @@ final class LiveTrialEnvironment: TrialEnvironment {
       "Starting Try with kit \((try? layout.manifest().version.description) ?? "unknown", privacy: .public)"
     )
     do {
+      let configuration = try TrialRunConfiguration.make(
+        productName: InstallerProductIdentity.appName)
       // The main queue keeps the events in the order the client delivers them.
-      try client.start(VMRunConfiguration(productName: InstallerProductIdentity.appName)) {
+      try client.start(configuration) {
         [weak self] event in
         DispatchQueue.main.async {
           if case .exited = event { self?.lease = nil }
@@ -175,9 +162,8 @@ final class LiveTrialEnvironment: TrialEnvironment {
     guard
       let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
         .first,
-      vmRoot()?.isDefault == true,
       TrialVMFolder.root(under: support).standardizedFileURL
-        == TryOmarchyStorage.defaultRoot()?.standardizedFileURL
+        == vmRoot()?.standardizedFileURL
     else { throw TrialVMFolder.Refusal.notTheDefaultFolder }
     try TrialVMFolder.trash(under: support)
   }

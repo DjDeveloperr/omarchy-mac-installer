@@ -8,10 +8,8 @@
   public protocol TrialEnvironment: AnyObject {
     /// Whether this build embeds the kit. Without it there is no Try.
     var isAvailable: Bool { get }
-    /// Where the VM lives, as Try Omarchy resolves it, or nil when the folder
-    /// it chose can't be used.
-    func vmRoot() -> TrialVMRoot?
-    /// The space in the VM's folder and on the volume that holds it.
+    /// The space in Try Omarchy's default VM folder and on the volume that
+    /// holds it.
     func space() -> TrialSpace
     /// The space the VM's folder takes on disk, or zero without one.
     func vmBytes() async -> Int64
@@ -19,9 +17,6 @@
     func requestAccessibility()
     func requestMicrophone() async
     func requestCamera() async
-    /// Omarchy has started from this app before, in this app's own folder.
-    var hasStartedHere: Bool { get }
-    func recordStartedHere()
     func start(onEvent: @escaping @MainActor (VMRunEvent) -> Void) throws
     func shutDown()
     /// Moves the VM in the default folder to the Trash.
@@ -52,26 +47,14 @@
     public let freeBytes: Int64?
     /// A VM already exists, so starting downloads nothing.
     public let hasVM: Bool
-    /// The folder chosen in Try Omarchy isn't there, so nothing can start.
-    public let missingFolder: TrialMissingFolder?
 
-    public init(
-      requiredBytes: Int64, freeBytes: Int64?, hasVM: Bool,
-      missingFolder: TrialMissingFolder? = nil
-    ) {
+    public init(requiredBytes: Int64, freeBytes: Int64?, hasVM: Bool) {
       self.requiredBytes = requiredBytes
       self.freeBytes = freeBytes
       self.hasVM = hasVM
-      self.missingFolder = missingFolder
     }
 
-    public var isEnough: Bool { missingFolder == nil && (freeBytes ?? 0) >= requiredBytes }
-
-    /// Too little room, as opposed to a folder that isn't there.
-    public var isShort: Bool { missingFolder == nil && !isEnough }
-
-    /// A VM is the remembered choice, even while its folder isn't there.
-    public var remembersVM: Bool { hasVM || missingFolder != nil }
+    public var isEnough: Bool { (freeBytes ?? 0) >= requiredBytes }
   }
 
   public enum TrialPermissionState: Equatable, Sendable {
@@ -134,8 +117,8 @@
     /// The Try page: permissions and space, before anything starts.
     case ready(TrialSpace, TrialPermissions)
     case starting(TrialProgress)
-    /// Omarchy runs in its own window. A permission granted now applies at
-    /// the next start.
+    /// Omarchy runs in its own window, and the installer's window stands
+    /// back. A permission granted now applies at the next start.
     case running(TrialPermissions)
     case stopping
     case failed(TrialFailure)
@@ -205,11 +188,21 @@
 
     public let install: Install
     public let installTitle: String
-    public let installDetail: String
     public let tryTitle: String
-    public let tryDetail: String
+    /// What Try has to say above the buttons once a VM exists: that it is
+    /// ready, or where its folder is.
+    public let tryLine: String?
+    /// The space free for the VM, once one exists, or the space a new one
+    /// still lacks.
+    public let spaceLine: String?
+    public let spaceIsShort: Bool
     /// Try is the likelier next step: a VM exists, or Install isn't on offer.
     public let tryIsPrimary: Bool
+
+    /// The line above the buttons when neither button has anything to say.
+    public var choiceLine: String? {
+      install == .available && tryLine == nil ? PlainLanguage.trialLandingChoice : nil
+    }
   }
 
   public enum TrialInstallMenuAction: Equatable, Sendable {
@@ -227,8 +220,6 @@
     public private(set) var installStatus: TrialInstallStatus = .checking
     /// A VM exists where Try Omarchy keeps it: the remembered choice.
     public private(set) var hasVM = false
-    /// The VM's folder, the default one or one chosen in Try Omarchy.
-    public private(set) var vmRoot: TrialVMRoot?
     /// This start asked for bridged networking and got shared networking.
     public private(set) var bridgedNetworkUnavailable = false
     public private(set) var bridgedNetwork: TrialBridgedNetwork = .notRegistered
@@ -238,6 +229,19 @@
     public private(set) var bridgedNetworkChanging = false
     /// The space the VM takes, for the plan review.
     public private(set) var vmBytes: Int64 = 0
+    /// The installer's window. It closes once Omarchy's own window is up,
+    /// and comes back when Omarchy shuts down or fails, or when the person
+    /// asks for it.
+    public private(set) var showsWindow = true
+
+    /// The app keeps its Dock tile while its window shows. While Omarchy
+    /// runs, Omarchy's window is the one Dock tile, as in Try Omarchy.
+    public var showsInDock: Bool { showsWindow }
+
+    /// Closing the last window quits the app, except while Omarchy starts,
+    /// runs or shuts down. Try closes the window itself then, and that
+    /// must never quit or shut Omarchy down.
+    public var quitsWhenTheLastWindowCloses: Bool { !isActive }
     private let environment: any TrialEnvironment
     private var lastError: VMRunError?
     private var shutdownRequested = false
@@ -249,13 +253,16 @@
     public private(set) var showsMigrationNotice = false
     /// Omarchy holds a finished export that its shutdown publishes.
     public private(set) var exportWaitsInOutbox = false
+    /// The space last read, for the landing page.
+    private var lastSpace: TrialSpace?
     private var pendingInstall: (() -> Void)?
 
     public init(environment: any TrialEnvironment) {
       self.environment = environment
       guard environment.isAvailable else { return }
-      hasVM = environment.space().remembersVM
-      vmRoot = environment.vmRoot()
+      let space = environment.space()
+      hasVM = space.hasVM
+      lastSpace = space
       bridgedNetwork = environment.bridgedNetwork()
     }
 
@@ -269,16 +276,24 @@
       }
     }
 
+    /// Shut Down in the menu, while Omarchy starts or runs.
+    public var canShutDown: Bool {
+      switch phase {
+      case .starting, .running: true
+      case .hidden, .ready, .stopping, .failed: false
+      }
+    }
+
     public var canStart: Bool {
       guard case .ready(let space, _) = phase else { return false }
       return space.isEnough
     }
 
     public var startTitle: String {
-      guard case .ready(let space, _) = phase, space.remembersVM else {
-        return PlainLanguage.trialDownloadAndStart
+      guard case .ready(let space, _) = phase, space.hasVM else {
+        return PlainLanguage.trialDownloadAndLaunch
       }
-      return PlainLanguage.trialStart
+      return PlainLanguage.trialLaunch
     }
 
     /// Install on this Mac, or Migrate to Native, beside Shut Down on the
@@ -309,15 +324,11 @@
       } else {
         install = .checking
       }
-      let tryDetail =
-        !hasVM
-        ? PlainLanguage.trialEntryDetail
-        : vmRoot?.isDefault == false
-          ? PlainLanguage.trialEntryChosenFolderDetail : PlainLanguage.trialEntryReadyDetail
       return TrialLanding(
-        install: install, installTitle: installTitle,
-        installDetail: hasVM ? PlainLanguage.trialMigrateDetail : PlainLanguage.trialInstallDetail,
-        tryTitle: PlainLanguage.trialEntry, tryDetail: tryDetail,
+        install: install, installTitle: installTitle, tryTitle: PlainLanguage.trialEntry,
+        tryLine: hasVM ? PlainLanguage.trialLandingVMLine : nil,
+        spaceLine: lastSpace.flatMap(PlainLanguage.trialLandingSpace),
+        spaceIsShort: lastSpace?.isEnough == false,
         tryIsPrimary: hasVM || install != .available)
     }
 
@@ -330,30 +341,19 @@
       }
     }
 
-    /// Delete Virtual Machine moves only the default folder.
-    public var canDeleteVM: Bool {
-      environment.isAvailable && hasVM && vmRoot?.isDefault == true && !isActive
-    }
-
-    /// The menu's line under Delete Virtual Machine for a VM that lives
-    /// elsewhere.
-    public var deleteVMLine: String? {
-      guard environment.isAvailable, hasVM, vmRoot?.isDefault == false else { return nil }
-      return PlainLanguage.trialDeleteMovedLine
-    }
+    public var canDeleteVM: Bool { environment.isAvailable && hasVM && !isActive }
 
     /// The Try page's line under its headline.
     public var subheadline: String {
-      guard case .ready(let space, _) = phase, space.remembersVM else {
+      guard case .ready(let space, _) = phase, space.hasVM else {
         return PlainLanguage.trialSubheadline
       }
-      return space.hasVM
-        ? PlainLanguage.trialReadySubheadline : PlainLanguage.trialChosenFolderSubheadline
+      return PlainLanguage.trialReadySubheadline
     }
 
     /// The plan review's note on the VM, which the native install leaves in
     /// place.
-    public var diskNotice: String? { PlainLanguage.trialDiskNotice(bytes: vmBytes, root: vmRoot) }
+    public var diskNotice: String? { PlainLanguage.trialDiskNotice(bytes: vmBytes) }
 
     /// Try Again on a failure that starting again can help.
     public var canTryAgain: Bool {
@@ -372,23 +372,19 @@
       return installReason.map { .explain($0) } ?? .unavailable
     }
 
-    /// The remembered choice: with a VM, the app opens into Try and starts
-    /// Omarchy at once, while the installer inspects the Mac in the
-    /// background, when this app has every permission the Try page offers or
-    /// started Omarchy before. Otherwise the landing page shows, and Try opens
-    /// the Try page with Allow and Start. Runs once per launch.
+    /// The remembered choice: with a VM, the app opens on the Try page, with
+    /// Allow and Launch, while the installer inspects the Mac in the
+    /// background. Back leads to the landing page, which shows at once
+    /// without a VM. Nothing starts until the person presses Launch. Runs once
+    /// per launch.
     public func openAtLaunch() {
       guard !launched else { return }
       launched = true
       guard environment.isAvailable, phase == .hidden else { return }
       let space = environment.space()
-      noteVM(space.remembersVM)
-      let permissions = environment.permissions()
-      guard space.remembersVM, space.isEnough,
-        permissions.allAllowed || environment.hasStartedHere
-      else { return }
-      phase = .ready(space, permissions)
-      start()
+      noteVM(space)
+      guard space.hasVM else { return }
+      phase = .ready(space, environment.permissions())
     }
 
     /// Follows the installer's inspection. The installer's plan, install and
@@ -426,7 +422,7 @@
     }
 
     /// Re-reads permissions and space, as when the app becomes active again
-    /// after System Settings.
+    /// or System Settings closes.
     public func refresh() {
       if environment.isAvailable { bridgedNetwork = environment.bridgedNetwork() }
       switch phase {
@@ -435,8 +431,15 @@
       case .running:
         phase = .running(environment.permissions())
       default:
-        if !isActive { noteVM(environment.isAvailable && environment.space().remembersVM) }
+        if !isActive, environment.isAvailable { noteVM(environment.space()) }
       }
+    }
+
+    /// The Dock icon or the Window menu brings the window back, with the
+    /// page read again.
+    public func reopenWindow() {
+      showsWindow = true
+      refresh()
     }
 
     public func refreshVMBytes() async {
@@ -448,10 +451,10 @@
       await vmBytesRefresh?.value
     }
 
-    private func noteVM(_ exists: Bool) {
-      hasVM = exists
-      vmRoot = environment.isAvailable ? environment.vmRoot() : nil
-      guard exists else { return }
+    private func noteVM(_ space: TrialSpace) {
+      lastSpace = space
+      hasVM = space.hasVM
+      guard hasVM else { return }
       vmBytesRefresh = Task { await refreshVMBytes() }
     }
 
@@ -476,6 +479,7 @@
       shutdownRequested = false
       bridgedNetworkUnavailable = false
       phase = .starting(TrialProgress(phase: .checking, percent: nil))
+      showsWindow = true
       do {
         try environment.start { [weak self] event in self?.receive(event) }
       } catch {
@@ -491,6 +495,7 @@
         return
       }
       if let completion { afterExit.append(completion) }
+      showsWindow = true
       guard !shutdownRequested else { return }
       shutdownRequested = true
       phase = .stopping
@@ -519,6 +524,7 @@
       pendingInstall = install
       exportWaitsInOutbox = isActive && environment.hasExportInOutbox()
       showsMigrationNotice = true
+      showsWindow = true
     }
 
     /// Shut Down Omarchy, while an export waits in the VM: the launcher
@@ -556,8 +562,7 @@
     public func deleteVM() throws {
       guard canDeleteVM else { return }
       try environment.deleteVM()
-      hasVM = false
-      vmRoot = environment.vmRoot()
+      noteVM(environment.space())
       vmBytes = 0
       phase = .hidden
     }
@@ -621,35 +626,42 @@
       }
     }
 
-    /// Shuts Omarchy down, then registers the daemon again.
-    public func repairBridgedNetwork() async {
-      guard !(isActive && environment.runsFetchedKit) else { return }
-      await changeBridgedNetwork { environment in
+    /// Shuts Omarchy down, then registers the daemon again. Returns why it
+    /// failed: Omarchy is down by then, so the running page can't say it.
+    @discardableResult
+    public func repairBridgedNetwork() async -> String? {
+      guard !(isActive && environment.runsFetchedKit) else { return nil }
+      let failure = await changeBridgedNetwork { environment in
         try await environment.unregisterBridgedNetwork()
         try environment.registerBridgedNetwork()
       }
       if bridgedNetwork == .needsApproval { environment.openBridgedNetworkApproval() }
+      return failure
     }
 
-    /// Shuts Omarchy down, then unregisters the daemon.
-    public func removeBridgedNetwork() async {
+    /// Shuts Omarchy down, then unregisters the daemon. Returns why it failed.
+    @discardableResult
+    public func removeBridgedNetwork() async -> String? {
       await changeBridgedNetwork { environment in try await environment.unregisterBridgedNetwork() }
     }
 
     private func changeBridgedNetwork(
       _ change: @MainActor (any TrialEnvironment) async throws -> Void
-    ) async {
-      guard !bridgedNetworkChanging else { return }
+    ) async -> String? {
+      guard !bridgedNetworkChanging else { return nil }
       bridgedNetworkChanging = true
       defer { bridgedNetworkChanging = false }
       bridgedNetworkFailure = nil
       await withCheckedContinuation { stopped in shutDown { stopped.resume() } }
+      var reason: String?
       do {
         try await change(environment)
       } catch {
+        reason = error.localizedDescription
         bridgedNetworkFailure = PlainLanguage.trialBridgedNetworkFailed(error.localizedDescription)
       }
       bridgedNetwork = environment.bridgedNetwork()
+      return reason
     }
 
     func receive(_ event: VMRunEvent) {
@@ -664,11 +676,14 @@
           phase = .starting(TrialProgress(phase: step, percent: percent))
         }
       case .ready:
-        if !environment.hasStartedHere { environment.recordStartedHere() }
-        noteVM(environment.space().remembersVM)
-        if !shutdownRequested { phase = .running(environment.permissions()) }
+        noteVM(environment.space())
+        if !shutdownRequested {
+          phase = .running(environment.permissions())
+          if !showsMigrationNotice { showsWindow = false }
+        }
       case .stopping:
         phase = .stopping
+        showsWindow = true
       case .error(let error):
         lastError = error
       case .exited(let status):
@@ -681,6 +696,7 @@
         } else {
           phase = restingPhase()
         }
+        showsWindow = true
         lastError = nil
         shutdownRequested = false
         let completions = afterExit
@@ -692,11 +708,11 @@
 
     private func readyPhase() -> TrialPhase {
       let space = environment.space()
-      noteVM(space.remembersVM)
+      noteVM(space)
       return .ready(space, environment.permissions())
     }
 
-    /// Where Try rests once Omarchy has shut down: the Try page, with Start
+    /// Where Try rests once Omarchy has shut down: the Try page, with Launch
     /// and Back, unless the installer's page needs the floor.
     private func restingPhase() -> TrialPhase {
       installerNeedsPage ? .hidden : readyPhase()
