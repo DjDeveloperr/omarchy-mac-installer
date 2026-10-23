@@ -8,10 +8,14 @@
 # identifier of its own. The networking client, server and supervisor keep the
 # kit's signatures: the daemon pins their bytes.
 #
+# Signed ad hoc (--sign -), the kit drops the hardened runtime: it refuses
+# libraries without a team, and ad hoc signatures have none, so QEMU would not
+# load its own.
+#
 #   Packaging/sign-vm-kit APP CODESIGN_ARGUMENTS...
 #
 # CODESIGN_ARGUMENTS are the identity and options the app's own signing uses,
-# for example --force --sign - --options runtime --timestamp=none.
+# for example --force --sign "Developer ID Application: …" --options runtime --timestamp.
 
 set -euo pipefail
 
@@ -23,6 +27,20 @@ fail() {
 (( $# >= 2 )) || fail "usage: sign-vm-kit APP CODESIGN_ARGUMENTS..."
 app=$1
 shift
+given=("$@")
+adhoc=0
+for ((index = 1; index < ${#given[@]}; index++)); do
+  [[ ${given[index - 1]} == --sign && ${given[index]} == - ]] && adhoc=1
+done
+arguments=()
+for ((index = 0; index < ${#given[@]}; index++)); do
+  if ((adhoc)) && [[ ${given[index]} == --options && ${given[index + 1]:-} == runtime ]]; then
+    ((index += 1))
+    continue
+  fi
+  arguments+=("${given[index]}")
+done
+set -- "${arguments[@]}"
 script_directory=$(cd "$(dirname "$0")" && pwd -P)
 # shellcheck source=identity.conf
 source "$script_directory/identity.conf"

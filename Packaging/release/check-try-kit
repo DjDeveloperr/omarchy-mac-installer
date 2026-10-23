@@ -13,7 +13,9 @@ a local one for the build, the app carries it in Contents/Helpers, and:
 - the kit is a helper bundle with no bundle identifier or name of its own,
   signed as <app identifier>.vm-kit;
 - the kit verifies (codesign --deep --strict), and every Mach-O in it is
-  signed with the hardened runtime as <app identifier>.vm-kit;
+  signed as <app identifier>.vm-kit, with the hardened runtime when a team
+  signs it (an ad hoc kit has none: it refuses libraries without a team);
+- QEMU starts from the signed app with its libraries (`--version`);
 - QEMU carries exactly vm-qemu.entitlements (the hypervisor and the
   microphone), the helper exactly vm-helper.entitlements (the camera and the
   microphone), and the rest no entitlements;
@@ -84,6 +86,14 @@ def network_daemon_check(daemon: Path) -> str | None:
     except (OSError, subprocess.TimeoutExpired):
         return None
     return result.stdout.strip() if result.returncode == 0 else None
+
+
+def qemu_starts(qemu: Path) -> bool:
+    """Whether the signed QEMU loads its libraries and runs."""
+    try:
+        return subprocess.run([str(qemu), "--version"], capture_output=True, timeout=60).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def signed_entitlements(path: Path) -> dict | None:
@@ -158,7 +168,8 @@ class Check:
                     continue
                 if f"\nIdentifier={identifier}\n" not in f"\n{text}":
                     self.find(f"{where} is not signed as {identifier}")
-                if not re.search(r"flags=0x[0-9a-f]+\([^)]*runtime", text):
+                adhoc = "\nSignature=adhoc\n" in f"\n{text}"
+                if not adhoc and not re.search(r"flags=0x[0-9a-f]+\([^)]*runtime", text):
                     self.find(f"{where} is not signed with the hardened runtime")
                 if signed_entitlements(path) != expected.pop(path, {}):
                     self.find(f"{where} carries other entitlements than sign-vm-kit gives it")
@@ -166,6 +177,8 @@ class Check:
         for path in [*expected, *sorted(pinned)]:
             self.find(f"the kit has no {path.relative_to(kit)}")
         self.check_network(kit)
+        if (kit / QEMU).is_file() and not qemu_starts(kit / QEMU):
+            self.find(f"{QEMU} does not start from the signed app with its libraries")
         manifest = self.check_manifest(kit, pinned_release)
         if manifest and not self.findings:
             print(f"check-try-kit: kit {manifest['version']}, run-mode protocol {manifest['runProtocolVersion']}, "

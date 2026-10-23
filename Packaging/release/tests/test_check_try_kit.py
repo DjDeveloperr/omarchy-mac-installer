@@ -43,9 +43,9 @@ class FakeCodesign:
         self.invalid: set[str] = set()
 
     def sign(self, path: Path, identifier: str = IDENTIFIER, runtime: bool = True,
-             entitlements: dict | None = None) -> None:
+             entitlements: dict | None = None, adhoc: bool = False) -> None:
         self.signatures[str(path)] = {"identifier": identifier, "runtime": runtime,
-                                      "entitlements": entitlements or {}}
+                                      "entitlements": entitlements or {}, "adhoc": adhoc}
 
     def __call__(self, *arguments: str) -> subprocess.CompletedProcess:
         path = arguments[-1]
@@ -59,6 +59,7 @@ class FakeCodesign:
             return subprocess.CompletedProcess(arguments, 0, data, b"")
         flags = "0x10000(runtime)" if signature["runtime"] else "0x2(adhoc)"
         details = f"Executable={path}\nIdentifier={signature['identifier']}\nCodeDirectory v=20500 flags={flags}\n"
+        details += "Signature=adhoc\n" if signature["adhoc"] else "Authority=Developer ID Application: Test (TEAM123456)\n"
         return subprocess.CompletedProcess(arguments, 0, b"", details.encode())
 
 
@@ -73,8 +74,10 @@ class CheckTryKitTest(unittest.TestCase):
         self.pin_path = self.root / "try-omarchy-kit.json"
         self.pin(None)
         self.daemon_answer = check.NETWORK_SERVICE
+        self.qemu_starts = True
         for patch in (mock.patch.object(check, "codesign", self.codesign),
                       mock.patch.object(check, "network_daemon_check", lambda daemon: self.daemon_answer),
+                      mock.patch.object(check, "qemu_starts", lambda qemu: self.qemu_starts),
                       mock.patch.object(check, "PIN", self.pin_path),
                       mock.patch.dict(os.environ, {}, clear=False)):
             patch.start()
@@ -187,6 +190,16 @@ class CheckTryKitTest(unittest.TestCase):
         info.unlink()
         self.refused("the kit's Info.plist is missing")
 
+    def test_an_ad_hoc_kit_needs_no_hardened_runtime_but_qemu_must_start(self) -> None:
+        self.pin("v1.2.3")
+        self.make_kit()
+        for path, signature in list(self.codesign.signatures.items()):
+            if signature["identifier"] == IDENTIFIER:
+                signature.update(runtime=False, adhoc=True)
+        self.assertEqual(self.run_check()[0], 0)
+        self.qemu_starts = False
+        self.refused("runtime/bin/Try Omarchy does not start from the signed app with its libraries")
+
     def test_the_networking_runtime_keeps_the_kits_signatures_and_the_app_registers_its_daemon(self) -> None:
         self.pin("v1.2.3")
         self.make_kit()
@@ -202,6 +215,7 @@ class CheckTryKitTest(unittest.TestCase):
         self.daemon_answer = None
         self.refused("networking daemon does not accept its runtime")
         self.daemon_answer = check.NETWORK_SERVICE
+        self.qemu_starts = True
         job = self.app / f"Contents/Library/LaunchDaemons/{check.NETWORK_SERVICE}.plist"
         job.write_bytes(plistlib.dumps({
             "Label": check.NETWORK_SERVICE, "MachServices": {check.NETWORK_SERVICE: True},

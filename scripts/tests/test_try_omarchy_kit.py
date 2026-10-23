@@ -204,7 +204,7 @@ class KitArchiveTests(unittest.TestCase):
 
     def test_embedding_registers_the_kits_daemon_as_the_app(self) -> None:
         self.kit_folder()
-        app = self.directory / "Omarchy Installer.app"
+        app = self.directory / "Installer.app"
         bundle = kit.embed(self.archive(), app)
         self.assertEqual(bundle, app / kit.EMBEDDED_KIT)
         job = plistlib.loads((app / "Contents/Library/LaunchDaemons/dev.tryomarchy.kit.network.plist").read_bytes())
