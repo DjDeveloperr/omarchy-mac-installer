@@ -114,6 +114,7 @@ import omarchy_apple_aea  # noqa: E402
 from omarchy_asahi import (  # noqa: E402
     _collect_neo_radios,
     _collect_neo_touch_id,
+    _stage_neo_sensor_root_key,
     STEP2_SCRIPT,
     AsahiAdapterError,
     AsahiInPlaceRepairAdapter,
@@ -541,6 +542,29 @@ class AsahiStage1AdapterTests(unittest.TestCase):
             adapter.preflight(self.plan)
 
         self.assertEqual(installer.dutil.add_calls, [])
+
+    def _install_neo_with_sensor_root_key(self, key):
+        self._neo_payload()
+        installer = FakeInstaller(FakeDiskUtil([[self.free]]))
+        installer.sysinfo.device_class = "j700ap"
+        adapter = self._adapter(installer)
+        adapter.preflight(self.plan)
+        adapter.installer.ins.neo_sensor_root_key = key
+        adapter.prepare_target(self.plan)
+        partition_disk = adapter.osins.partition_disk
+
+        def with_a_real_esp_uuid(name, size):
+            partition_disk(name, size)
+            adapter.osins.efi_part.uuid = "180190F8-0000-4000-8000-000000000000"
+        adapter.osins.partition_disk = with_a_real_esp_uuid
+        adapter.install_stub_and_esp(self.plan)
+        return self.installed_esp / "vendorfw/touchid/msrk-j700.bin"
+
+    def test_a_collected_sensor_root_key_is_staged_on_the_installed_esp(self):
+        self.assertEqual(self._install_neo_with_sensor_root_key(b"comb").read_bytes(), b"comb")
+
+    def test_no_sensor_root_key_stages_nothing(self):
+        self.assertFalse(self._install_neo_with_sensor_root_key(None).exists())
 
     def test_a_neo_boots_its_own_stage2_as_m1n1_boot_bin(self):
         self._neo_payload()
@@ -2402,7 +2426,7 @@ class NeoTouchIdCalibrationTests(unittest.TestCase):
     """The MacBook Neo's FSC2 calibration joins its vendor firmware package."""
 
     def run_hook(self, device_class, collect, partitions=None, sensor_present=lambda: True, required=True,
-                 factory_root_key=None, collect_root_key=None):
+                 factory_root_key=None, installer=None):
         package = SimpleNamespace(added=[])
         package.add_file = lambda name, data: package.added.append((name, data))
         dutil = SimpleNamespace(
@@ -2412,7 +2436,9 @@ class NeoTouchIdCalibrationTests(unittest.TestCase):
                 {"Content": "Apple_APFS", "DeviceIdentifier": "disk0s2"},
             ]}},
         )
-        installer = SimpleNamespace(sysinfo=SimpleNamespace(device_class=device_class), dutil=dutil)
+        installer = installer or SimpleNamespace()
+        installer.sysinfo = SimpleNamespace(device_class=device_class)
+        installer.dutil = dutil
         firmware = SimpleNamespace(core=SimpleNamespace(FWFile=lambda name, data: ("FWFile", name, data)))
         with patch("omarchy_asahi.asahi_firmware", firmware):
             if factory_root_key is None:
@@ -2421,8 +2447,7 @@ class NeoTouchIdCalibrationTests(unittest.TestCase):
                 def factory_root_key():
                     raise omarchy_mesa.MesaError("no factory root key in this test")
             _collect_neo_touch_id(installer, package, collect=collect, sensor_present=sensor_present,
-                                  factory_root_key=factory_root_key, required=required,
-                                  collect_root_key=collect_root_key)
+                                  factory_root_key=factory_root_key, required=required)
         return package.added
 
     def test_a_neo_reads_the_raw_iboot_system_container(self):
@@ -2440,25 +2465,39 @@ class NeoTouchIdCalibrationTests(unittest.TestCase):
     def test_other_macs_collect_nothing(self):
         self.assertEqual(self.run_hook("j613ap", lambda device: self.fail("read the container")), [])
 
-    def test_a_factory_root_key_is_collected_with_calibration(self):
-        records = []
+    def test_the_factory_root_key_is_kept_for_staging_never_packaged(self):
+        def collect(device, **options):
+            self.assertEqual(options, {}, "the root key reached the firmware package")
+            return {"apple/mesacal-j700.bin": b"img4"}
 
-        def collect(device, root_key_record=None):
-            records.append(root_key_record)
-            files = {"apple/mesacal-j700.bin": b"img4"}
-            if root_key_record is not None:
-                files["apple/msrk-j700.bin"] = root_key_record
-            return files
+        installer = SimpleNamespace()
+        added = self.run_hook("j700ap", collect, factory_root_key=lambda: b"comb", installer=installer)
+        self.assertEqual(added, [("apple/mesacal-j700.bin", ("FWFile", "apple/mesacal-j700.bin", b"img4"))])
+        self.assertEqual(installer.neo_sensor_root_key, b"comb")
 
-        self.run_hook("j700ap", collect, factory_root_key=lambda: self.fail("collected while disabled"))
-        self.assertEqual(records, [None])
-        records.clear()
-        added = self.run_hook("j700ap", collect, factory_root_key=lambda: b"comb", collect_root_key=True)
-        self.assertEqual(records, [b"comb"])
-        self.assertEqual(added, [
-            ("apple/mesacal-j700.bin", ("FWFile", "apple/mesacal-j700.bin", b"img4")),
-            ("apple/msrk-j700.bin", ("FWFile", "apple/msrk-j700.bin", b"comb")),
-        ])
+    def test_a_missing_root_key_still_collects_calibration(self):
+        installer = SimpleNamespace()
+        with self.assertLogs(level="WARNING") as logs:
+            added = self.run_hook("j700ap", lambda device: {"apple/mesacal-j700.bin": b"img4"}, installer=installer)
+        self.assertEqual(len(added), 1)
+        self.assertIsNone(installer.neo_sensor_root_key)
+        self.assertIn("sensor key unavailable", "\n".join(logs.output))
+
+    def test_the_root_key_is_kept_only_with_a_calibration(self):
+        import omarchy_mesa
+
+        def collect(device):
+            raise omarchy_mesa.MesaError("no calibration")
+
+        installer = SimpleNamespace()
+        with self.assertLogs(level="WARNING"):
+            self.run_hook("j700ap", collect, factory_root_key=lambda: b"comb", required=False, installer=installer)
+        self.assertIsNone(installer.neo_sensor_root_key)
+        installer = SimpleNamespace(neo_sensor_root_key=b"stale")
+        self.run_hook("j613ap", collect, factory_root_key=lambda: b"comb", installer=installer)
+        self.assertIsNone(installer.neo_sensor_root_key)
+
+
 
     def test_a_failed_collection_stops_installation(self):
         import omarchy_mesa
@@ -2494,6 +2533,52 @@ class NeoTouchIdCalibrationTests(unittest.TestCase):
         partitions = [{"Content": "Apple_APFS", "DeviceIdentifier": "disk0s1"}]
         with self.assertRaisesRegex(AsahiAdapterError, "does not start"):
             self.run_hook("j700ap", lambda device: self.fail("read"), partitions)
+
+
+class NeoSensorRootKeyStagingTests(unittest.TestCase):
+    """The Neo's sensor root key goes to the ESP by itself, outside the archives."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.esp = Path(self.temporary.name)
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def test_the_key_is_written_whole_under_its_own_path(self):
+        _stage_neo_sensor_root_key(str(self.esp), b"comb" * 3000)
+        staged = self.esp / "vendorfw/touchid/msrk-j700.bin"
+        self.assertEqual(staged.read_bytes(), b"comb" * 3000)
+        self.assertEqual(staged.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(sorted(path.name for path in staged.parent.iterdir()), ["msrk-j700.bin"])
+
+    def test_a_key_that_cannot_be_staged_costs_touch_id_only(self):
+        (self.esp / "vendorfw").mkdir()
+        (self.esp / "vendorfw/touchid").write_bytes(b"in the way")
+        with self.assertLogs(level="WARNING") as logs:
+            _stage_neo_sensor_root_key(str(self.esp), b"comb")
+        self.assertIn("could not be staged", "\n".join(logs.output))
+        self.assertEqual((self.esp / "vendorfw/touchid").read_bytes(), b"in the way")
+
+    def test_the_key_takes_its_name_only_once_written_and_synced(self):
+        import omarchy_asahi
+        staged = self.esp / "vendorfw/touchid/msrk-j700.bin"
+        seen = []
+        fsync = omarchy_asahi.os.fsync
+
+        def check_then_fsync(descriptor):
+            seen.append(staged.exists())
+            fsync(descriptor)
+
+        with patch("omarchy_asahi.os.fsync", side_effect=check_then_fsync):
+            _stage_neo_sensor_root_key(str(self.esp), b"comb")
+        self.assertEqual(seen, [False])
+        self.assertEqual(staged.read_bytes(), b"comb")
+
+    def test_a_failed_write_leaves_no_partial_key(self):
+        with patch("omarchy_asahi.os.fsync", side_effect=OSError("disk full")), self.assertLogs(level="WARNING"):
+            _stage_neo_sensor_root_key(str(self.esp), b"comb")
+        self.assertEqual(list((self.esp / "vendorfw/touchid").iterdir()), [])
 
 
 if __name__ == "__main__":

@@ -823,16 +823,22 @@ def _iboot_system_container(dutil):
     return "/dev/r" + partition["DeviceIdentifier"]
 
 
-# The rebuilt root key is device-private. Keep collecting it off until the
-# firmware archive writer and the installed system keep it root-only 0600.
-COLLECT_NEO_ROOT_KEY = False
+# The rebuilt root key is device-private, so it never joins the firmware
+# package, whose archives sit on the ESP and are copied into Recovery. It is
+# staged on the ESP by itself (_stage_neo_sensor_root_key), where omarchy-mac
+# moves it to a root-only file at Linux's first boot.
+NEO_SENSOR_ROOT_KEY_STAGE = "vendorfw/touchid/msrk-j700.bin"
 
 
 def _collect_neo_touch_id(installer, pkg, collect=omarchy_mesa.collect,
                           sensor_present=omarchy_mesa.has_builtin_sensor,
-                          factory_root_key=omarchy_mesa.factory_root_key, *, required=False,
-                          collect_root_key=None):
-    """Collect optional calibration; requiring it needs an explicit template opt-in."""
+                          factory_root_key=omarchy_mesa.factory_root_key, *, required=False):
+    """Collect optional calibration; requiring it needs an explicit template opt-in.
+
+    The sensor root key, when macOS's factory data rebuilds it, is kept on the
+    installer for install_stub_and_esp to stage; without the calibration it is
+    of no use, so it is kept only alongside one."""
+    installer.neo_sensor_root_key = None
     if getattr(getattr(installer, "sysinfo", None), "device_class", "") != "j700ap":
         return
     try:
@@ -840,13 +846,12 @@ def _collect_neo_touch_id(installer, pkg, collect=omarchy_mesa.collect,
             logging.info("MacBook Neo has no built-in Touch ID sensor; skipping calibration")
             return
         root_key = None
-        if COLLECT_NEO_ROOT_KEY if collect_root_key is None else collect_root_key:
-            try:
-                root_key = factory_root_key()
-            except (OSError, omarchy_mesa.MesaError) as error:
-                logging.warning("MacBook Neo Touch ID root key unavailable: %s", error)
+        try:
+            root_key = factory_root_key()
+        except (OSError, omarchy_mesa.MesaError) as error:
+            logging.warning("MacBook Neo Touch ID sensor key unavailable; Linux won't offer Touch ID: %s", error)
         device = _iboot_system_container(installer.dutil)
-        files = collect(device) if root_key is None else collect(device, root_key_record=root_key)
+        files = collect(device)
         if not files.get(omarchy_mesa.FIRMWARE_NAME):
             raise omarchy_mesa.MesaError("sensor is present but calibration is missing")
     except (OSError, KeyError, IndexError, subprocess.CalledProcessError, omarchy_mesa.MesaError) as error:
@@ -857,6 +862,33 @@ def _collect_neo_touch_id(installer, pkg, collect=omarchy_mesa.collect,
     for name, data in sorted(files.items()):
         pkg.add_file(name, asahi_firmware.core.FWFile(name, data))
     logging.info("MacBook Neo Touch ID calibration: %d bytes", sum(map(len, files.values())))
+    installer.neo_sensor_root_key = root_key
+
+
+def _stage_neo_sensor_root_key(esp, key):
+    """Write the Neo's sensor root key to the ESP outside the firmware archives.
+
+    It goes to a temporary name first and is renamed, so Linux never takes a
+    partial file for the key. A failure costs Touch ID only, never the install."""
+    final = os.path.join(esp, NEO_SENSOR_ROOT_KEY_STAGE)
+    temporary = final + ".new"
+    try:
+        os.makedirs(os.path.dirname(final), mode=0o700, exist_ok=True)
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            view = memoryview(key)
+            while view:
+                view = view[os.write(descriptor, view):]
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        os.replace(temporary, final)
+    except OSError as error:
+        with contextlib.suppress(OSError):
+            os.unlink(temporary)
+        logging.warning("MacBook Neo Touch ID sensor key could not be staged; Linux won't offer Touch ID: %s", error)
+        return
+    logging.info("MacBook Neo Touch ID sensor key staged for Linux: %d bytes", len(key))
 
 
 @contextlib.contextmanager
@@ -1500,6 +1532,9 @@ class AsahiStage1Adapter:
             self.osins.firmware_package = firmware_package
 
         self.osins.install(self.installer.ins)
+        sensor_root_key = getattr(self.installer.ins, "neo_sensor_root_key", None)
+        if sensor_root_key:
+            _stage_neo_sensor_root_key(self.installer.dutil.mount(self.osins.efi_part.name), sensor_root_key)
         install_board_stage1(
             self.installer.sysinfo.device_class,
             self.os_firmware,

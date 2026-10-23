@@ -22,14 +22,19 @@ The calibration that `collect()` carves from the iBoot System Container is eithe
 
 The calibration is not the device-private key, so its collection stays on by default.
 
-Collection stays off in the adapter (`COLLECT_NEO_ROOT_KEY`). `collect()` adds the record to the vendor firmware package, so turning collection on would place a copy of the key in each of these, and every one must be dealt with first:
+## Staging
 
-- `vendorfw/firmware.tar` and `vendorfw/firmware.cpio` on the ESP. FAT has no per-file permissions, so a mode inside the archive does not protect the file on disk. Either keep the record out of these archives under its own path, or make sure the ESP is readable only by root wherever it is mounted.
-- The per-install Recovery firmware baseline (`Recovery/README.md`), which copies those archives into `Aurora/Recovery/InstallData/AuraPayloads` on the stub's macOS volume.
-- The installed system, which must keep `apple/msrk-j700.bin` root-owned `0600`.
+The adapter rebuilds the key on every MacBook Neo with a Touch ID sensor, and keeps it only when the calibration was collected too, since the key is no use without it. A key that can't be rebuilt is logged, and the install goes on without Touch ID.
 
-Turning collection on changes installer behaviour, so it belongs in its own change, together with the cold boot after a fresh install with the collected file, which is still to be done.
+The key never joins the vendor firmware package. `install_stub_and_esp` writes it to the ESP by itself, as `vendorfw/touchid/msrk-j700.bin`, after asahi-installer has copied the package there. It is written to a temporary name and renamed, so Linux never takes a partial file for the key. A failure is logged and costs Touch ID only. Each copy is accounted for:
+
+- **The firmware archives:** `vendorfw/firmware.tar` and `vendorfw/firmware.cpio` don't carry it, and the initramfs unpacks only `firmware.cpio`.
+- **Recovery:** the per-install Recovery firmware baseline (`Recovery/README.md`) copies only the files it names, `firmware.tar`, `firmware.cpio`, `manifest.txt` and the optional ASMedia firmware, never the `vendorfw` directory, so `Aurora/Recovery/InstallData/AuraPayloads` never holds it.
+- **The ESP:** our images mount it with `umask=0077`, so on Linux only root can read it. At Linux's first boot, omarchy-mac's Touch ID status unit moves it to `/var/lib/omarchy-mac/msrk-j700.bin`, root-owned `0600` in a `0700` directory, and deletes the ESP copy (omacom/omarchy-mac-pkgs#12). On macOS the key adds nothing new: the factory records it is rebuilt from are readable without root.
+- **The installed system:** omarchy-mac copies it into `/usr/lib/firmware/updates/apple/msrk-j700.bin`, `0600`, only after the owner agrees to turn Touch ID on. A factory reset carries the kept copy into the factory root.
+
+A Neo installed before this, or reinstalled from Recovery, has no staged key, and Linux doesn't offer it Touch ID.
 
 This work is separate from country-policy extraction and encryption recovery. It does not change either path or enable fingerprint setup by default.
 
-The root-key record is device-private. Its required mode is root-owned `0600` in staging and on the installed system; containing private staging directories use `0700`. Automatic collection must remain inactive until every copy listed above is protected. General world-readable firmware defaults are unsuitable for this record.
+The root-key record is device-private. Its required mode is root-owned `0600` in staging and on the installed system; containing private staging directories use `0700`. General world-readable firmware defaults are unsuitable for this record.
