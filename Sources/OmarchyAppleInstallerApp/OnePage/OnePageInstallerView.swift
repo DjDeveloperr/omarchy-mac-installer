@@ -274,7 +274,7 @@ struct OnePageInstallerView: View {
       if let notice = session.allocationNotice {
         Text(notice).font(OmarchyTheme.body).foregroundStyle(OmarchyTheme.caution)
       }
-      if let trial, let notice = PlainLanguage.trialDiskNotice(bytes: trial.vmBytes) {
+      if let trial, let notice = trial.diskNotice {
         Text(notice)
           .font(OmarchyTheme.body)
           .foregroundStyle(OmarchyTheme.secondaryText)

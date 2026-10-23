@@ -15,7 +15,7 @@ struct TrialStage: View {
     case .ready(let space, let permissions):
       Panel {
         Text(PlainLanguage.trialHeadline).font(OmarchyTheme.heading)
-        Text(PlainLanguage.trialSubheadline)
+        Text(trial.subheadline)
           .font(OmarchyTheme.body)
           .foregroundStyle(OmarchyTheme.secondaryText)
           .fixedSize(horizontal: false, vertical: true)
@@ -155,9 +155,17 @@ struct TrialActions: View {
       EmptyView()
 
     case .failed:
-      Button(PlainLanguage.trialBack) { trial.dismiss() }
-        .omarchySecondaryButton()
-        .keyboardShortcut(.defaultAction)
+      if trial.canTryAgain {
+        Button(PlainLanguage.trialBack) { trial.dismiss() }
+          .omarchySecondaryButton()
+        Button(PlainLanguage.trialTryAgain) { trial.tryAgain() }
+          .omarchyPrimaryButton()
+          .keyboardShortcut(.defaultAction)
+      } else {
+        Button(PlainLanguage.trialBack) { trial.dismiss() }
+          .omarchySecondaryButton()
+          .keyboardShortcut(.defaultAction)
+      }
     }
   }
 }

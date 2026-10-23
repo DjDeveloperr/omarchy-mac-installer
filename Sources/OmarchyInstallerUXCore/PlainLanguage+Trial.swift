@@ -9,6 +9,8 @@
     public static let trialHeadline = "Try Omarchy in a VM"
     public static let trialSubheadline =
       "Omarchy runs in a virtual machine, in a window beside macOS, without changing your disk. When it first starts, it asks for your account, keyboard and time zone."
+    public static let trialReadySubheadline =
+      "Omarchy is set up and ready. It opens in a window beside macOS, with everything saved in its virtual machine."
     public static let trialPermissionsNote =
       "Each permission is optional. Omarchy starts without them."
     public static let trialAccessibility = "Use ⌘ as the Super key"
@@ -22,6 +24,7 @@
     public static let trialDownloadAndStart = "Download and start"
     public static let trialStart = "Start"
     public static let trialBack = "Back"
+    public static let trialTryAgain = "Try Again"
     public static let trialRunningHeadline = "Omarchy is running"
     public static let trialRunningDetail =
       "Omarchy is in its own window. Shut it down here, or from Omarchy's own menu."
@@ -46,6 +49,8 @@
     public static let trialDeleteTitle = "Delete the virtual machine?"
     public static let trialDeleteAction = "Move to Trash"
     public static let trialDeleteFailed = "The virtual machine couldn’t be deleted"
+    public static let trialDeleteMovedLine =
+      "This virtual machine is in a folder chosen in Try Omarchy. Manage it from Try Omarchy or the Finder."
     public static let trialRepairBridgedNetworkMenuItem = "Repair Bridged Networking"
     public static let trialRemoveBridgedNetworkMenuItem = "Remove Bridged Networking"
 
@@ -123,7 +128,7 @@
         return "Omarchy needs \(required) of free space."
       }
       return space.hasVM
-        ? "Omarchy’s virtual machine is ready to start. \(gigabytes(free)) is free."
+        ? "\(gigabytes(free)) is free on the disk that holds Omarchy’s virtual machine."
         : "Omarchy needs \(required) of free space for its download and disk. \(gigabytes(free)) is free."
     }
 
@@ -133,10 +138,17 @@
 
     /// The plan review's note on the VM, which the native install leaves in
     /// place.
-    public static func trialDiskNotice(bytes: Int64) -> String? {
+    public static func trialDiskNotice(bytes: Int64, root: TrialVMRoot?) -> String? {
       guard bytes >= 100_000_000 else { return nil }
+      guard root?.sharesMacOSVolume != false else {
+        return
+          "Omarchy’s virtual machine is on another disk, in the folder chosen in Try Omarchy. Installing keeps it."
+      }
+      let place =
+        root?.isDefault == false
+        ? "in the folder chosen in Try Omarchy" : "in Application Support › Try Omarchy"
       return
-        "Omarchy’s virtual machine uses up to \(gigabytes(bytes)) of macOS’s space, already counted above. Installing keeps it, in Application Support › Try Omarchy."
+        "Omarchy’s virtual machine uses up to \(gigabytes(bytes)) of macOS’s space, already counted above. Installing keeps it, \(place)."
     }
 
     public static func trialProgressTitle(_ phase: VMRunPhase) -> String {

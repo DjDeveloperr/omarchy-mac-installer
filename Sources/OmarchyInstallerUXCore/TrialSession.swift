@@ -8,6 +8,10 @@
   public protocol TrialEnvironment: AnyObject {
     /// Whether this build embeds the kit. Without it there is no Try.
     var isAvailable: Bool { get }
+    /// Where the VM lives, as Try Omarchy resolves it, or nil when the folder
+    /// it chose can't be used.
+    func vmRoot() -> TrialVMRoot?
+    /// The space in the VM's folder and on the volume that holds it.
     func space() -> TrialSpace
     /// The space the VM's folder takes on disk, or zero without one.
     func vmBytes() async -> Int64
@@ -15,6 +19,9 @@
     func requestAccessibility()
     func requestMicrophone() async
     func requestCamera() async
+    /// Omarchy has started from this app before, in this app's own folder.
+    var hasStartedHere: Bool { get }
+    func recordStartedHere()
     func start(onEvent: @escaping @MainActor (VMRunEvent) -> Void) throws
     func shutDown()
     /// Moves the VM in the default folder to the Trash.
@@ -97,6 +104,14 @@
     public let headline: String
     public let detail: String
     public let technicalDetail: String?
+
+    /// Starting again can help, unlike a Mac or a folder that can't run it.
+    public var canTryAgain: Bool {
+      switch code {
+      case .volumeNotAPFS, .macOSTooOld, .hypervisorUnavailable, .storageLayoutUnknown: false
+      default: true
+      }
+    }
   }
 
   public enum TrialPhase: Equatable, Sendable {
@@ -176,8 +191,10 @@
   public final class TrialSession {
     public private(set) var phase: TrialPhase = .hidden
     public private(set) var installStatus: TrialInstallStatus = .checking
-    /// A VM exists in the default folder: the remembered choice.
+    /// A VM exists where Try Omarchy keeps it: the remembered choice.
     public private(set) var hasVM = false
+    /// The VM's folder, the default one or one chosen in Try Omarchy.
+    public private(set) var vmRoot: TrialVMRoot?
     /// This start asked for bridged networking and got shared networking.
     public private(set) var bridgedNetworkUnavailable = false
     public private(set) var bridgedNetwork: TrialBridgedNetwork = .notRegistered
@@ -199,8 +216,10 @@
 
     public init(environment: any TrialEnvironment) {
       self.environment = environment
-      hasVM = environment.isAvailable && environment.space().hasVM
-      if environment.isAvailable { bridgedNetwork = environment.bridgedNetwork() }
+      guard environment.isAvailable else { return }
+      hasVM = environment.space().hasVM
+      vmRoot = environment.vmRoot()
+      bridgedNetwork = environment.bridgedNetwork()
     }
 
     public var isAvailable: Bool { environment.isAvailable }
@@ -237,7 +256,35 @@
     /// Install on this Mac, beside Shut Down on the running page.
     public var canInstall: Bool { installStatus == .supported }
 
-    public var canDeleteVM: Bool { environment.isAvailable && hasVM && !isActive }
+    /// Delete Virtual Machine moves only the default folder.
+    public var canDeleteVM: Bool {
+      environment.isAvailable && hasVM && vmRoot?.isDefault == true && !isActive
+    }
+
+    /// The menu's line under Delete Virtual Machine for a VM that lives
+    /// elsewhere.
+    public var deleteVMLine: String? {
+      guard environment.isAvailable, hasVM, vmRoot?.isDefault == false else { return nil }
+      return PlainLanguage.trialDeleteMovedLine
+    }
+
+    /// The Try page's line under its headline.
+    public var subheadline: String {
+      guard case .ready(let space, _) = phase, space.hasVM else {
+        return PlainLanguage.trialSubheadline
+      }
+      return PlainLanguage.trialReadySubheadline
+    }
+
+    /// The plan review's note on the VM, which the native install leaves in
+    /// place.
+    public var diskNotice: String? { PlainLanguage.trialDiskNotice(bytes: vmBytes, root: vmRoot) }
+
+    /// Try Again on a failure that starting again can help.
+    public var canTryAgain: Bool {
+      guard case .failed(let failure) = phase else { return false }
+      return failure.canTryAgain && !installerNeedsPage
+    }
 
     /// The line under the Mac's name while Try is the only mode.
     public var installLine: String? { PlainLanguage.trialInstallLine(installStatus) }
@@ -267,9 +314,11 @@
       }
     }
 
-    /// The remembered choice: with a VM in the default folder, the app opens
-    /// into Try and starts Omarchy at once, while the installer inspects the
-    /// Mac in the background. Runs once per launch.
+    /// The remembered choice: with a VM, the app opens into Try, while the
+    /// installer inspects the Mac in the background. Omarchy starts at once
+    /// when this app has every permission the Try page offers, or started it
+    /// before; otherwise the Try page waits with Allow and Start. Runs once
+    /// per launch.
     public func openAtLaunch() {
       guard !launched else { return }
       launched = true
@@ -277,8 +326,9 @@
       let space = environment.space()
       noteVM(space.hasVM)
       guard space.hasVM else { return }
-      phase = .ready(space, environment.permissions())
-      start()
+      let permissions = environment.permissions()
+      phase = .ready(space, permissions)
+      if permissions.allAllowed || environment.hasStartedHere { start() }
     }
 
     /// Follows the installer's inspection. On a Mac that can't install, and
@@ -327,6 +377,13 @@
       }
     }
 
+    /// Try Again: back to the Try page with the space read again, and start.
+    public func tryAgain() {
+      guard canTryAgain else { return }
+      phase = readyPhase()
+      start()
+    }
+
     /// Re-reads permissions and space, as when the app becomes active again
     /// after System Settings.
     public func refresh() {
@@ -352,6 +409,7 @@
 
     private func noteVM(_ exists: Bool) {
       hasVM = exists
+      vmRoot = environment.isAvailable ? environment.vmRoot() : nil
       guard exists else { return }
       vmBytesRefresh = Task { await refreshVMBytes() }
     }
@@ -422,6 +480,7 @@
       guard canDeleteVM else { return }
       try environment.deleteVM()
       hasVM = false
+      vmRoot = environment.vmRoot()
       vmBytes = 0
       openedAsOnlyMode = false
       phase = .hidden
@@ -530,6 +589,7 @@
           phase = .starting(TrialProgress(phase: step, percent: percent))
         }
       case .ready:
+        if !environment.hasStartedHere { environment.recordStartedHere() }
         if !shutdownRequested { phase = .running(environment.permissions()) }
       case .stopping:
         phase = .stopping

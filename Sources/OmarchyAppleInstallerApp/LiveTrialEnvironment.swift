@@ -8,14 +8,14 @@ import TryOmarchyKitClient
 import os
 
 /// Try on this Mac: the kit in Contents/Helpers or a newer one it fetched,
-/// this app's own permissions, and the default VM folder it shares with Try
-/// Omarchy.
+/// this app's own permissions, and the VM folder Try Omarchy resolves.
 @MainActor
 final class LiveTrialEnvironment: TrialEnvironment {
   private nonisolated static let logger = Logger(
     subsystem: InstallerProductIdentity.appIdentifier, category: "try-kit")
   private let embedded = TrialKitLayout.embedded()
   private let kits: TrialKitUpdater?
+  private let startRecord: TrialStartRecord?
   private var client: VMRunClient?
   /// Keeps a fetched kit's folder in place while it runs.
   private var lease: TrialKitLease?
@@ -32,8 +32,11 @@ final class LiveTrialEnvironment: TrialEnvironment {
         .first
     else {
       kits = nil
+      startRecord = nil
       return
     }
+    startRecord = TrialStartRecord.under(
+      applicationSupport: support, workspace: InstallerBuildProfile.current.workspaceName)
     let settings = TrialKitUpdater.Settings.from(environment: environment)
     kits = TrialKitUpdater(
       store: TrialKitStore.under(
@@ -47,19 +50,15 @@ final class LiveTrialEnvironment: TrialEnvironment {
 
   var isAvailable: Bool { embedded.hasLauncher }
 
-  func space() -> TrialSpace {
-    guard let root = TryOmarchyStorage.defaultRoot() else {
-      return TrialSpace(
-        requiredBytes: TryOmarchyStorage.requiredFreeBytesForNewVM, freeBytes: nil, hasVM: false)
-    }
-    return TrialSpace(
-      requiredBytes: TryOmarchyStorage.requiredFreeBytes(at: root),
-      freeBytes: TryOmarchyStorage.freeBytes(at: root),
-      hasVM: TryOmarchyStorage.hasVM(at: root))
+  func vmRoot() -> TrialVMRoot? {
+    guard let root = TryOmarchyStorage.resolvedRoot() else { return nil }
+    return TrialVMRoot.resolved(root, defaultRoot: TryOmarchyStorage.defaultRoot())
   }
 
+  func space() -> TrialSpace { TrialSpace.of(vmRoot()) }
+
   func vmBytes() async -> Int64 {
-    guard let root = TryOmarchyStorage.defaultRoot() else { return 0 }
+    guard let root = vmRoot()?.url else { return 0 }
     return await Task.detached(priority: .utility) {
       TryOmarchyStorage.allocatedBytes(at: root)
     }.value
@@ -86,6 +85,17 @@ final class LiveTrialEnvironment: TrialEnvironment {
   func requestMicrophone() async { await Self.request(.audio, settings: "Privacy_Microphone") }
 
   func requestCamera() async { await Self.request(.video, settings: "Privacy_Camera") }
+
+  var hasStartedHere: Bool { startRecord?.exists ?? false }
+
+  func recordStartedHere() {
+    do {
+      try startRecord?.record()
+    } catch {
+      Self.logger.error(
+        "Try couldn’t record its first start: \(error.localizedDescription, privacy: .public)")
+    }
+  }
 
   /// Checks the Mac, then chooses and checks the kit off the main actor, since
   /// a fetched kit's signatures are checked again at every start. Failures
@@ -163,6 +173,7 @@ final class LiveTrialEnvironment: TrialEnvironment {
     guard
       let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
         .first,
+      vmRoot()?.isDefault == true,
       TrialVMFolder.root(under: support).standardizedFileURL
         == TryOmarchyStorage.defaultRoot()?.standardizedFileURL
     else { throw TrialVMFolder.Refusal.notTheDefaultFolder }

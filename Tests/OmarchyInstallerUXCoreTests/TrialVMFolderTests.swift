@@ -109,5 +109,58 @@
       XCTAssertEqual(String(decoding: line, as: UTF8.self), "ready\n")
       refuses(.open)
     }
+
+    // MARK: Where the VM lives
+
+    func testAMovedVMIsFoundAndItsVolumeHasTheSpaceCheck() throws {
+      let moved = base.appendingPathComponent("Elsewhere/Try Omarchy", isDirectory: true)
+      try FileManager.default.createDirectory(
+        at: moved.appendingPathComponent("shell"), withIntermediateDirectories: true)
+      try Data().write(to: moved.appendingPathComponent("shell/disk.img"))
+      let location = TrialVMRoot.resolved(moved, defaultRoot: root)
+      XCTAssertFalse(location.isDefault)
+      XCTAssertTrue(location.sharesMacOSVolume)
+
+      var asked: [URL] = []
+      let space = TrialSpace.of(location) { url in
+        asked.append(url)
+        return 2_000_000_000
+      }
+      XCTAssertEqual(asked, [moved], "Free space is read on the volume that holds the VM")
+      XCTAssertTrue(space.hasVM)
+      XCTAssertEqual(space.requiredBytes, 1_073_741_824)
+      XCTAssertTrue(space.isEnough)
+
+      XCTAssertTrue(TrialVMRoot.resolved(root, defaultRoot: root).isDefault)
+      XCTAssertFalse(TrialSpace.of(nil).hasVM)
+      XCTAssertNil(TrialSpace.of(nil).freeBytes)
+    }
+
+    func testAnEmptyChosenFolderNeedsSpaceForANewVM() throws {
+      let chosen = base.appendingPathComponent("Chosen", isDirectory: true)
+      try FileManager.default.createDirectory(at: chosen, withIntermediateDirectories: true)
+      let space = TrialSpace.of(TrialVMRoot.resolved(chosen, defaultRoot: root)) { _ in
+        20_000_000_000
+      }
+      XCTAssertFalse(space.hasVM)
+      XCTAssertEqual(space.requiredBytes, 15_000_000_000)
+    }
+
+    func testAVolumeElsewhereIsNotMacOSs() {
+      let elsewhere = URL(fileURLWithPath: "/dev/fd/Try Omarchy", isDirectory: true)
+      XCTAssertNotEqual(TrialVMRoot.device(of: elsewhere), TrialVMRoot.device(of: root))
+      XCTAssertFalse(TrialVMRoot.resolved(elsewhere, defaultRoot: root).sharesMacOSVolume)
+    }
+
+    func testAStartIsRecordedInThisAppsFolder() throws {
+      let record = TrialStartRecord.under(applicationSupport: base, workspace: "installer")
+      XCTAssertEqual(
+        record.file.path, base.appendingPathComponent("installer/Try started").path)
+      XCTAssertFalse(record.exists)
+      try record.record()
+      XCTAssertTrue(record.exists)
+      try record.record()
+      XCTAssertTrue(record.exists)
+    }
   }
 #endif
