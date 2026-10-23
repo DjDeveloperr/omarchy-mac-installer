@@ -15,7 +15,7 @@ fail() {
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 logs=${1:-$(mktemp -d "${TMPDIR:-/tmp}/try-tests.XXXXXX")}
 mkdir -p "$logs"
-suites=(TrialSessionTests TrialVMFolderTests)
+suites=(TrialSessionTests TrialVMFolderTests TrialKitUpdateTests)
 filter="OmarchyInstallerUXCoreTests\\.($(IFS='|'; echo "${suites[*]}"))"
 
 for configuration in debug release; do
