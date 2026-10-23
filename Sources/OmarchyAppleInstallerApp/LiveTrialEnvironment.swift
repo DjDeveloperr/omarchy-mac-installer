@@ -15,7 +15,6 @@ final class LiveTrialEnvironment: TrialEnvironment {
     subsystem: InstallerProductIdentity.appIdentifier, category: "try-kit")
   private let embedded = TrialKitLayout.embedded()
   private let kits: TrialKitUpdater?
-  private let startRecord: TrialStartRecord?
   private var client: VMRunClient?
   /// Keeps a fetched kit's folder in place while it runs.
   private var lease: TrialKitLease?
@@ -32,11 +31,8 @@ final class LiveTrialEnvironment: TrialEnvironment {
         .first
     else {
       kits = nil
-      startRecord = nil
       return
     }
-    startRecord = TrialStartRecord.under(
-      applicationSupport: support, workspace: InstallerBuildProfile.current.workspaceName)
     let settings = TrialKitUpdater.Settings.from(environment: environment)
     kits = TrialKitUpdater(
       store: TrialKitStore.under(
@@ -85,17 +81,6 @@ final class LiveTrialEnvironment: TrialEnvironment {
   func requestMicrophone() async { await Self.request(.audio, settings: "Privacy_Microphone") }
 
   func requestCamera() async { await Self.request(.video, settings: "Privacy_Camera") }
-
-  var hasStartedHere: Bool { startRecord?.exists ?? false }
-
-  func recordStartedHere() {
-    do {
-      try startRecord?.record()
-    } catch {
-      Self.logger.error(
-        "Try couldn’t record its first start: \(error.localizedDescription, privacy: .public)")
-    }
-  }
 
   /// Checks the Mac, then chooses and checks the kit off the main actor, since
   /// a fetched kit's signatures are checked again at every start. Failures

@@ -17,9 +17,6 @@
     func requestAccessibility()
     func requestMicrophone() async
     func requestCamera() async
-    /// Omarchy has started from this app before, in this app's own folder.
-    var hasStartedHere: Bool { get }
-    func recordStartedHere()
     func start(onEvent: @escaping @MainActor (VMRunEvent) -> Void) throws
     func shutDown()
     /// Moves the VM in the default folder to the Trash.
@@ -371,23 +368,19 @@
       return installReason.map { .explain($0) } ?? .unavailable
     }
 
-    /// The remembered choice: with a VM, the app opens into Try and starts
-    /// Omarchy at once, while the installer inspects the Mac in the
-    /// background, when this app has every permission the Try page offers or
-    /// started Omarchy before. Otherwise the landing page shows, and Try opens
-    /// the Try page with Allow and Start. Runs once per launch.
+    /// The remembered choice: with a VM, the app opens on the Try page, with
+    /// Allow and Start, while the installer inspects the Mac in the
+    /// background. Back leads to the landing page, which shows at once
+    /// without a VM. Nothing starts until the person presses Start. Runs once
+    /// per launch.
     public func openAtLaunch() {
       guard !launched else { return }
       launched = true
       guard environment.isAvailable, phase == .hidden else { return }
       let space = environment.space()
       noteVM(space)
-      let permissions = environment.permissions()
-      guard space.hasVM, space.isEnough,
-        permissions.allAllowed || environment.hasStartedHere
-      else { return }
-      phase = .ready(space, permissions)
-      start()
+      guard space.hasVM else { return }
+      phase = .ready(space, environment.permissions())
     }
 
     /// Follows the installer's inspection. The installer's plan, install and
@@ -660,7 +653,6 @@
           phase = .starting(TrialProgress(phase: step, percent: percent))
         }
       case .ready:
-        if !environment.hasStartedHere { environment.recordStartedHere() }
         noteVM(environment.space())
         if !shutdownRequested {
           phase = .running(environment.permissions())

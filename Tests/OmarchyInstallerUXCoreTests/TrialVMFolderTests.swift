@@ -153,16 +153,5 @@
         try TrialRunConfiguration.make(productName: "Trial Test", defaultRoot: nil)
       ) { XCTAssertEqual(($0 as? VMRunError)?.code, .storageUnavailable) }
     }
-
-    func testAStartIsRecordedInThisAppsFolder() throws {
-      let record = TrialStartRecord.under(applicationSupport: base, workspace: "installer")
-      XCTAssertEqual(
-        record.file.path, base.appendingPathComponent("installer/Try started").path)
-      XCTAssertFalse(record.exists)
-      try record.record()
-      XCTAssertTrue(record.exists)
-      try record.record()
-      XCTAssertTrue(record.exists)
-    }
   }
 #endif
