@@ -132,8 +132,8 @@
     /// The Try page: permissions and space, before anything starts.
     case ready(TrialSpace, TrialPermissions)
     case starting(TrialProgress)
-    /// Omarchy runs in its own window. A permission granted now applies at
-    /// the next start.
+    /// Omarchy runs in its own window, and the installer's window stands
+    /// back. A permission granted now applies at the next start.
     case running(TrialPermissions)
     case stopping
     case failed(TrialFailure)
@@ -236,6 +236,10 @@
     public private(set) var bridgedNetworkChanging = false
     /// The space the VM takes, for the plan review.
     public private(set) var vmBytes: Int64 = 0
+    /// The installer's window. It closes once Omarchy's own window is up,
+    /// and comes back when Omarchy shuts down or fails, or when the person
+    /// asks for it.
+    public private(set) var showsWindow = true
     private let environment: any TrialEnvironment
     private var lastError: VMRunError?
     private var shutdownRequested = false
@@ -262,6 +266,14 @@
       switch phase {
       case .starting, .running, .stopping: true
       case .hidden, .ready, .failed: false
+      }
+    }
+
+    /// Shut Down in the menu, while Omarchy starts or runs.
+    public var canShutDown: Bool {
+      switch phase {
+      case .starting, .running: true
+      case .hidden, .ready, .stopping, .failed: false
       }
     }
 
@@ -422,7 +434,7 @@
     }
 
     /// Re-reads permissions and space, as when the app becomes active again
-    /// after System Settings.
+    /// or System Settings closes.
     public func refresh() {
       if environment.isAvailable { bridgedNetwork = environment.bridgedNetwork() }
       switch phase {
@@ -433,6 +445,13 @@
       default:
         if !isActive { noteVM(environment.isAvailable && environment.space().remembersVM) }
       }
+    }
+
+    /// The Dock icon or the Window menu brings the window back, with the
+    /// page read again.
+    public func reopenWindow() {
+      showsWindow = true
+      refresh()
     }
 
     public func refreshVMBytes() async {
@@ -472,6 +491,7 @@
       shutdownRequested = false
       bridgedNetworkUnavailable = false
       phase = .starting(TrialProgress(phase: .checking, percent: nil))
+      showsWindow = true
       do {
         try environment.start { [weak self] event in self?.receive(event) }
       } catch {
@@ -487,6 +507,7 @@
         return
       }
       if let completion { afterExit.append(completion) }
+      showsWindow = true
       guard !shutdownRequested else { return }
       shutdownRequested = true
       phase = .stopping
@@ -515,6 +536,7 @@
       }
       pendingInstall = install
       showsMigrationNotice = true
+      showsWindow = true
     }
 
     /// Install Without Migrating: the VM stays where it is, and the install
@@ -650,9 +672,13 @@
       case .ready:
         if !environment.hasStartedHere { environment.recordStartedHere() }
         noteVM(environment.space().remembersVM)
-        if !shutdownRequested { phase = .running(environment.permissions()) }
+        if !shutdownRequested {
+          phase = .running(environment.permissions())
+          showsWindow = false
+        }
       case .stopping:
         phase = .stopping
+        showsWindow = true
       case .error(let error):
         lastError = error
       case .exited(let status):
@@ -665,6 +691,7 @@
         } else {
           phase = restingPhase()
         }
+        showsWindow = true
         lastError = nil
         shutdownRequested = false
         let completions = afterExit

@@ -47,6 +47,13 @@ private final class InstallerApplicationDelegate: NSObject, NSApplicationDelegat
     true
   }
 
+  /// The Dock icon brings back the window Try closed while Omarchy runs.
+  func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+    guard !hasVisibleWindows, let trial = Self.trial, !trial.showsWindow else { return true }
+    trial.reopenWindow()
+    return false
+  }
+
   func applicationDidFinishLaunching(_ notification: Notification) {
     // The install ends with a shutdown the app itself requests. macOS would
     // otherwise treat it as an app open at shutdown and bring it back at the
@@ -143,10 +150,26 @@ struct OmarchyAppleInstallerApp: App {
         }
       }
       .id(generation)
+      .background(
+        InstallerWindowVisibility(shows: trial.showsWindow, onShown: { trial.reopenWindow() })
+      )
       .onReceive(
         NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)
       ) { _ in
         liveSession?.cancelPrefetchOnQuit()
+      }
+      .onReceive(
+        NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+      ) { _ in
+        trial.refresh()
+      }
+      .onReceive(
+        NSWorkspace.shared.notificationCenter.publisher(
+          for: NSWorkspace.didTerminateApplicationNotification)
+      ) { notification in
+        let app =
+          notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+        if app?.bundleIdentifier == "com.apple.systempreferences" { trial.refresh() }
       }
       .disabled(showsRemoval)
       .windowDismissBehavior(
@@ -239,10 +262,15 @@ struct OmarchyAppleInstallerApp: App {
             isSimulation || removalNeedsReview || showsRemoval || !installStatusIsUnsupported
               || liveSession?.canInspect != true)
         Divider()
-        Button("Remove Omarchy…") { showsRemoval = true }
-          .disabled(removalNeedsReview || showsRemoval || liveSession?.canOpenRemoval != true)
+        Button("Remove Omarchy…") {
+          trial.reopenWindow()
+          showsRemoval = true
+        }
+        .disabled(removalNeedsReview || showsRemoval || liveSession?.canOpenRemoval != true)
         if trial.isAvailable {
           Divider()
+          Button(PlainLanguage.trialShutDown) { trial.shutDown() }
+            .disabled(!trial.canShutDown)
           Button(PlainLanguage.trialDeleteMenuItem) {
             Task { confirmDeletion(await trial.deletionMessage()) }
           }
@@ -304,6 +332,7 @@ struct OmarchyAppleInstallerApp: App {
     case .install:
       trial.chooseInstall { Task { await liveSession?.continueToPlan() } }
     case .explain(let reason):
+      trial.reopenWindow()
       installReason = reason
     }
   }

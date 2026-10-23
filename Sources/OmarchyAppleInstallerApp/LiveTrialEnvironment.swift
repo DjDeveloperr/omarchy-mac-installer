@@ -71,15 +71,18 @@ final class LiveTrialEnvironment: TrialEnvironment {
       camera: Self.state(AVCaptureDevice.authorizationStatus(for: .video)))
   }
 
-  /// macOS shows its own prompt once, then only System Settings can grant it.
+  /// Asks macOS from this app's own process, which shows macOS's prompt and
+  /// lists this app in System Settings, where only the person can turn it on.
+  /// System Settings opens once macOS has added the row, as in Try Omarchy.
   func requestAccessibility() {
+    guard !AXIsProcessTrusted() else { return }
     // The value of kAXTrustedCheckOptionPrompt, which Swift 6 treats as mutable.
     _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
-    if let settings = URL(
-      string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
-    {
-      NSWorkspace.shared.open(settings)
-    }
+    guard
+      let settings = URL(
+        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+    else { return }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { NSWorkspace.shared.open(settings) }
   }
 
   func requestMicrophone() async { await Self.request(.audio, settings: "Privacy_Microphone") }

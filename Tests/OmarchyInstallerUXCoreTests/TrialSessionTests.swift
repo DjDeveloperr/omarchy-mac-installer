@@ -1023,5 +1023,110 @@
         "Omarchy’s virtual machine uses up to 9 GB of macOS’s space, already counted above. Installing keeps it, in Application Support › Try Omarchy."
       )
     }
+
+    // MARK: The installer's window while Omarchy runs
+
+    func testTheWindowClosesWhileOmarchyRunsAndReturnsWhenItShutsDown() throws {
+      let environment = FakeTrialEnvironment()
+      let trial = ready(environment)
+      XCTAssertTrue(trial.showsWindow)
+      trial.start()
+      let send = try XCTUnwrap(environment.onEvent)
+      send(.progress(.downloading, percent: 10))
+      XCTAssertTrue(trial.showsWindow, "The download shows on the page")
+      send(.ready)
+      XCTAssertFalse(trial.showsWindow, "Omarchy's own window takes over")
+      XCTAssertTrue(trial.canShutDown)
+
+      trial.shutDown()
+      XCTAssertTrue(trial.showsWindow, "Shutting down shows on the page")
+      XCTAssertFalse(trial.canShutDown)
+      send(.exited(status: 0))
+      XCTAssertTrue(trial.showsWindow)
+      guard case .ready = trial.phase else { return XCTFail("The Try page returns, with Start") }
+    }
+
+    func testTheWindowReturnsWhenOmarchyShutsItselfDownOrFails() throws {
+      let environment = FakeTrialEnvironment()
+      let trial = ready(environment)
+      trial.start()
+      var send = try XCTUnwrap(environment.onEvent)
+      send(.ready)
+      send(.stopping)
+      XCTAssertTrue(trial.showsWindow)
+      XCTAssertEqual(trial.phase, .stopping)
+      send(.exited(status: 0))
+      XCTAssertTrue(trial.showsWindow)
+
+      trial.start()
+      send = try XCTUnwrap(environment.onEvent)
+      send(.ready)
+      XCTAssertFalse(trial.showsWindow)
+      send(.error(VMRunError(code: .qemuExited, message: "QEMU stopped")))
+      send(.exited(status: 1))
+      XCTAssertTrue(trial.showsWindow)
+      guard case .failed = trial.phase else { return XCTFail("The failure shows on the page") }
+    }
+
+    func testTheWindowStaysWhenShutDownComesBeforeOmarchyIsUp() throws {
+      let environment = FakeTrialEnvironment()
+      let trial = ready(environment)
+      trial.start()
+      let send = try XCTUnwrap(environment.onEvent)
+      trial.shutDown()
+      send(.ready)
+      XCTAssertTrue(trial.showsWindow)
+      XCTAssertEqual(trial.phase, .stopping)
+    }
+
+    func testReopeningShowsTheRunningPageReadAgain() throws {
+      let environment = FakeTrialEnvironment()
+      environment.makeVM()
+      let trial = TrialSession(environment: environment)
+      trial.openAtLaunch()
+      let send = try XCTUnwrap(environment.onEvent)
+      send(.ready)
+      XCTAssertFalse(trial.showsWindow, "The remembered start closes the window too")
+
+      environment.permissionState.microphone = .allowed
+      trial.reopenWindow()
+      XCTAssertTrue(trial.showsWindow)
+      XCTAssertEqual(trial.phase, .running(environment.permissionState))
+      XCTAssertTrue(trial.isActive)
+    }
+
+    func testMigrateFromTheMenuBringsTheWindowBackForItsNotice() throws {
+      let environment = FakeTrialEnvironment()
+      environment.makeVM()
+      let trial = TrialSession(environment: environment)
+      trial.openAtLaunch()
+      let send = try XCTUnwrap(environment.onEvent)
+      send(.ready)
+      trial.follow(.supported)
+      trial.chooseInstall {}
+      XCTAssertTrue(trial.showsMigrationNotice)
+      XCTAssertTrue(trial.showsWindow)
+    }
+
+    /// A grant made in System Settings shows once the app is active again or
+    /// System Settings closes, both of which refresh the page.
+    func testAGrantInSystemSettingsShowsOnRefresh() throws {
+      let environment = FakeTrialEnvironment()
+      let trial = ready(environment)
+      environment.permissionState.accessibility = .allowed
+      guard case .ready(_, let before) = trial.phase else { return XCTFail("The Try page") }
+      XCTAssertEqual(before.accessibility, .notAsked)
+      trial.refresh()
+      guard case .ready(_, let after) = trial.phase else { return XCTFail("The Try page") }
+      XCTAssertEqual(after.accessibility, .allowed)
+
+      trial.start()
+      let send = try XCTUnwrap(environment.onEvent)
+      send(.ready)
+      environment.permissionState.camera = .allowed
+      trial.refresh()
+      XCTAssertEqual(trial.phase, .running(environment.permissionState))
+      XCTAssertFalse(trial.showsWindow, "A refresh leaves the window where it is")
+    }
   }
 #endif
