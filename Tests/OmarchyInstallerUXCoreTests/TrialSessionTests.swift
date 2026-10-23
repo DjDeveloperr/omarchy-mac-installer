@@ -80,7 +80,7 @@
       XCTAssertTrue(space.isEnough)
       XCTAssertEqual(permissions.camera, .refused)
       XCTAssertTrue(trial.canStart)
-      XCTAssertEqual(trial.startTitle, "Download and start")
+      XCTAssertEqual(trial.startTitle, "Download and launch")
       trial.requestAccessibility()
       await trial.requestMicrophone()
       guard case .ready(_, let updated) = trial.phase else {
@@ -111,7 +111,7 @@
       let environment = FakeTrialEnvironment()
       environment.currentSpace = TrialSpace(
         requiredBytes: 1_073_741_824, freeBytes: 5_000_000_000, hasVM: true)
-      XCTAssertEqual(ready(environment).startTitle, "Start")
+      XCTAssertEqual(ready(environment).startTitle, "Launch")
     }
 
     func testWithoutAKitThereIsNoTrial() {
@@ -145,7 +145,7 @@
       XCTAssertEqual(environment.shutdowns, 1)
       send(.stopping)
       send(.exited(status: 0))
-      guard case .ready = trial.phase else { return XCTFail("The Try page stays, with Start") }
+      guard case .ready = trial.phase else { return XCTFail("The Try page stays, with Launch") }
       XCTAssertEqual(continued, 2)
       XCTAssertFalse(trial.isActive)
 
@@ -581,9 +581,9 @@
       }
       XCTAssertTrue(space.hasVM)
       XCTAssertEqual(permissions, environment.permissionState)
-      XCTAssertNil(environment.onEvent, "Nothing starts before Start")
+      XCTAssertNil(environment.onEvent, "Nothing starts before Launch")
       XCTAssertFalse(trial.isActive)
-      XCTAssertEqual(trial.startTitle, "Start")
+      XCTAssertEqual(trial.startTitle, "Launch")
       XCTAssertTrue(trial.canStart)
       XCTAssertEqual(trial.subheadline, PlainLanguage.trialReadySubheadline)
 
@@ -646,7 +646,7 @@
       guard case .failed = trial.phase else { return XCTFail("The failure stays on the page") }
       trial.dismiss()
       guard case .ready = trial.phase else { return XCTFail("Back leads to the Try page") }
-      XCTAssertEqual(trial.startTitle, "Start")
+      XCTAssertEqual(trial.startTitle, "Launch")
     }
 
     // MARK: Coming from Try Omarchy
@@ -807,7 +807,7 @@
       XCTAssertTrue(trial.showsLanding)
       XCTAssertEqual(trial.landing.installTitle, "Install on this Mac")
       trial.present()
-      XCTAssertEqual(trial.startTitle, "Download and start")
+      XCTAssertEqual(trial.startTitle, "Download and launch")
     }
 
     func testAFailedDeletionKeepsTheVM() {
@@ -971,7 +971,7 @@
       XCTAssertFalse(trial.canShutDown)
       send(.exited(status: 0))
       XCTAssertTrue(trial.showsWindow)
-      guard case .ready = trial.phase else { return XCTFail("The Try page returns, with Start") }
+      guard case .ready = trial.phase else { return XCTFail("The Try page returns, with Launch") }
     }
 
     func testTheWindowReturnsWhenOmarchyShutsItselfDownOrFails() throws {

@@ -287,9 +287,9 @@
 
     public var startTitle: String {
       guard case .ready(let space, _) = phase, space.hasVM else {
-        return PlainLanguage.trialDownloadAndStart
+        return PlainLanguage.trialDownloadAndLaunch
       }
-      return PlainLanguage.trialStart
+      return PlainLanguage.trialLaunch
     }
 
     /// Install on this Mac, or Migrate to Native, beside Shut Down on the
@@ -369,9 +369,9 @@
     }
 
     /// The remembered choice: with a VM, the app opens on the Try page, with
-    /// Allow and Start, while the installer inspects the Mac in the
+    /// Allow and Launch, while the installer inspects the Mac in the
     /// background. Back leads to the landing page, which shows at once
-    /// without a VM. Nothing starts until the person presses Start. Runs once
+    /// without a VM. Nothing starts until the person presses Launch. Runs once
     /// per launch.
     public func openAtLaunch() {
       guard !launched else { return }
@@ -689,7 +689,7 @@
       return .ready(space, environment.permissions())
     }
 
-    /// Where Try rests once Omarchy has shut down: the Try page, with Start
+    /// Where Try rests once Omarchy has shut down: the Try page, with Launch
     /// and Back, unless the installer's page needs the floor.
     private func restingPhase() -> TrialPhase {
       installerNeedsPage ? .hidden : readyPhase()
