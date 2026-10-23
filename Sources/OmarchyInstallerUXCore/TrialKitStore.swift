@@ -86,18 +86,20 @@
     }
 
     /// A new, empty folder for one check's download, locked until the lease
-    /// is released.
+    /// is released. The store's lock keeps `removeUnused` in another
+    /// installer from taking the folder before its lease does.
     func freshIncoming() throws -> (URL, TrialKitLease) {
-      try createFolder()
-      let folder = directory.appendingPathComponent(
-        Self.incomingPrefix + UUID().uuidString.lowercased(), isDirectory: true)
-      try FileManager.default.createDirectory(
-        at: folder, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-      guard let lease = TrialKitLease(folder: folder, exclusive: true) else {
-        try? FileManager.default.removeItem(at: folder)
-        throw CocoaError(.fileLocking)
+      try withLock {
+        let folder = directory.appendingPathComponent(
+          Self.incomingPrefix + UUID().uuidString.lowercased(), isDirectory: true)
+        try FileManager.default.createDirectory(
+          at: folder, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        guard let lease = TrialKitLease(folder: folder, exclusive: true) else {
+          try? FileManager.default.removeItem(at: folder)
+          throw CocoaError(.fileLocking)
+        }
+        return (folder, lease)
       }
-      return (folder, lease)
     }
 
     /// Moves a checked kit's folder in and points `current` at it, unless
