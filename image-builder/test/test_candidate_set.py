@@ -103,7 +103,8 @@ class CandidateSetTest(unittest.TestCase):
         self.assertIn("uboot-aurora", {p["name"] for p in summary["packages"]})
 
     def test_the_replaced_asahi_boot_chain_is_refused(self):
-        for name, version in (("m1n1-aurora", "1.5.0-1"), ("uboot-asahi", "2026.07.asahi2-1")):
+        for name, version in (("aura", "0.1.0.r20261023-1"), ("m1n1-neo", "1.6.1.aurora16-1"),
+                              ("uboot-asahi", "2026.07.asahi2-1")):
             with self.subTest(name):
                 directory = self.work / f"refused-{name}"
                 receipt = fixtures.make_set(directory, self.signer, versions={name: version},
@@ -236,7 +237,9 @@ class CandidateSetTest(unittest.TestCase):
             self.verify(directory, receipt)
 
     def test_version_below_a_minimum(self):
-        for name, low in (("limine-mkinitcpio-hook", "1.38.0-1.1"), ("omarchy-mac-boot", "20260921-9")):
+        # m1n1-aurora 1.6.1.aurora1 is the aurora-silicon build without the m1n1-aurora Stage 1.
+        for name, low in (("limine-mkinitcpio-hook", "1.38.0-1.1"), ("omarchy-mac-boot", "20260921-9"),
+                          ("m1n1-aurora", "1.6.1.aurora1-3")):
             with self.subTest(name=name):
                 directory = self.work / name
                 receipt = fixtures.make_set(directory, self.signer, versions={name: low})

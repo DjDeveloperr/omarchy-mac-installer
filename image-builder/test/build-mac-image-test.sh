@@ -70,7 +70,7 @@ cat >"$candidates/import.json" <<'EOF'
   {"name": "omarchy-mac", "version": "0.1.0-1", "filename": "m.pkg.tar.xz", "group": "runtime"},
   {"name": "omarchy-mac-boot", "version": "20260921-10", "filename": "b.pkg.tar.xz", "group": "runtime"},
   {"name": "linux-aurora", "version": "7.0-1", "filename": "k.pkg.tar.zst", "group": "boot"},
-  {"name": "aura", "version": "1.6.1-1", "filename": "n.pkg.tar.zst", "group": "boot"},
+  {"name": "m1n1-aurora", "version": "1.6.1.aurora20-3", "filename": "n.pkg.tar.zst", "group": "boot"},
   {"name": "uboot-aurora", "version": "2026.07-1", "filename": "u.pkg.tar.zst", "group": "boot"},
   {"name": "aurora-audio", "version": "4.1.aurora2-1", "filename": "audio.pkg.tar.zst", "group": "support"},
   {"name": "alsa-ucm-conf-aurora", "version": "10.aurora2-1", "filename": "ucm.pkg.tar.zst", "group": "support"},
@@ -212,7 +212,7 @@ target_pacman() {
     return
   fi
   printf '%s\n' "$@" >"$scratch/requested"
-  for name in omarchy omarchy-settings omarchy-mac omarchy-mac-boot linux-aurora aura uboot-aurora aurora-audio alsa-ucm-conf-aurora speakerguardd omarchy-aurora-firmware mesa-aurora vulkan-aurora aurora-bless; do
+  for name in omarchy omarchy-settings omarchy-mac omarchy-mac-boot linux-aurora m1n1-aurora uboot-aurora aurora-audio alsa-ucm-conf-aurora speakerguardd omarchy-aurora-firmware mesa-aurora vulkan-aurora aurora-bless; do
     if [[ $resolution == stolen && $name == uboot-aurora ]]; then
       echo "asahi-alarm uboot-aurora 2026.07.asahi1-1"
     else
@@ -239,7 +239,7 @@ pass "Neo images reject incomplete support packages before transactions"
 (fail() { builder_fail "$@"; }; precheck_transaction; printf '%s\n' "${base_names[@]}" >"$scratch/base"; printf '%s\n' "${unavailable[@]}" >"$scratch/missing") >/dev/null
 [[ $(<"$scratch/base") == hyprland && $(<"$scratch/missing") == obs-studio ]] ||
   fail "base names the pinned repositories lack are left out and recorded"
-for name in omarchy omarchy-settings omarchy-mac omarchy-mac-boot linux-aurora aura uboot-aurora aurora-audio alsa-ucm-conf-aurora speakerguardd omarchy-aurora-firmware mesa-aurora vulkan-aurora aurora-bless; do
+for name in omarchy omarchy-settings omarchy-mac omarchy-mac-boot linux-aurora m1n1-aurora uboot-aurora aurora-audio alsa-ucm-conf-aurora speakerguardd omarchy-aurora-firmware mesa-aurora vulkan-aurora aurora-bless; do
   grep -Fxq "omarchy-candidates/$name" "$scratch/requested" || fail "the pre-check resolves $name by its qualified name"
   ! grep -Fxq "$name" "$scratch/requested" || fail "the pre-check also asks for a plain $name"
 done
@@ -279,7 +279,7 @@ mkdir -p "$target"
 mount_api() { :; }
 unmount_api() { :; }
 chown() { :; }
-pacman() { printf 'omarchy 4.0.0-1\nomarchy-settings 4.0.0-1\nomarchy-mac 0.1.0-1\nomarchy-mac-boot 20260921-10\nlinux-aurora 7.0-1\naura 1.6.1-1\nuboot-aurora 2026.07-1\naurora-audio 4.1.aurora2-1\nalsa-ucm-conf-aurora 10.aurora2-1\nspeakerguardd 0.1.0.aurora2-1\nomarchy-aurora-firmware 20261014-2\nmesa-aurora 26.3-1\nvulkan-aurora 26.3-1\naurora-bless 0.4-1\n'; }
+pacman() { printf 'omarchy 4.0.0-1\nomarchy-settings 4.0.0-1\nomarchy-mac 0.1.0-1\nomarchy-mac-boot 20260921-10\nlinux-aurora 7.0-1\nm1n1-aurora 1.6.1.aurora20-3\nuboot-aurora 2026.07-1\naurora-audio 4.1.aurora2-1\nalsa-ucm-conf-aurora 10.aurora2-1\nspeakerguardd 0.1.0.aurora2-1\nomarchy-aurora-firmware 20261014-2\nmesa-aurora 26.3-1\nvulkan-aurora 26.3-1\naurora-bless 0.4-1\n'; }
 target_pacman() {
   [[ -e $target/var/lib/omarchy/image/target ]] && manifest=yes || manifest=no
   printf '%s manifest=%s\n' "$*" "$manifest" >>"$scratch/transactions"
@@ -295,7 +295,7 @@ mapfile -t transactions <"$scratch/transactions"
 # This fixture is a Neo set: its reviewed Mesa installs with the runtime.
 [[ ${transactions[1]} == "-S omarchy-candidates/omarchy hyprland omarchy-candidates/mesa-aurora omarchy-candidates/vulkan-aurora manifest=yes" ]] ||
   fail "the runtime comes next, after the manifest: ${transactions[1]}"
-for name in omarchy-mac omarchy-mac-boot linux-aurora aura uboot-aurora; do
+for name in omarchy-mac omarchy-mac-boot linux-aurora m1n1-aurora uboot-aurora; do
   [[ " ${transactions[2]} " == *" omarchy-candidates/$name "* ]] || fail "the Apple set installs $name by its qualified name"
 done
 [[ " ${transactions[2]} " == *" omarchy-candidates/alsa-ucm-conf-aurora omarchy-candidates/aurora-audio "* ]] ||
@@ -930,23 +930,72 @@ else
   echo "skip - pacman resolution of the repository order (no pacman on this host)"
 fi
 
-# Every image stages the engine's matched J700 board contract from the authenticated Aura package.
+# The boot transaction, where pacman exists, with omacom/omarchy-pkgs#1513's
+# metadata: m1n1-aurora and uboot-aurora fill every virtual boot dependency
+# themselves, so neither the packages m1n1-aurora replaces nor the stock Asahi
+# ones are pulled in beside them, though every repository still carries them.
+if command -v pacman >/dev/null 2>&1; then
+  boot_db() {
+    local repository=$1 tree=$scratch/boot-db-$1 entry name version fields
+    shift
+    mkdir -p "$tree" "$scratch/boot-dbpath/sync"
+    for entry in "$@"; do
+      IFS='|' read -r name version fields <<<"$entry"
+      mkdir -p "$tree/$name-$version"
+      {
+        printf '%%FILENAME%%\n%s-%s-any.pkg.tar.zst\n\n%%NAME%%\n%s\n\n%%VERSION%%\n%s\n\n' "$name" "$version" "$name" "$version"
+        printf '%%ARCH%%\nany\n\n%%CSIZE%%\n1\n\n%b' "$fields"
+      } >"$tree/$name-$version/desc"
+    done
+    (cd "$tree" && bsdtar -czf "$scratch/boot-dbpath/sync/$repository.db" -- *)
+  }
+  boot_db omarchy-candidates \
+    'm1n1-aurora|1.6.1.aurora20-3|%DEPENDS%\nasahi-scripts>=20260127.1\nuboot-asahi\n\n%PROVIDES%\nm1n1=1.6.1.aurora20\nm1n1-neo=1.6.1.aurora20\n\n%CONFLICTS%\nm1n1\naura\nm1n1-neo\n\n%REPLACES%\naura\nm1n1-neo\n\n' \
+    'uboot-aurora|2026.07.aurora2-1|%PROVIDES%\nuboot-asahi=2026.07.aurora2\n\n%CONFLICTS%\nuboot-asahi\nuboot-asahi-j700\n\n' \
+    'omarchy-mac-boot|20261023-1|%DEPENDS%\nasahi-scripts\nm1n1\nuboot-asahi\n\n'
+  boot_db omarchy \
+    'aura|0.1.0.r20261023-1|%PROVIDES%\nm1n1=1.6.1.aurora19\nm1n1-aurora=1.6.1.aurora19\nm1n1-neo=1.6.1.aurora19\n\n%CONFLICTS%\nm1n1\nm1n1-aurora\nm1n1-neo\n\n' \
+    'm1n1-neo|1.6.1.aurora16-1|%PROVIDES%\nm1n1=1.6.1.aurora16\n\n%CONFLICTS%\nm1n1\n\n'
+  boot_db asahi-alarm 'm1n1|1.6.1-1|' 'uboot-asahi|2026.07.asahi2-1|' 'asahi-scripts|20260127.1-1|'
+  {
+    printf '[options]\nArchitecture = auto\nSigLevel = Never\n'
+    for repository in omarchy-candidates omarchy asahi-alarm; do
+      printf '[%s]\nServer = file:///nonexistent/%s\n' "$repository" "$repository"
+    done
+  } >"$scratch/boot.conf"
+  boot_resolved() {
+    pacman --config "$scratch/boot.conf" --dbpath "$scratch/boot-dbpath" --noconfirm -Sp --print-format '%r %n' "$@" 2>&1 | sort
+  }
+  expected=$'asahi-alarm asahi-scripts\nomarchy-candidates m1n1-aurora\nomarchy-candidates omarchy-mac-boot\nomarchy-candidates uboot-aurora'
+  [[ $(boot_resolved omarchy-candidates/m1n1-aurora omarchy-candidates/uboot-aurora omarchy-candidates/omarchy-mac-boot) == "$expected" ]] ||
+    fail "the boot transaction resolves to m1n1-aurora, uboot-aurora and nothing they replace: $(boot_resolved omarchy-candidates/m1n1-aurora omarchy-candidates/uboot-aurora omarchy-candidates/omarchy-mac-boot)"
+  # Without uboot-aurora in the same transaction the virtual dependency takes the
+  # stock uboot-asahi, which the pre-check refuses.
+  grep -Fxq 'asahi-alarm uboot-asahi' <<<"$(boot_resolved omarchy-candidates/m1n1-aurora)" ||
+    fail "m1n1-aurora alone pulls the stock uboot-asahi: $(boot_resolved omarchy-candidates/m1n1-aurora)"
+  pass "pacman resolves the boot set to m1n1-aurora and uboot-aurora, never aura, m1n1-neo, m1n1 or uboot-asahi"
+else
+  echo "skip - pacman resolution of the boot transaction (no pacman on this host)"
+fi
+
+# Every image stages the engine's matched J700 board contract from the authenticated m1n1-aurora package.
 (
   candidates=$scratch/board-boot-inputs
   target=$scratch/board-boot-target
-  mkdir -p "$candidates" "$target/usr/share/aura/stage1" "$target/boot/efi/m1n1"
+  mkdir -p "$candidates" "$target/usr/share/m1n1-aurora/stage1" "$target/usr/share/aura/stage1" "$target/boot/efi/m1n1"
   echo '{}' >"$candidates/import.json"
-  printf 'authenticated raw Stage 1' >"$target/usr/share/aura/stage1/aura-raw.bin"
+  printf 'authenticated raw Stage 1' >"$target/usr/share/m1n1-aurora/stage1/m1n1-raw.bin"
+  printf 'legacy installer copy' >"$target/usr/share/aura/stage1/aura-raw.bin"
   printf 'assembled Stage 2' >"$target/boot/efi/m1n1/boot.bin"
   stage_board_boot_payloads
-  cmp "$target/usr/share/aura/stage1/aura-raw.bin" "$target/boot/efi/aurora/stage1-j700.bin" || exit 1
+  cmp "$target/usr/share/m1n1-aurora/stage1/m1n1-raw.bin" "$target/boot/efi/aurora/stage1-j700.bin" || exit 1
   cmp "$target/boot/efi/m1n1/boot.bin" "$target/boot/efi/m1n1/boot-j700.bin" || exit 1
-  rm "$target/usr/share/aura/stage1/aura-raw.bin"
+  rm "$target/usr/share/m1n1-aurora/stage1/m1n1-raw.bin"
   if (fail() { builder_fail "$@"; }; stage_board_boot_payloads) >/dev/null 2>&1; then
     exit 1
   fi
 ) || fail "the J700 boot payloads are missing or mismatched"
-pass "every image stages matched J700 board payloads and rejects a missing Aura Stage 1"
+pass "every image stages matched J700 board payloads from the canonical Stage 1 and rejects a missing one"
 
 # Base runtime requests must resolve to the same reviewed stack as Apple requests.
 (

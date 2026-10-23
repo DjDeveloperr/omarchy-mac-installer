@@ -241,7 +241,7 @@ def installed_package_names(root: Path) -> set[str]:
 # role must not satisfy image inspection. Candidate signature/source checks
 # still happen independently before this installed-system check.
 AURORA_REPLACEMENTS = {
-    "aura": {"m1n1-aurora"}, "uboot-aurora": {"uboot-asahi"},
+    "uboot-aurora": {"uboot-asahi"},
     "mesa-aurora": {"mesa"}, "vulkan-aurora": {"vulkan-asahi"},
     "aurora-bless": {"asahi-bless"},
     "aurora-audio": {"asahi-audio"},
