@@ -86,7 +86,7 @@
     func testTheTryScreenShowsSpaceAndOptionalPermissions() async {
       let environment = FakeTrialEnvironment()
       let trial = ready(environment)
-      XCTAssertEqual(trial.landing.tryTitle, "Try in a VM")
+      XCTAssertEqual(trial.landing.tryTitle, "Try it in a VM")
       guard case .ready(let space, let permissions) = trial.phase else {
         return XCTFail("Expected the Try screen")
       }
@@ -234,13 +234,29 @@
         XCTAssertEqual(trial.phase, .hidden, "\(status)")
         XCTAssertTrue(trial.showsLanding, "\(status)")
         XCTAssertEqual(trial.landing.installTitle, "Install on this Mac")
-        XCTAssertEqual(
-          trial.landing.installDetail, "Put Omarchy on this Mac’s own disk, beside macOS.")
-        XCTAssertEqual(trial.landing.tryTitle, "Try in a VM")
-        XCTAssertEqual(
-          trial.landing.tryDetail,
-          "Omarchy opens in a window beside macOS, without changing your disk.")
+        XCTAssertEqual(trial.landing.tryTitle, "Try it in a VM")
+        XCTAssertNil(trial.landing.tryLine)
       }
+      XCTAssertEqual(
+        landing(.supported).landing.choiceLine,
+        "Install Omarchy on this Mac, or try it in a window beside macOS.")
+      XCTAssertNil(landing(.checking).landing.choiceLine)
+      XCTAssertNil(landing(.installed).landing.choiceLine)
+      XCTAssertNil(landing(.supported, vm: true).landing.choiceLine)
+    }
+
+    func testTheLandingPageNamesTheSpaceForTry() {
+      XCTAssertNil(landing(.supported).landing.spaceLine, "Enough room needs no line")
+      XCTAssertEqual(
+        landing(.supported, vm: true).landing.spaceLine,
+        "40 GB is free on the disk that holds Omarchy’s virtual machine.")
+      let environment = FakeTrialEnvironment()
+      environment.currentSpace = TrialSpace(
+        requiredBytes: 15_000_000_000, freeBytes: 10_000_000_000, hasVM: false)
+      let trial = TrialSession(environment: environment)
+      trial.openAtLaunch()
+      XCTAssertEqual(trial.landing.spaceLine, "Try needs 15 GB of free space. 10 GB is free.")
+      XCTAssertTrue(trial.landing.spaceIsShort)
       XCTAssertEqual(landing(.checking).landing.install, .checking)
       XCTAssertEqual(landing(.supported).landing.install, .available)
       XCTAssertFalse(landing(.supported).landing.tryIsPrimary)
@@ -345,8 +361,8 @@
       XCTAssertEqual(trial.installTitle, "Migrate to Native")
       XCTAssertEqual(trial.installMenuTitle, "Migrate to Native…")
       XCTAssertEqual(trial.landing.install, .available)
-      XCTAssertEqual(trial.landing.tryTitle, "Try in a VM")
-      XCTAssertEqual(trial.landing.tryDetail, "Omarchy is set up and ready.")
+      XCTAssertEqual(trial.landing.tryTitle, "Try it in a VM")
+      XCTAssertEqual(trial.landing.tryLine, "Omarchy is set up and ready.")
       XCTAssertTrue(trial.landing.tryIsPrimary)
 
       var installs = 0
@@ -621,7 +637,7 @@
       XCTAssertNil(environment.onEvent, "Nothing starts before this app has its permissions")
       XCTAssertTrue(trial.showsLanding)
       XCTAssertEqual(trial.landing.installTitle, "Migrate to Native")
-      XCTAssertEqual(trial.landing.tryDetail, "Omarchy is set up and ready.")
+      XCTAssertEqual(trial.landing.tryLine, "Omarchy is set up and ready.")
       trial.present()
       guard case .ready(let space, let permissions) = trial.phase else {
         return XCTFail("Expected the Try page")
@@ -672,7 +688,7 @@
       send(.exited(status: 0))
       guard case .ready = trial.phase else { return XCTFail("A moved VM keeps the Try page") }
       XCTAssertEqual(
-        trial.landing.tryDetail, "Omarchy is set up in the folder chosen in Try Omarchy.")
+        trial.landing.tryLine, "Omarchy is set up in the folder chosen in Try Omarchy.")
       XCTAssertEqual(trial.startTitle, "Start")
       await trial.settled()
       XCTAssertEqual(trial.vmBytes, 9_400_000_000)
@@ -703,6 +719,8 @@
       trial.openAtLaunch()
       XCTAssertNil(environment.onEvent, "Nothing starts without the drive")
       XCTAssertTrue(trial.showsLanding)
+      XCTAssertEqual(
+        trial.landing.tryLine, "Omarchy’s virtual machine is on a drive that isn’t connected.")
       trial.present()
       guard case .ready(let space, _) = trial.phase else { return XCTFail("Expected the Try page") }
       XCTAssertFalse(trial.canStart)

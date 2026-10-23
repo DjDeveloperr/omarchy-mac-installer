@@ -5,7 +5,7 @@
   extension PlainLanguage {
     // MARK: Try — Omarchy in a VM
 
-    public static let trialEntry = "Try in a VM"
+    public static let trialEntry = "Try it in a VM"
     public static let trialHeadline = "Try Omarchy in a VM"
     public static let trialSubheadline =
       "Omarchy runs in a virtual machine, in a window beside macOS, without changing your disk. When it first starts, it asks for your account, keyboard and time zone."
@@ -43,12 +43,8 @@
 
     // MARK: Try — the landing page
 
-    public static let trialInstallDetail = "Put Omarchy on this Mac’s own disk, beside macOS."
-    public static let trialEntryDetail =
-      "Omarchy opens in a window beside macOS, without changing your disk."
-    public static let trialEntryReadyDetail = "Omarchy is set up and ready."
-    public static let trialEntryChosenFolderDetail =
-      "Omarchy is set up in the folder chosen in Try Omarchy."
+    public static let trialLandingChoice =
+      "Install Omarchy on this Mac, or try it in a window beside macOS."
     public static let trialCheckingInstall = inspectingHeadline
     public static let trialInstallDetails = "Details"
     public static let trialModelLine = "Omarchy can’t be installed on this Mac model yet."
@@ -56,7 +52,6 @@
     // MARK: Try — Migrate to Native
 
     public static let trialMigrate = "Migrate to Native"
-    public static let trialMigrateDetail = "Move to Omarchy on this Mac’s own disk, beside macOS."
     public static let trialMigrationNoticeTitle = "Moving your files to a native install is coming"
     public static let trialMigrationNoticeMessage =
       "A later version will move the home folder from Omarchy’s virtual machine onto this Mac before installing. Installing now leaves the virtual machine in place, and you can keep opening it from Try."
@@ -126,6 +121,27 @@
         ? " Emptying the Trash frees up to \(size(bytes))." : ""
       return
         "Omarchy’s virtual machine, with everything saved in it, moves to the Trash.\(frees) The next start downloads Omarchy again."
+    }
+
+    /// The landing page's space line: what is free for the VM once one
+    /// exists, and before that only what a new one lacks.
+    public static func trialLandingSpace(_ space: TrialSpace) -> String? {
+      guard space.missingFolder == nil, let free = space.freeBytes else { return nil }
+      if space.hasVM { return trialSpace(space) }
+      guard space.isShort else { return nil }
+      return "Try needs \(size(space.requiredBytes)) of free space. \(size(free)) is free."
+    }
+
+    /// What the landing page says about the VM, above the buttons.
+    public static func trialLandingVMLine(_ root: TrialVMRoot?) -> String {
+      switch root?.missing {
+      case .disconnectedDrive: "Omarchy’s virtual machine is on a drive that isn’t connected."
+      case .removed: "Omarchy’s virtual machine isn’t in the folder chosen in Try Omarchy."
+      case nil:
+        root?.isDefault == false
+          ? "Omarchy is set up in the folder chosen in Try Omarchy."
+          : "Omarchy is set up and ready."
+      }
     }
 
     /// Why this Mac can't install: the failure's own headline, or for a Mac
