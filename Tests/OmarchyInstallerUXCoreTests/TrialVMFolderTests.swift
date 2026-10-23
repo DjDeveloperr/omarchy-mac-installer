@@ -152,6 +152,40 @@
       XCTAssertFalse(TrialVMRoot.resolved(elsewhere, defaultRoot: root).sharesMacOSVolume)
     }
 
+    func testAChosenFolderThatIsNotThereIsNamed() throws {
+      let volumes = base.appendingPathComponent("Volumes", isDirectory: true)
+      let connected = volumes.appendingPathComponent("Connected", isDirectory: true)
+      try FileManager.default.createDirectory(at: connected, withIntermediateDirectories: true)
+      XCTAssertEqual(
+        TrialVMRoot.missing(
+          volumes.appendingPathComponent("Studio/Try Omarchy"), volumes: volumes),
+        .disconnectedDrive)
+      XCTAssertEqual(
+        TrialVMRoot.missing(connected.appendingPathComponent("Try Omarchy"), volumes: volumes),
+        .removed)
+      XCTAssertNil(TrialVMRoot.missing(connected, volumes: volumes))
+      XCTAssertEqual(
+        TrialVMRoot.missing(base.appendingPathComponent("Gone"), volumes: volumes), .removed)
+
+      let unplugged = URL(
+        fileURLWithPath: "/Volumes/\(UUID().uuidString)/Try Omarchy", isDirectory: true)
+      let location = TrialVMRoot.resolved(unplugged, defaultRoot: root)
+      XCTAssertEqual(location.missing, .disconnectedDrive)
+      XCTAssertFalse(location.isDefault)
+      let space = TrialSpace.of(location) { _ in
+        XCTFail("No free space is read for a drive that isn't there")
+        return nil
+      }
+      XCTAssertEqual(space.missingFolder, .disconnectedDrive)
+      XCTAssertFalse(space.hasVM)
+      XCTAssertTrue(space.remembersVM)
+      XCTAssertFalse(space.isEnough)
+
+      try FileManager.default.removeItem(at: root)
+      XCTAssertNil(
+        TrialVMRoot.resolved(root, defaultRoot: root).missing, "The default is never missing")
+    }
+
     func testAStartIsRecordedInThisAppsFolder() throws {
       let record = TrialStartRecord.under(applicationSupport: base, workspace: "installer")
       XCTAssertEqual(

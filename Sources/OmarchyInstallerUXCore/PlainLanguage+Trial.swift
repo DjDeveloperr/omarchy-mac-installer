@@ -11,6 +11,8 @@
       "Omarchy runs in a virtual machine, in a window beside macOS, without changing your disk. When it first starts, it asks for your account, keyboard and time zone."
     public static let trialReadySubheadline =
       "Omarchy is set up and ready. It opens in a window beside macOS, with everything saved in its virtual machine."
+    public static let trialChosenFolderSubheadline =
+      "Omarchy is set up in the folder chosen in Try Omarchy. It opens in a window beside macOS, with everything saved in its virtual machine."
     public static let trialPermissionsNote =
       "Each permission is optional. Omarchy starts without them."
     public static let trialAccessibility = "Use ⌘ as the Super key"
@@ -123,6 +125,16 @@
     }
 
     public static func trialSpace(_ space: TrialSpace) -> String {
+      switch space.missingFolder {
+      case .disconnectedDrive:
+        return
+          "Omarchy’s virtual machine is on a drive that isn’t connected. Connect it, then start again."
+      case .removed:
+        return
+          "Omarchy’s virtual machine isn’t in the folder chosen in Try Omarchy. Put the folder back, or choose another in Try Omarchy."
+      case nil:
+        break
+      }
       let required = gigabytes(space.requiredBytes)
       guard let free = space.freeBytes else {
         return "Omarchy needs \(required) of free space."

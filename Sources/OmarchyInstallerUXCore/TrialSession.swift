@@ -50,14 +50,26 @@
     public let freeBytes: Int64?
     /// A VM already exists, so starting downloads nothing.
     public let hasVM: Bool
+    /// The folder chosen in Try Omarchy isn't there, so nothing can start.
+    public let missingFolder: TrialMissingFolder?
 
-    public init(requiredBytes: Int64, freeBytes: Int64?, hasVM: Bool) {
+    public init(
+      requiredBytes: Int64, freeBytes: Int64?, hasVM: Bool,
+      missingFolder: TrialMissingFolder? = nil
+    ) {
       self.requiredBytes = requiredBytes
       self.freeBytes = freeBytes
       self.hasVM = hasVM
+      self.missingFolder = missingFolder
     }
 
-    public var isEnough: Bool { (freeBytes ?? 0) >= requiredBytes }
+    public var isEnough: Bool { missingFolder == nil && (freeBytes ?? 0) >= requiredBytes }
+
+    /// Too little room, as opposed to a folder that isn't there.
+    public var isShort: Bool { missingFolder == nil && !isEnough }
+
+    /// A VM is the remembered choice, even while its folder isn't there.
+    public var remembersVM: Bool { hasVM || missingFolder != nil }
   }
 
   public enum TrialPermissionState: Equatable, Sendable {
@@ -217,7 +229,7 @@
     public init(environment: any TrialEnvironment) {
       self.environment = environment
       guard environment.isAvailable else { return }
-      hasVM = environment.space().hasVM
+      hasVM = environment.space().remembersVM
       vmRoot = environment.vmRoot()
       bridgedNetwork = environment.bridgedNetwork()
     }
@@ -240,7 +252,7 @@
     }
 
     public var startTitle: String {
-      guard case .ready(let space, _) = phase, space.hasVM else {
+      guard case .ready(let space, _) = phase, space.remembersVM else {
         return PlainLanguage.trialDownloadAndStart
       }
       return PlainLanguage.trialStart
@@ -270,10 +282,11 @@
 
     /// The Try page's line under its headline.
     public var subheadline: String {
-      guard case .ready(let space, _) = phase, space.hasVM else {
+      guard case .ready(let space, _) = phase, space.remembersVM else {
         return PlainLanguage.trialSubheadline
       }
-      return PlainLanguage.trialReadySubheadline
+      return space.hasVM
+        ? PlainLanguage.trialReadySubheadline : PlainLanguage.trialChosenFolderSubheadline
     }
 
     /// The plan review's note on the VM, which the native install leaves in
@@ -324,11 +337,11 @@
       launched = true
       guard environment.isAvailable, phase == .hidden else { return }
       let space = environment.space()
-      noteVM(space.hasVM)
-      guard space.hasVM else { return }
+      noteVM(space.remembersVM)
+      guard space.remembersVM else { return }
       let permissions = environment.permissions()
       phase = .ready(space, permissions)
-      if permissions.allAllowed || environment.hasStartedHere { start() }
+      if space.isEnough, permissions.allAllowed || environment.hasStartedHere { start() }
     }
 
     /// Follows the installer's inspection. On a Mac that can't install, and
@@ -394,7 +407,7 @@
       case .running:
         phase = .running(environment.permissions())
       default:
-        if !isActive { noteVM(environment.isAvailable && environment.space().hasVM) }
+        if !isActive { noteVM(environment.isAvailable && environment.space().remembersVM) }
       }
     }
 
@@ -616,7 +629,7 @@
 
     private func readyPhase() -> TrialPhase {
       let space = environment.space()
-      noteVM(space.hasVM)
+      noteVM(space.remembersVM)
       return .ready(space, environment.permissions())
     }
 

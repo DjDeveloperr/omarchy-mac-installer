@@ -521,6 +521,40 @@
       )
     }
 
+    func testAVMOnADriveThatIsNotConnectedSaysSo() {
+      let environment = FakeTrialEnvironment()
+      environment.root = TrialVMRoot(
+        url: movedRoot.url, isDefault: false, sharesMacOSVolume: false,
+        missing: .disconnectedDrive)
+      environment.currentSpace = TrialSpace(
+        requiredBytes: 1_073_741_824, freeBytes: nil, hasVM: false,
+        missingFolder: .disconnectedDrive)
+      environment.permissionState = TrialPermissions(
+        accessibility: .allowed, microphone: .allowed, camera: .allowed)
+      let trial = TrialSession(environment: environment)
+      XCTAssertTrue(trial.hasVM, "The VM is still the remembered choice")
+      trial.openAtLaunch()
+      XCTAssertNil(environment.onEvent, "Nothing starts without the drive")
+      guard case .ready(let space, _) = trial.phase else { return XCTFail("Expected the Try page") }
+      XCTAssertFalse(trial.canStart)
+      XCTAssertFalse(space.isShort)
+      XCTAssertEqual(trial.startTitle, "Start")
+      XCTAssertEqual(trial.subheadline, PlainLanguage.trialChosenFolderSubheadline)
+      XCTAssertEqual(
+        PlainLanguage.trialSpace(space),
+        "Omarchy’s virtual machine is on a drive that isn’t connected. Connect it, then start again."
+      )
+      trial.follow(.supported)
+      XCTAssertFalse(trial.canGoBack)
+      XCTAssertFalse(trial.canDeleteVM)
+
+      environment.root = movedRoot
+      environment.currentSpace = TrialSpace(
+        requiredBytes: 1_073_741_824, freeBytes: 400_000_000_000, hasVM: true)
+      trial.refresh()
+      XCTAssertTrue(trial.canStart, "Connecting the drive enables Start")
+    }
+
     func testTheSpaceLineNamesTheVMsDisk() {
       XCTAssertEqual(
         PlainLanguage.trialSpace(

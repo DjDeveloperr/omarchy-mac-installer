@@ -58,9 +58,9 @@ final class LiveTrialEnvironment: TrialEnvironment {
   func space() -> TrialSpace { TrialSpace.of(vmRoot()) }
 
   func vmBytes() async -> Int64 {
-    guard let root = vmRoot()?.url else { return 0 }
+    guard let root = vmRoot(), root.missing == nil else { return 0 }
     return await Task.detached(priority: .utility) {
-      TryOmarchyStorage.allocatedBytes(at: root)
+      TryOmarchyStorage.allocatedBytes(at: root.url)
     }.value
   }
 
