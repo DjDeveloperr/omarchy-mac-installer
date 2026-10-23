@@ -118,7 +118,7 @@ public struct TryOmarchyExportDiscovery: Sendable {
     _ export: TryOmarchyExport,
     isCancelled: () -> Bool = { false }
   ) throws -> TryOmarchyExport {
-    let descriptor = open(export.bundleURL.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+    let descriptor = open(export.bundleURL.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
     guard descriptor >= 0 else {
       throw TryOmarchyExportProblem.unreadable
     }
@@ -209,7 +209,7 @@ public struct TryOmarchyExportDiscovery: Sendable {
     }
 
     let bundlePath = folder.appendingPathComponent(Self.bundleName).path
-    let descriptor = open(bundlePath, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+    let descriptor = open(bundlePath, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
     guard descriptor >= 0 else {
       return .failure(errno == ELOOP ? .unsafeOwnership : .unreadable)
     }
@@ -243,8 +243,10 @@ public struct TryOmarchyExportDiscovery: Sendable {
     )
   }
 
+  /// Every open is non-blocking, so a named pipe planted in an export can't
+  /// stall discovery before its type is checked; regular files read as usual.
   private func readSmallFile(_ url: URL) -> Result<(Data, stat), TryOmarchyExportProblem> {
-    let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+    let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
     guard descriptor >= 0 else {
       return .failure(errno == ELOOP ? .unsafeOwnership : .unreadable)
     }

@@ -202,6 +202,25 @@ struct TryOmarchyExportDiscoveryTests {
     #expect(throughAlias.discover() == .failure(.exportsFolderUnsafe))
   }
 
+  @Test func refusesNamedPipesWithoutWaitingOnThem() throws {
+    let folder = try Folder()
+    let pipedReceipt = try folder.publish()
+    let pipedBundle = try folder.publish()
+    let real = try folder.publish()
+    for file in [
+      pipedReceipt.appendingPathComponent("receipt.json"),
+      pipedBundle.appendingPathComponent("bundle.age"),
+    ] {
+      try FileManager.default.removeItem(at: file)
+      #expect(mkfifo(file.path, 0o600) == 0)
+    }
+
+    let result = try folder.found()
+    #expect(result.exports.map(\.directory) == [real])
+    #expect(result.rejected[pipedReceipt.lastPathComponent] == .unsafeOwnership)
+    #expect(result.rejected[pipedBundle.lastPathComponent] == .unsafeOwnership)
+  }
+
   @Test func verificationCatchesTamperingAndChanges() throws {
     let folder = try Folder()
     try folder.publish(receipt: {

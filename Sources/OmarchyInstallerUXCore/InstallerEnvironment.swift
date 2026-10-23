@@ -603,6 +603,8 @@
     /// Hashes the chosen export's ciphertext against its receipt. Returns
     /// `.verified` or `.failed`; the passphrase is never involved.
     func verifyTryOmarchyExport(id: String) async -> TryOmarchyExportCheck
+    /// Stops a check still hashing, once nothing waits for its answer.
+    func cancelTryOmarchyExportCheck()
   }
 
   extension InstallerEnvironment {
@@ -641,5 +643,6 @@
     public func verifyTryOmarchyExport(id: String) async -> TryOmarchyExportCheck {
       .failed(PlainLanguage.tryExportMissing)
     }
+    public func cancelTryOmarchyExportCheck() {}
   }
 #endif

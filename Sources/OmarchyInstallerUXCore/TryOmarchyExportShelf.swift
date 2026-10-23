@@ -7,6 +7,8 @@
   public final class TryOmarchyExportShelf: @unchecked Sendable {
     private let lock = NSLock()
     private var exports: [String: TryOmarchyExport] = [:]
+    /// Each check is numbered; a newer check or a cancel stops older ones.
+    private var verification = 0
     private let discovery: TryOmarchyExportDiscovery
 
     public init(discovery: TryOmarchyExportDiscovery) {
@@ -49,9 +51,15 @@
       guard let export = lock.withLock({ exports[id] }) else {
         return .failed(PlainLanguage.tryExportMissing)
       }
+      let current = lock.withLock {
+        verification += 1
+        return verification
+      }
       let discovery = discovery
       let result = await Self.offCooperativePool {
-        Result { try discovery.verify(export) }
+        Result {
+          try discovery.verify(export) { [self] in lock.withLock { verification != current } }
+        }
       }
       switch result {
       case .success(let verified):
@@ -64,6 +72,11 @@
       case .failure:
         return .failed(PlainLanguage.tryExportMissing)
       }
+    }
+
+    /// Stops the check under way, if any; its answer is no longer wanted.
+    public func cancelVerification() {
+      lock.withLock { verification += 1 }
     }
 
     /// File reads and hashing can take a while; keep them off the shared pool.

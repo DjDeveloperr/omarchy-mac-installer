@@ -180,6 +180,8 @@ final class LiveInstallerEnvironment: InstallerEnvironment, @unchecked Sendable 
     await tryExportShelf.verify(id: id)
   }
 
+  func cancelTryOmarchyExportCheck() { tryExportShelf.cancelVerification() }
+
   /// Every channel's catalog, checked side by side for this Mac. A channel
   /// whose rollback state cannot be read counts as unverifiable rather than
   /// skipping the rollback check.

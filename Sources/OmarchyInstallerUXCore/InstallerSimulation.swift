@@ -203,6 +203,8 @@
       return .found(Self.simulatedTryExports, unusable: 1)
     }
 
+    public func cancelTryOmarchyExportCheck() { tryExportShelf?.cancelVerification() }
+
     public func verifyTryOmarchyExport(id: String) async -> TryOmarchyExportCheck {
       if let tryExportShelf { return await tryExportShelf.verify(id: id) }
       guard scenario == .tryExport, (try? await tick()) != nil else {
