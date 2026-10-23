@@ -5,18 +5,40 @@ import OmarchyAppleInstallerTrustCore
 import OmarchyInstallerUXCore
 import ServiceManagement
 import TryOmarchyKitClient
+import os
 
-/// Try on this Mac: the kit in Contents/Helpers, this app's own permissions,
-/// and the default VM folder it shares with Try Omarchy.
+/// Try on this Mac: the kit in Contents/Helpers or a newer one it fetched,
+/// this app's own permissions, and the default VM folder it shares with Try
+/// Omarchy.
 @MainActor
 final class LiveTrialEnvironment: TrialEnvironment {
-  private let kit = TryOmarchyKit.embedded()
-  private lazy var client = VMRunClient(kit: kit)
+  private nonisolated static let logger = Logger(
+    subsystem: InstallerProductIdentity.appIdentifier, category: "try-kit")
+  private let embedded = TrialKitLayout.embedded()
+  private let kits: TrialKitUpdater?
+  private var client: VMRunClient?
   /// The kit's networking daemon, whose job build-app.sh copies into this
   /// app's Contents/Library/LaunchDaemons.
   private let networkDaemon = SMAppService.daemon(plistName: "dev.tryomarchy.kit.network.plist")
 
-  var isAvailable: Bool { (try? kit.helperURL()) != nil }
+  init(environment: [String: String] = ProcessInfo.processInfo.environment) {
+    guard
+      let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+        .first
+    else {
+      kits = nil
+      return
+    }
+    let settings = TrialKitUpdater.Settings.from(environment: environment)
+    kits = TrialKitUpdater(
+      store: TrialKitStore.under(
+        applicationSupport: support, workspace: InstallerBuildProfile.current.workspaceName),
+      embedded: embedded, source: TrialKitReleases(base: settings.releases),
+      signatures: TrialKitSignatureCheck(policy: settings.policy),
+      network: NWInstallerNetworkPathObserver())
+  }
+
+  var isAvailable: Bool { embedded.hasLauncher }
 
   func space() -> TrialSpace {
     guard let root = TryOmarchyStorage.defaultRoot() else {
@@ -60,13 +82,27 @@ final class LiveTrialEnvironment: TrialEnvironment {
 
   func start(onEvent: @escaping @MainActor (VMRunEvent) -> Void) throws {
     if let failure = VMRunClient.preflight() { throw failure }
+    let layout = kits?.kitForNextStart() ?? embedded
+    let client =
+      self.client.flatMap { $0.kit.bundleURL == layout.kit.bundleURL ? $0 : nil }
+      ?? VMRunClient(kit: layout.kit)
+    self.client = client
+    Self.logger.info(
+      "Starting Try with kit \((try? layout.manifest().version.description) ?? "unknown", privacy: .public)"
+    )
     // The main queue keeps the events in the order the client delivers them.
     try client.start(VMRunConfiguration(productName: InstallerProductIdentity.appName)) { event in
       DispatchQueue.main.async { onEvent(event) }
     }
+    if let kits {
+      Task.detached(priority: .utility) {
+        let outcome = await kits.checkIfDue()
+        Self.logger.info("Try kit check: \(String(describing: outcome), privacy: .public)")
+      }
+    }
   }
 
-  func shutDown() { client.shutDown() }
+  func shutDown() { client?.shutDown() }
 
   func deleteVM() throws {
     guard

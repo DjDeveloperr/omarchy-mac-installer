@@ -128,6 +128,11 @@
       send(.progress(.downloading, percent: 42))
       XCTAssertEqual(trial.phase, .starting(TrialProgress(phase: .downloading, percent: 42)))
       XCTAssertTrue(trial.isActive)
+      send(
+        .notice(
+          VMRunNotice(code: .bridgedNetworkUnavailable, message: "Starting with shared networking.")
+        ))
+      XCTAssertEqual(trial.phase, .starting(TrialProgress(phase: .downloading, percent: 42)))
       send(.ready)
       XCTAssertEqual(trial.phase, .running(environment.permissionState))
 
