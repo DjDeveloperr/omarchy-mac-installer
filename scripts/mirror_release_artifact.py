@@ -39,7 +39,9 @@ import r2_s3  # noqa: E402
 Refusal = catalog_release.Refusal
 READ_BLOCK_BYTES = 8 * 1024 * 1024
 IMMUTABLE = "public, max-age=31536000, immutable"
-PUBLIC_ATTEMPTS = 6
+# Cloudflare can keep a 404 for three minutes when the URL was asked for
+# before the upload, so the readback waits about five.
+PUBLIC_DELAYS = (5, 10, 15, 30, 30, 30, 60, 60, 60)
 
 
 class Artifact:
@@ -167,9 +169,9 @@ def store(endpoint: r2_s3.Endpoint, artifact: Artifact, path: Path) -> str:
 
 
 def check_served(url: str, artifact: Artifact) -> None:
-    for attempt in range(PUBLIC_ATTEMPTS):
-        if attempt:
-            time.sleep(attempt)
+    for attempt, delay in enumerate((0, *PUBLIC_DELAYS)):
+        if delay:
+            time.sleep(delay)
         value = hashlib.sha256()
         try:
             request = urllib.request.Request(url, headers={"User-Agent": "omarchy-mac-mirror"})

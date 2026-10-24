@@ -106,14 +106,14 @@ class MirrorTests(unittest.TestCase):
         self.assertEqual(self.store, {})
 
     def test_an_asset_unlike_the_lock_is_refused(self) -> None:
+        good = dict(self.release["assets"][0])
         for change, reason in (({"digest": "sha256:" + "0" * 64}, "has digest"), ({"size": 1}, "is 1 bytes"),
                                ({"state": "starter"}, "incomplete upload"), ({"digest": None}, "has digest None")):
             with self.subTest(reason):
-                self.release["assets"][0] = {**self.release["assets"][0], **change}
+                self.release["assets"][0] = {**good, **change}
                 with self.assertRaisesRegex(mirror.Refusal, reason):
                     self.run_mirror()
-                self.setUp()
-        self.assertEqual(self.store, {})
+                self.assertEqual(self.store, {})
 
     def test_downloaded_bytes_unlike_the_digest_are_refused(self) -> None:
         self.downloaded = b"something else"
@@ -135,6 +135,24 @@ class MirrorTests(unittest.TestCase):
         endpoint.race = b"other"
         with self.assertRaisesRegex(mirror.Refusal, "already holds other bytes"):
             self.run_mirror(endpoint)
+
+    def test_a_cached_404_is_waited_out_and_a_rerun_writes_nothing(self) -> None:
+        answers = iter([urllib.error.HTTPError("u", 404, "Not Found", None, io.BytesIO(b""))] * 7)
+        serve = self.urlopen
+
+        def cached_404_first(request, timeout=None):
+            if request.full_url.startswith(mirror.catalog_release.identity()["INSTALLER_CATALOG_BASE"]):
+                failure = next(answers, None)
+                if failure is not None:
+                    raise failure
+            return serve(request, timeout)
+        mirror.urllib.request.urlopen = cached_404_first
+        _, endpoint = self.run_mirror()
+        self.assertEqual(endpoint.puts, [artifact().key])
+        self.assertGreaterEqual(sum(mirror.PUBLIC_DELAYS), 240, "Cloudflare keeps a 404 for up to three minutes")
+        mirror.urllib.request.urlopen = serve
+        _, again = self.run_mirror()
+        self.assertEqual(again.puts, [])
 
     def test_a_file_stored_but_not_served_fails(self) -> None:
         self.served = {}

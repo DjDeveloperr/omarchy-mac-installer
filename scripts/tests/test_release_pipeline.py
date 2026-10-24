@@ -252,8 +252,11 @@ class Secrets(unittest.TestCase):
         mirror = text(WORKFLOWS / "mac-mirror.yml")
         self.assertEqual(triggers(WORKFLOWS / "mac-mirror.yml"), {"workflow_dispatch"})
         job = jobs(WORKFLOWS / "mac-mirror.yml")["mirror"]
-        self.assertIn("github.ref == 'refs/heads/main'", job)
+        self.assertEqual(field(job, "if"), "github.repository == 'omacom/omarchy-mac-installer' && github.ref == 'refs/heads/main'")
         self.assertEqual(field(job, "environment"), "publish")
+        self.assertEqual(field(job, "runs-on"), "ubuntu-24.04")
+        self.assertIn("\npermissions: {}\n", mirror)
+        self.assertRegex(job, r"\n    permissions:\n      contents: read # [^\n]*\n    concurrency:")
         self.assertNotIn("pull_request", mirror)
 
     def test_catalogs_stay_on_github_until_r2_is_chosen(self):
@@ -296,7 +299,7 @@ class Secrets(unittest.TestCase):
 
 class Hardening(unittest.TestCase):
     PIPELINE_FILES = ("mac-release-pipeline.yml", "mac-acceptance.yml", "mac-image.yml", "recovery-app.yml",
-                      "mac-upload.yml", "mac-catalog.yml", "edge-dispatch.yml")
+                      "mac-upload.yml", "mac-catalog.yml", "edge-dispatch.yml", "mac-mirror.yml")
 
     def test_every_action_is_pinned_to_a_commit(self):
         for workflow in sorted(WORKFLOWS.glob("*.yml")):
