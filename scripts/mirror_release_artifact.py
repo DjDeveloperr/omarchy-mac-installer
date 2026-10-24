@@ -3,6 +3,7 @@
 R2, written once and never replaced.
 
   mirror_release_artifact.py engine
+  mirror_release_artifact.py app VERSION
 
 `engine` is the engine Engine/source-lock.json pins (`validation_artifact`),
 from its published `engine-<version>` release, to
@@ -12,6 +13,12 @@ draft, and its asset's size and GitHub-computed sha256 must be the lock's; the
 downloaded bytes must match too. An object already at the key with the same
 bytes is left alone (a re-run, or a bucket lock), and different bytes refuse.
 The file is then read back through the public URL.
+
+`app VERSION` is the notarized installer from the published `vVERSION`
+release: `<INSTALLER_FILE_STEM>-VERSION.dmg` and its `.dmg.sha256` sidecar, to
+`<catalog base>/installer/VERSION/`. Nothing in the repository pins the dmg,
+so its sha256 is the one GitHub computed for the asset, and the sidecar must
+name that digest and file. The dmg goes first, then the sidecar.
 
 This is how the x86 side publishes a released ISO: once, next to its checksum,
 never replaced. The GitHub release stays: catalogs already signed pin it.
@@ -24,6 +31,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -67,6 +75,33 @@ def pinned_engine() -> Artifact:
                     content_type="application/gzip")
 
 
+def published_app(version: str, repo: str, token: str) -> list[Artifact]:
+    """The dmg and its sidecar from the published vVERSION release."""
+    if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version) is None:
+        raise Refusal(f"an app version is X.Y.Z, not {version!r}")
+    tag = f"v{version}"
+    dmg = f"{catalog_release.identity()['INSTALLER_FILE_STEM']}-{version}.dmg"
+    names = (dmg, f"{dmg}.sha256")
+    found = {}
+    for name in names:
+        probe = Artifact(tag=tag, file_name=name, size=-1, sha256="", key="", content_type="")
+        asset = release_asset(probe, repo, token, check_bytes=False)
+        digest = asset.get("digest") or ""
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest) or not isinstance(asset.get("size"), int):
+            raise Refusal(f"{name} on {tag} has no GitHub digest ({digest or 'none'}); refusing to mirror it unchecked")
+        found[name] = Artifact(tag=tag, file_name=name, size=asset["size"], sha256=digest[7:],
+                               key=f"{base_prefix()}installer/{version}/{name}",
+                               content_type="application/x-apple-diskimage" if name == dmg else "text/plain; charset=utf-8")
+    sidecar = found[names[1]]
+    with tempfile.TemporaryDirectory(prefix="mac-mirror-") as directory:
+        path = Path(directory) / sidecar.file_name
+        download(release_asset(sidecar, repo, token)["browser_download_url"], path, sidecar)
+        line = path.read_text(errors="replace")
+    if line.split() != [found[dmg].sha256, dmg]:
+        raise Refusal(f"{sidecar.file_name} does not name {dmg} with its GitHub digest {found[dmg].sha256}")
+    return [found[dmg], sidecar]
+
+
 def base_prefix() -> str:
     """The catalog base's path in the bucket, e.g. 'v1/'."""
     path = urllib.parse.urlsplit(catalog_release.identity()["INSTALLER_CATALOG_BASE"]).path.strip("/")
@@ -88,7 +123,7 @@ def github_json(url: str, token: str) -> dict:
         return json.loads(response.read())
 
 
-def release_asset(artifact: Artifact, repo: str, token: str) -> dict:
+def release_asset(artifact: Artifact, repo: str, token: str, check_bytes: bool = True) -> dict:
     """The published release's asset, checked against what it must be."""
     try:
         release = github_json(f"https://api.github.com/repos/{repo}/releases/tags/{urllib.parse.quote(artifact.tag)}", token)
@@ -104,6 +139,8 @@ def release_asset(artifact: Artifact, repo: str, token: str) -> dict:
     asset = assets[0]
     if asset.get("state") != "uploaded":
         raise Refusal(f"{artifact.file_name} on {artifact.tag} is an incomplete upload ({asset.get('state')})")
+    if not check_bytes:
+        return asset
     if asset.get("size") != artifact.size:
         raise Refusal(f"{artifact.file_name} on {artifact.tag} is {asset.get('size')} bytes, not {artifact.size}")
     if asset.get("digest") != f"sha256:{artifact.sha256}":
@@ -205,7 +242,7 @@ def mirror(artifact: Artifact, endpoint: r2_s3.Endpoint, repo: str, token: str) 
 
 
 def main(argv: list[str]) -> int:
-    if argv != ["engine"]:
+    if argv != ["engine"] and not (len(argv) == 2 and argv[0] == "app"):
         print(__doc__.split("\n\n", 2)[1], file=sys.stderr)
         return 64
     try:
@@ -218,7 +255,10 @@ def main(argv: list[str]) -> int:
         token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN", "")
         if not token:
             raise Refusal("no GitHub token (GH_TOKEN)")
-        mirror(pinned_engine(), endpoint, catalog_release.stopgap_repo(), token)
+        repo = catalog_release.stopgap_repo()
+        artifacts = [pinned_engine()] if argv == ["engine"] else published_app(argv[1], repo, token)
+        for artifact in artifacts:
+            mirror(artifact, endpoint, repo, token)
     except Refusal as refusal:
         print(f"mirror: {refusal}", file=sys.stderr)
         return 1

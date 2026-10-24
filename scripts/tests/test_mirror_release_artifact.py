@@ -168,5 +168,78 @@ class MirrorTests(unittest.TestCase):
         self.assertEqual(engine.key, f"{mirror.base_prefix()}engine/{lock['downstream_overlay']['version']}/{engine.file_name}")
 
 
+
+class AppMirrorTests(unittest.TestCase):
+    STEM = mirror.catalog_release.identity()["INSTALLER_FILE_STEM"]
+    DMG = b"notarized disk image"
+
+    def setUp(self) -> None:
+        self.dmg = f"{self.STEM}-2.4.0.dmg"
+        self.files = {self.dmg: self.DMG,
+                      f"{self.dmg}.sha256": f"{hashlib.sha256(self.DMG).hexdigest()}  {self.dmg}\n".encode()}
+        self.release = {"tag_name": "v2.4.0", "draft": False, "prerelease": True, "assets": [
+            {"name": name, "state": "uploaded", "size": len(data), "digest": "sha256:" + hashlib.sha256(data).hexdigest(),
+             "browser_download_url": f"https://github.com/x/releases/download/v2.4.0/{name}"}
+            for name, data in self.files.items()]}
+        self.store: dict[str, bytes] = {}
+        original = mirror.urllib.request.urlopen
+        mirror.urllib.request.urlopen = self.urlopen
+        self.addCleanup(setattr, mirror.urllib.request, "urlopen", original)
+        sleep, mirror.time.sleep = mirror.time.sleep, lambda seconds: None
+        self.addCleanup(setattr, mirror.time, "sleep", sleep)
+
+    def urlopen(self, request, timeout=None):
+        url = request.full_url
+        if url.startswith("https://api.github.com/"):
+            return io.BytesIO(json.dumps(self.release).encode())
+        if url.startswith("https://github.com/"):
+            return io.BytesIO(self.files[url.rsplit("/", 1)[1]])
+        base = mirror.catalog_release.identity()["INSTALLER_CATALOG_BASE"].rstrip("/") + "/"
+        return io.BytesIO(self.store[mirror.base_prefix() + url.removeprefix(base)])
+
+    def run_app(self):
+        endpoint = FakeEndpoint(self.store)
+        with unittest.mock.patch("sys.stdout", io.StringIO()), unittest.mock.patch("sys.stderr", io.StringIO()):
+            for item in mirror.published_app("2.4.0", REPO, "token"):
+                mirror.mirror(item, endpoint, REPO, "token")
+        return endpoint
+
+    def test_the_dmg_then_its_sidecar_land_under_the_installer_path(self) -> None:
+        endpoint = self.run_app()
+        prefix = f"{mirror.base_prefix()}installer/2.4.0/"
+        self.assertEqual(endpoint.puts, [prefix + self.dmg, prefix + self.dmg + ".sha256"])
+        self.assertEqual(self.store[prefix + self.dmg], self.DMG)
+        url = mirror.public_url(prefix + self.dmg)
+        self.assertTrue(url.startswith(tuple(mirror.catalog_release.installer_bases())), "catalogs may name it")
+
+    def test_a_sidecar_naming_another_digest_or_file_is_refused(self) -> None:
+        for line in (f"{'0' * 64}  {self.dmg}\n", f"{hashlib.sha256(self.DMG).hexdigest()}  other.dmg\n"):
+            with self.subTest(line):
+                self.files[f"{self.dmg}.sha256"] = line.encode()
+                self.release["assets"][1].update(size=len(line), digest="sha256:" + hashlib.sha256(line.encode()).hexdigest())
+                with self.assertRaisesRegex(mirror.Refusal, "does not name"):
+                    self.run_app()
+                self.assertEqual(self.store, {})
+
+    def test_an_asset_without_a_github_digest_is_refused(self) -> None:
+        self.release["assets"][0]["digest"] = None
+        with self.assertRaisesRegex(mirror.Refusal, "has no GitHub digest"):
+            self.run_app()
+
+    def test_a_draft_release_or_a_bad_version_is_refused(self) -> None:
+        with self.assertRaisesRegex(mirror.Refusal, "X.Y.Z"):
+            mirror.published_app("2.4.0-beta", REPO, "token")
+        self.release["draft"] = True
+        with self.assertRaisesRegex(mirror.Refusal, "not a published release"):
+            self.run_app()
+        self.assertEqual(self.store, {})
+
+    def test_the_command_line_takes_engine_or_app_version(self) -> None:
+        with unittest.mock.patch("sys.stderr", io.StringIO()):
+            self.assertEqual(mirror.main([]), 64)
+            self.assertEqual(mirror.main(["app"]), 64)
+            self.assertEqual(mirror.main(["dmg", "2.4.0"]), 64)
+
+
 if __name__ == "__main__":
     unittest.main()
