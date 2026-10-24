@@ -18,10 +18,11 @@ name: Mac release pipeline
 #   upload      mac-upload.yml, only after passing evidence: in the publish
 #               environment (main only) it re-checks the evidence, the
 #               evidence's attestation by mac-acceptance.yml and the image's
-#               build attestation, uploads, publishes the draft as a
-#               prerelease and outputs the catalog's payload, installer-data
-#               and evidence inputs. A dry run uploads to a scratch release
-#               and deletes it.
+#               build attestation, uploads to the `host` input's destination
+#               (a GitHub draft it then publishes as a prerelease, or R2,
+#               public as written) and outputs the catalog's payload,
+#               installer-data and evidence inputs. A dry run uploads to a
+#               scratch release and deletes it.
 #   catalog     mac-catalog.yml, real runs only: re-checks the evidence for the
 #               payload's digest, checks every URL serves its pinned bytes,
 #               and signs in catalog-release, which waits for the owner's

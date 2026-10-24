@@ -8,7 +8,7 @@
 | `build` | `mac-image.yml` | after `plan` | no secrets; the native Recovery app built on macOS (`recovery-app.yml`) and required in the image; the release guard; a build attestation on the zip |
 | `acceptance` | `mac-acceptance.yml` | after `build` | main only, never for a pull request; the zip's sha256 and build attestation checked; the VM harness's `fresh-install` scenarios on the VM runner ([runner](mac-acceptance-runner.md)); fails unless the evidence record for the zip's sha256 passes; a passing record is attested |
 | `catalog-inputs` | here | acceptance passed | `.github/mac-release-pipeline.json` must name a published app release (a dry run only notes it), before anything is public |
-| `upload` | `mac-upload.yml` | acceptance `result == pass`, catalog inputs read | `publish` environment (main only); evidence and attestation re-checked; never overwrites; publishes the draft as a prerelease (never latest) on a real run |
+| `upload` | `mac-upload.yml` | acceptance `result == pass`, catalog inputs read | `publish` environment (main only); evidence and attestation re-checked; never overwrites; on a real run, `host: github-release` publishes the draft as a prerelease (never latest), and `host: r2` is public as written at `mac.omarchy.org/v1/releases/<image>/` ([hosts](mac-upload.md#hosts)) |
 | `catalog` | `mac-catalog.yml` | real run, all of the above succeeded | evidence re-checked for the payload's digest; every URL serves its pinned bytes; `catalog-release` (owner approval, main only) signs |
 
 A dry run uploads to a `dryrun-` scratch release and deletes it, and signs no catalog. A catalog dry run needs files the app can download, so run `mac-catalog.yml` by hand for that.

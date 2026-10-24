@@ -99,6 +99,8 @@ R2_BUCKET = re.compile(r"^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$")
 S3_NAMESPACE = "{http://s3.amazonaws.com/doc/2006-03-01/}"
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 IMMUTABLE = "public, max-age=31536000, immutable"
+# Scratch is public while a dry run lasts; the edge must not keep it after.
+SCRATCH_CACHE = "no-store"
 PULL_REQUEST_EVENTS = ("pull_request", "pull_request_target")
 
 
@@ -583,7 +585,14 @@ class R2Destination:
                 request.add_unredirected_header(name.title(), value)
         if body is not None:
             request.add_unredirected_header("Content-Length", str(size))
-        return urllib.request.urlopen(request, timeout=600)
+        try:
+            return urllib.request.urlopen(request, timeout=600)
+        except urllib.error.HTTPError:
+            raise
+        except (urllib.error.URLError, OSError) as error:
+            # Not the URL: its host names the account.
+            reason = getattr(error, "reason", error)
+            raise Refusal(f"could not reach R2 for {method} {key or self.prefix}: {type(reason).__name__}") from None
 
     def _refusal(self, action: str, error: urllib.error.HTTPError) -> Refusal:
         detail = error.read().decode(errors="replace")
@@ -618,7 +627,7 @@ class R2Destination:
         require(size <= R2_PUT_BYTES, f"{name} is {size} bytes; one R2 upload takes at most {R2_PUT_BYTES}")
         digest = sha256_of(path)
         headers = {
-            "Cache-Control": IMMUTABLE,
+            "Cache-Control": SCRATCH_CACHE if self.prefix.startswith("dryrun/") else IMMUTABLE,
             "Content-Type": content_type(name),
             "If-None-Match": "*",
             "x-amz-meta-sha256": digest,
@@ -646,21 +655,24 @@ class R2Destination:
         url = self.download_base() + urllib.parse.quote(path.name, safe="-_.~")
         expected = sha256_of(path)
         for attempt in range(LISTING_ATTEMPTS):
+            if attempt:
+                time.sleep(attempt)
             sink = HashSink()
             try:
-                request = urllib.request.Request(url, headers={"User-Agent": "omarchy-mac-upload"})
+                request = urllib.request.Request(url, headers={"User-Agent": "omarchy-mac-upload", "Cache-Control": "no-cache"})
                 with urllib.request.urlopen(request, timeout=120) as response:
                     while block := response.read(READ_BLOCK_BYTES):
                         sink.write(block)
             except urllib.error.HTTPError as error:
                 error.close()
                 found = f"HTTP {error.code}"
+            except (urllib.error.URLError, OSError) as error:
+                found = f"no answer ({type(getattr(error, 'reason', error)).__name__})"
             else:
                 if sink.hash.hexdigest() == expected:
                     print(f"  served {url}")
                     return
                 found = f"{sink.size} bytes with sha256 {sink.hash.hexdigest()}"
-            time.sleep(attempt + 1)
         raise Refusal(f"{url} serves {found}, not the uploaded {path.name} ({expected}); "
                       "check the bucket's public domain")
 
@@ -834,6 +846,8 @@ def publish(*, artifact: Path, image: str, sha256: str, destination: Destination
         require(dry_run, "refusing to upload: no acceptance evidence for this image")
         print("  dry run without acceptance evidence: a real upload would refuse")
 
+    require(part_bytes is None or destination.part_bytes is not None,
+            f"{destination.location()} takes the image whole; a part size is for a destination with a file limit")
     limit = part_bytes or destination.part_bytes
     with tempfile.TemporaryDirectory(prefix="mac-upload-", dir=work) as scratch:
         staging = Path(scratch)

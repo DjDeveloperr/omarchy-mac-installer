@@ -745,6 +745,53 @@ class R2DestinationTests(unittest.TestCase):
         self.assertEqual((method, body), ("GET", None))
         self.assertNotIn("Content-length", headers)
 
+    def test_scratch_is_never_cached_and_releases_are_immutable(self):
+        sent = {}
+
+        def record(method, key, *, query=None, headers=None, body=None, size=0, payload_sha256=upload.EMPTY_SHA256):
+            sent[key] = headers["Cache-Control"]
+            return io.BytesIO(b"")
+        for release in (self.image, f"dryrun-{self.image}-1-1"):
+            destination = upload.R2Destination("omarchy-mac", release, endpoint="https://a.r2.cloudflarestorage.com",
+                                               access_key="id", secret_key="secret")
+            destination._request = record
+            destination.put("IMAGE", self.artifact / "IMAGE")
+        self.assertEqual(sent, {f"v1/releases/{self.image}/IMAGE": upload.IMMUTABLE,
+                                f"dryrun/dryrun-{self.image}-1-1/IMAGE": "no-store"})
+
+    def test_the_public_check_rides_out_a_dropped_connection(self):
+        self.run_publish(FakeR2(self.store, self.image))
+        answers = iter([urllib.error.URLError(ConnectionResetError())])
+        served = upload.urllib.request.urlopen
+
+        def flaky(request, timeout=None):
+            failure = next(answers, None)
+            if failure is not None:
+                raise failure
+            return served(request, timeout)
+        upload.urllib.request.urlopen = flaky
+        with contextlib.redirect_stdout(io.StringIO()):
+            FakeR2(self.store, self.image).check_served(self.artifact / "IMAGE")
+
+    def test_an_unreachable_r2_refuses_without_naming_the_host(self):
+        destination = upload.R2Destination("omarchy-mac", self.image, endpoint="https://secret-account.r2.cloudflarestorage.com",
+                                           access_key="id", secret_key="secret")
+
+        def down(request, timeout=None):
+            raise urllib.error.URLError(OSError("secret-account.r2.cloudflarestorage.com unreachable"))
+        upload.urllib.request.urlopen = down
+        with self.assertRaisesRegex(upload.Refusal, "could not reach R2") as caught:
+            destination.listing()
+        self.assertNotIn("secret-account", str(caught.exception))
+
+    def test_a_part_size_is_refused_for_a_whole_file_destination(self):
+        with self.assertRaisesRegex(upload.Refusal, "takes the image whole"):
+            with contextlib.redirect_stdout(io.StringIO()):
+                upload.publish(artifact=self.artifact, image=self.image, sha256=self.sha256,
+                               destination=FakeR2(self.store, f"dryrun-{self.image}"), release=f"dryrun-{self.image}",
+                               dry_run=True, evidence=self.evidence, part_bytes=PART)
+        self.assertEqual(self.store, {})
+
     def test_a_file_over_one_put_is_refused_before_writing(self):
         destination = FakeR2(self.store, self.image)
         limit, upload.R2_PUT_BYTES = upload.R2_PUT_BYTES, 10
