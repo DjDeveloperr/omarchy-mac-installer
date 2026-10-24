@@ -61,8 +61,8 @@ on:
       host:
         description: Where the image goes (mac-upload.yml); the catalog then points at it there
         type: choice
-        options: [github-release, r2]
-        default: github-release
+        options: [r2, github-release]
+        default: r2
 
 permissions: {}
 
