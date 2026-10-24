@@ -250,6 +250,11 @@ class Secrets(unittest.TestCase):
                 self.assertRegex(text(WORKFLOWS / workflow),
                                  r"catalog-hosts:\n        description: [^\n]*\n        type: string\n        default: github-release")
         self.assertNotIn("catalog-hosts", text(WORKFLOWS / "mac-promote.yml"))
+        self.assertNotIn("catalog-hosts", text(PIPELINE))
+        catalog = text(WORKFLOWS / "mac-catalog.yml")
+        self.assertRegex(catalog, r"catalog-hosts:\n        description: [^\n]*\n        type: choice\n"
+                                  r"        options: \[github-release, 'r2,github-release'\]\n        default: github-release")
+        self.assertIn("catalog-hosts: ${{ inputs.catalog-hosts }}", jobs(WORKFLOWS / "mac-catalog.yml")["release"])
 
     def test_the_key_is_read_only_in_the_catalog_release_environment(self):
         # Wherever the signing job lives, only a job in catalog-release reads

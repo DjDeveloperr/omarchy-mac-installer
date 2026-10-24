@@ -445,6 +445,27 @@ class CatalogReleaseTests(ReleaseTestCase):
         self.assertIn(f"published={base}/catalog-edge.signed.json (already live)", result.stdout)
         self.assertEqual((mirror / "catalog-edge.signed.json").read_bytes(), envelope.read_bytes())
 
+    def test_a_failed_first_host_writes_no_mirror(self) -> None:
+        base, mirror = self.directory / "base", self.directory / "mirror"
+        base.write_text("not a directory: the base host's write fails")
+        result = self.publish_to(self.signed_at(NOW, "first-fails"), base, mirror)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((mirror / "catalog-edge.signed.json").exists(), "the mirror must never get ahead of the base")
+
+    def test_a_failed_mirror_resumes_without_rewriting_the_base(self) -> None:
+        base, mirror = self.directory / "base", self.directory / "mirror"
+        envelope = self.signed_at(NOW, "mirror-fails")
+        mirror.write_text("not a directory: the mirror's write fails")
+        self.assertNotEqual(self.publish_to(envelope, base, mirror).returncode, 0)
+        self.assertEqual((base / "catalog-edge.signed.json").read_bytes(), envelope.read_bytes())
+        written = (base / "catalog-edge.signed.json").stat().st_mtime_ns
+        mirror.unlink()
+        result = self.publish_to(envelope, base, mirror)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"published={base}/catalog-edge.signed.json (already live)", result.stdout)
+        self.assertEqual((base / "catalog-edge.signed.json").stat().st_mtime_ns, written)
+        self.assertEqual((mirror / "catalog-edge.signed.json").read_bytes(), envelope.read_bytes())
+
     def test_a_host_list_names_each_host_once(self) -> None:
         for spec in ("github-release,github-release", "r2,", "", "s3"):
             with self.subTest(spec):
@@ -503,7 +524,7 @@ else:
 """)
         return state
 
-    def publish_to_fake_github(self, envelope: Path, state: Path) -> tuple[int, str]:
+    def publish_to_fake_github(self, envelope: Path, state: Path, hosts: str = "github-release") -> tuple[int, str]:
         host = release.GitHubReleaseHost(release.stopgap_repo())
         served = state / "assets" / "catalog-edge.signed.json"
 
@@ -513,7 +534,7 @@ else:
                 raise urllib.error.HTTPError(url, 404, "Not Found", {}, io.BytesIO())
             return contextlib.closing(io.BytesIO(served.read_bytes()))
 
-        arguments = ["publish", "--channel", "edge", "--envelope", str(envelope), "--host", "github-release",
+        arguments = ["publish", "--channel", "edge", "--envelope", str(envelope), "--host", hosts,
                      "--trust-root", str(self.trust_root)]
         saved = release.open_url, dict(os.environ)
         release.open_url = fake_open
@@ -575,6 +596,24 @@ else:
             self.assertEqual(status, 1, output)
             self.assertIn("left catalog-edge.signed.json.next", output)
             self.assertEqual((state / "assets" / "catalog-edge.signed.json.next").read_bytes(), newer.read_bytes())
+        finally:
+            release.time.sleep = saved_sleep
+
+    def test_a_staged_leftover_on_the_stopgap_holds_back_the_base_too(self) -> None:
+        state = self.fake_github()
+        base = self.directory / "base"
+        saved_sleep = release.time.sleep
+        release.time.sleep = lambda seconds: None
+        try:
+            self.assertEqual(self.publish_to_fake_github(self.signed_at("2026-10-14T00:00:00Z", "a"), state)[0], 0)
+            (state / "rename-fails").touch()
+            self.assertEqual(self.publish_to_fake_github(self.signed_at("2026-10-16T00:00:00Z", "c"), state)[0], 1)
+            (state / "rename-fails").unlink()
+            status, output = self.publish_to_fake_github(self.signed_at("2026-10-17T00:00:00Z", "d"), state,
+                                                         f"scratch:{base},github-release")
+            self.assertEqual(status, 1, output)
+            self.assertIn("left catalog-edge.signed.json.next", output)
+            self.assertFalse((base / "catalog-edge.signed.json").exists())
         finally:
             release.time.sleep = saved_sleep
 
