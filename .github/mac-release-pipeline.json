@@ -5,6 +5,6 @@
   "installer": {
     "minimumVersion": "2.3.8",
     "latestVersion": "2.3.8",
-    "downloadURL": "https://github.com/omacom/omarchy-mac-installer/releases/download/v2.3.8/Omarchy-Mac-Installer-2.3.8.dmg"
+    "downloadURL": "https://mac.omarchy.org/v1/installer/2.3.8/Omarchy-Mac-Installer-2.3.8.dmg"
   }
 }

@@ -245,15 +245,17 @@ def check_engine(document: object) -> dict:
 def pipeline_engine(document: object) -> dict:
     """The engine block for .github/mac-release-pipeline.json's run: the pin
     from Engine/source-lock.json, the only place the engine is pinned, plus the
-    config's downstreamRevision. The archive is served from its engine-<version>
-    release of this repository until mac.omarchy.org hosts it."""
+    config's downstreamRevision. The archive is served from the catalog base's
+    engine/<version>/, where mac-mirror.yml copies it from its published
+    engine-<version> release; --verify-remote refuses a catalog whose engine
+    was never mirrored."""
     document = check_keys(document, "engine", {"downstreamRevision"})
     lock = json.loads(SOURCE_LOCK.read_text())
     version = lock["downstream_overlay"]["version"]
     artifact = lock["validation_artifact"]
     engine = {
         "version": version,
-        "url": f"https://github.com/{stopgap_repo()}/releases/download/engine-{version}/{artifact['filename']}",
+        "url": f"{identity()['INSTALLER_CATALOG_BASE']}/engine/{version}/{artifact['filename']}",
         "fileName": artifact["filename"],
         "sizeBytes": artifact["size_bytes"],
         "sha256": artifact["sha256"],
@@ -605,6 +607,33 @@ def remote_digest(url: str, expected_size: int, whole=None) -> tuple[str, int]:
             if whole is not None:
                 whole.update(block)
     return digest.hexdigest(), size
+
+
+# The installer dmg is not pinned by size in the catalog; this bounds the read.
+MAXIMUM_INSTALLER_BYTES = 1024 ** 3
+
+
+def verify_remote_installer(installer: dict) -> None:
+    """Download the app the catalog offers and check it against the .sha256
+    published beside it (publish-app writes it; mac-mirror.yml copies both),
+    so a catalog never names a dmg that isn't there or isn't what was released."""
+    url = installer["downloadURL"]
+    name = url.rsplit("/", 1)[1]
+    try:
+        with open_url(f"{url}.sha256") as response:
+            line = response.read(1024).decode(errors="replace")
+    except urllib.error.HTTPError as error:
+        raise Refusal(f"installer.downloadURL: {url}.sha256 answers HTTP {error.code}; mirror the app first") from None
+    match = re.fullmatch(r"([0-9a-f]{64})  (\S+)\n?", line)
+    if match is None or match.group(2) != name:
+        raise Refusal(f"installer.downloadURL: {url}.sha256 does not read '<sha256>  {name}'")
+    try:
+        digest, size = remote_digest(url, MAXIMUM_INSTALLER_BYTES)
+    except urllib.error.HTTPError as error:
+        raise Refusal(f"installer.downloadURL: {url} answers HTTP {error.code}; mirror the app first") from None
+    if digest != match.group(1):
+        raise Refusal(f"installer.downloadURL: {url} serves sha256 {digest} ({size} bytes), not its .sha256's {match.group(1)}")
+    print(f"remote_verified=installer {digest}")
 
 
 def verify_remote_artifact(artifact: dict, field: str) -> None:
@@ -1007,6 +1036,7 @@ def command_prepare(arguments) -> None:
         verify_remote_artifact(check_artifact(payload, "payload", True), "payload")
         verify_remote_artifact(check_engine(engine)["artifact"], "engine")
         verify_remote_artifact(check_artifact(metadata, "installer_data"), "installer_data")
+        verify_remote_installer(catalog["installer"])
     if arguments.check_live:
         trust_root = read_trust_root(arguments.trust_root)
         live = live_sequence(catalog_host(arguments.host), channel, trust_root, find_openssl())

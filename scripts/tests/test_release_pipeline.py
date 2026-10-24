@@ -883,8 +883,11 @@ class Config(unittest.TestCase):
         self.assertEqual((lock["validation_artifact"]["filename"], lock["validation_artifact"]["size_bytes"],
                           lock["validation_artifact"]["sha256"], lock["downstream_overlay"]["version"]),
                          (engine["fileName"], engine["sizeBytes"], engine["sha256"], engine["version"]))
-        self.assertEqual(engine["url"], f"https://github.com/{catalog.stopgap_repo()}/releases/download/"
-                                        f"engine-{engine['version']}/{engine['fileName']}")
+        # Served from the catalog base, where mac-mirror.yml copies the engine
+        # from its published engine-<version> release.
+        self.assertEqual(engine["url"], f"{catalog.identity()['INSTALLER_CATALOG_BASE']}/engine/"
+                                        f"{engine['version']}/{engine['fileName']}")
+        self.assertTrue(engine["url"].startswith(tuple(catalog.artifact_bases())))
         template = json.loads((SCRIPTS / "release-inputs.template.json").read_text())
         self.assertEqual(engine["downstreamRevision"], template["downstream_revision"])
 
