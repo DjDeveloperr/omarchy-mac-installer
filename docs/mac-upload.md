@@ -46,7 +46,7 @@ The release is `dryrun-<image>-<run id>-<attempt>`. The job runs every step abov
 
 ## Hosts
 
-`host` picks the destination; the default is still `github-release`.
+`host` picks the destination. The release pipeline defaults to `r2`, so edge publishes land on mac.omarchy.org; `mac-upload.yml` called or dispatched on its own, and `mac-upload-dry-run.yml`, default to `github-release`, which works from any branch.
 
 | `host` | Where | Image | Public |
 |---|---|---|---|

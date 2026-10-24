@@ -131,6 +131,11 @@ class Triggers(unittest.TestCase):
     def test_a_manual_run_is_a_dry_run_unless_asked(self):
         self.assertRegex(text(PIPELINE), r"dry-run:\n        description: [^\n]*\n        type: boolean\n        default: true")
 
+    def test_edge_publishes_land_on_r2(self):
+        self.assertRegex(text(PIPELINE), r"host:\n        description: [^\n]*\n        type: choice\n"
+                                         r"        options: \[r2, github-release\]\n        default: r2")
+        self.assertNotIn("-f host=", text(WORKFLOWS / "edge-dispatch.yml"))
+
 
 class Ordering(unittest.TestCase):
     def setUp(self) -> None:
