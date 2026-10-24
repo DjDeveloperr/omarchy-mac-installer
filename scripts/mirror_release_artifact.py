@@ -84,8 +84,7 @@ def published_app(version: str, repo: str, token: str) -> list[Artifact]:
     names = (dmg, f"{dmg}.sha256")
     found = {}
     for name in names:
-        probe = Artifact(tag=tag, file_name=name, size=-1, sha256="", key="", content_type="")
-        asset = release_asset(probe, repo, token, check_bytes=False)
+        asset = find_asset(tag, name, repo, token)
         digest = asset.get("digest") or ""
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest) or not isinstance(asset.get("size"), int):
             raise Refusal(f"{name} on {tag} has no GitHub digest ({digest or 'none'}); refusing to mirror it unchecked")
@@ -96,9 +95,10 @@ def published_app(version: str, repo: str, token: str) -> list[Artifact]:
     with tempfile.TemporaryDirectory(prefix="mac-mirror-") as directory:
         path = Path(directory) / sidecar.file_name
         download(release_asset(sidecar, repo, token)["browser_download_url"], path, sidecar)
-        line = path.read_text(errors="replace")
-    if line.split() != [found[dmg].sha256, dmg]:
-        raise Refusal(f"{sidecar.file_name} does not name {dmg} with its GitHub digest {found[dmg].sha256}")
+        text = path.read_bytes()
+    # Exactly what Packaging/release/publish-app checks, so `shasum -a 256 -c` reads it.
+    if text not in (f"{found[dmg].sha256}  {dmg}".encode(), f"{found[dmg].sha256}  {dmg}\n".encode()):
+        raise Refusal(f"{sidecar.file_name} does not read '{found[dmg].sha256}  {dmg}', the dmg's GitHub digest and name")
     return [found[dmg], sidecar]
 
 
@@ -123,24 +123,28 @@ def github_json(url: str, token: str) -> dict:
         return json.loads(response.read())
 
 
-def release_asset(artifact: Artifact, repo: str, token: str, check_bytes: bool = True) -> dict:
-    """The published release's asset, checked against what it must be."""
+def find_asset(tag: str, name: str, repo: str, token: str) -> dict:
+    """The one fully uploaded asset NAME of the published release TAG."""
     try:
-        release = github_json(f"https://api.github.com/repos/{repo}/releases/tags/{urllib.parse.quote(artifact.tag)}", token)
+        release = github_json(f"https://api.github.com/repos/{repo}/releases/tags/{urllib.parse.quote(tag)}", token)
     except urllib.error.HTTPError as error:
         if error.code == 404:
-            raise Refusal(f"{repo} has no published {artifact.tag} release") from None
+            raise Refusal(f"{repo} has no published {tag} release") from None
         raise
-    if release.get("draft") or release.get("tag_name") != artifact.tag:
-        raise Refusal(f"{artifact.tag} is not a published release")
-    assets = [asset for asset in release.get("assets", []) if asset.get("name") == artifact.file_name]
+    if release.get("draft") or release.get("tag_name") != tag:
+        raise Refusal(f"{tag} is not a published release")
+    assets = [asset for asset in release.get("assets", []) if asset.get("name") == name]
     if len(assets) != 1:
-        raise Refusal(f"{artifact.tag} has {len(assets)} assets named {artifact.file_name}, not one")
+        raise Refusal(f"{tag} has {len(assets)} assets named {name}, not one")
     asset = assets[0]
     if asset.get("state") != "uploaded":
-        raise Refusal(f"{artifact.file_name} on {artifact.tag} is an incomplete upload ({asset.get('state')})")
-    if not check_bytes:
-        return asset
+        raise Refusal(f"{name} on {tag} is an incomplete upload ({asset.get('state')})")
+    return asset
+
+
+def release_asset(artifact: Artifact, repo: str, token: str) -> dict:
+    """The published release's asset, checked against what it must be."""
+    asset = find_asset(artifact.tag, artifact.file_name, repo, token)
     if asset.get("size") != artifact.size:
         raise Refusal(f"{artifact.file_name} on {artifact.tag} is {asset.get('size')} bytes, not {artifact.size}")
     if asset.get("digest") != f"sha256:{artifact.sha256}":

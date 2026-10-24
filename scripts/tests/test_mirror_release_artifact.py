@@ -212,12 +212,14 @@ class AppMirrorTests(unittest.TestCase):
         url = mirror.public_url(prefix + self.dmg)
         self.assertTrue(url.startswith(tuple(mirror.catalog_release.installer_bases())), "catalogs may name it")
 
-    def test_a_sidecar_naming_another_digest_or_file_is_refused(self) -> None:
-        for line in (f"{'0' * 64}  {self.dmg}\n", f"{hashlib.sha256(self.DMG).hexdigest()}  other.dmg\n"):
+    def test_a_sidecar_naming_another_digest_or_file_or_malformed_is_refused(self) -> None:
+        digest = hashlib.sha256(self.DMG).hexdigest()
+        for line in (f"{'0' * 64}  {self.dmg}\n", f"{digest}  other.dmg\n", f"{digest} {self.dmg}\n",
+                     f"{digest}\n{self.dmg}\n", f"{digest}  {self.dmg}\n\n", f"{digest}  *{self.dmg}\n"):
             with self.subTest(line):
                 self.files[f"{self.dmg}.sha256"] = line.encode()
                 self.release["assets"][1].update(size=len(line), digest="sha256:" + hashlib.sha256(line.encode()).hexdigest())
-                with self.assertRaisesRegex(mirror.Refusal, "does not name"):
+                with self.assertRaisesRegex(mirror.Refusal, "does not read"):
                     self.run_app()
                 self.assertEqual(self.store, {})
 
@@ -233,6 +235,37 @@ class AppMirrorTests(unittest.TestCase):
         with self.assertRaisesRegex(mirror.Refusal, "not a published release"):
             self.run_app()
         self.assertEqual(self.store, {})
+
+    def test_a_sidecar_without_a_final_newline_is_accepted(self) -> None:
+        line = f"{hashlib.sha256(self.DMG).hexdigest()}  {self.dmg}".encode()
+        self.files[f"{self.dmg}.sha256"] = line
+        self.release["assets"][1].update(size=len(line), digest="sha256:" + hashlib.sha256(line).hexdigest())
+        self.run_app()
+
+    def run_main(self, endpoint):
+        environment = {"GH_TOKEN": "token", "R2_ENDPOINT": "https://a.r2.cloudflarestorage.com",
+                       "R2_ACCESS_KEY_ID": "id", "R2_SECRET_ACCESS_KEY": "secret"}
+        with unittest.mock.patch.dict("os.environ", environment), \
+                unittest.mock.patch.object(mirror.r2_s3.Endpoint, "parse", return_value=endpoint), \
+                unittest.mock.patch("sys.stdout", io.StringIO()), unittest.mock.patch("sys.stderr", io.StringIO()):
+            return mirror.main(["app", "2.4.0"])
+
+    def test_a_dmg_that_is_not_served_publishes_no_sidecar_and_a_retry_resumes(self) -> None:
+        endpoint = FakeEndpoint(self.store)
+        serve = self.urlopen
+        prefix = f"{mirror.base_prefix()}installer/2.4.0/"
+
+        def dmg_not_served(request, timeout=None):
+            if request.full_url == mirror.public_url(prefix + self.dmg):
+                raise urllib.error.HTTPError(request.full_url, 404, "Not Found", None, io.BytesIO(b""))
+            return serve(request, timeout)
+        mirror.urllib.request.urlopen = dmg_not_served
+        self.assertEqual(self.run_main(endpoint), 1)
+        self.assertEqual(sorted(self.store), [prefix + self.dmg], "no sidecar before the dmg is served")
+        mirror.urllib.request.urlopen = serve
+        again = FakeEndpoint(self.store)
+        self.assertEqual(self.run_main(again), 0)
+        self.assertEqual(again.puts, [prefix + self.dmg + ".sha256"], "the stored dmg is not written again")
 
     def test_the_command_line_takes_engine_or_app_version(self) -> None:
         with unittest.mock.patch("sys.stderr", io.StringIO()):
