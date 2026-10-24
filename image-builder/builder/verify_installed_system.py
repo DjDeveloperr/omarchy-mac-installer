@@ -32,7 +32,9 @@ import re
 import sys
 from pathlib import Path
 
-REQUIRED_PACMAN_SECTIONS = ("asahi-alarm", "core", "extra", "alarm", "aur", "omarchy")
+# [aur] is not required: ALARM's [aur] carries none of Omarchy's packages, and
+# the runtime's templates may leave it out.
+REQUIRED_PACMAN_SECTIONS = ("asahi-alarm", "core", "extra", "alarm", "omarchy")
 # Repositories an image must never be left pointing at: the mx-mac fork's
 # channels and the builder's own candidate repository.
 FORBIDDEN_PACMAN_SECTIONS = ("omarchy-aurora", "omarchy-aarch64", "omarchy-candidates")
@@ -239,7 +241,7 @@ def installed_package_names(root: Path) -> set[str]:
 # role must not satisfy image inspection. Candidate signature/source checks
 # still happen independently before this installed-system check.
 AURORA_REPLACEMENTS = {
-    "aura": {"m1n1-aurora"}, "uboot-aurora": {"uboot-asahi"},
+    "uboot-aurora": {"uboot-asahi"},
     "mesa-aurora": {"mesa"}, "vulkan-aurora": {"vulkan-asahi"},
     "aurora-bless": {"asahi-bless"},
     "aurora-audio": {"asahi-audio"},

@@ -18,10 +18,11 @@ name: Mac release pipeline
 #   upload      mac-upload.yml, only after passing evidence: in the publish
 #               environment (main only) it re-checks the evidence, the
 #               evidence's attestation by mac-acceptance.yml and the image's
-#               build attestation, uploads, publishes the draft as a
-#               prerelease and outputs the catalog's payload, installer-data
-#               and evidence inputs. A dry run uploads to a scratch release
-#               and deletes it.
+#               build attestation, uploads to the `host` input's destination
+#               (a GitHub draft it then publishes as a prerelease, or R2,
+#               public as written) and outputs the catalog's payload,
+#               installer-data and evidence inputs. A dry run uploads to a
+#               scratch release and deletes it.
 #   catalog     mac-catalog.yml, real runs only: re-checks the evidence for the
 #               payload's digest, checks every URL serves its pinned bytes,
 #               and signs in catalog-release, which waits for the owner's
@@ -32,7 +33,9 @@ name: Mac release pipeline
 # record), which the called workflows read by name. Every gate stays in the called workflow it
 # belongs to; this file only adds ordering and the skip conditions.
 #
-# Secrets: only the catalog's signing key, passed by name to mac-catalog.yml.
+# Secrets: the R2 credentials, passed by name to mac-upload.yml, which reads
+# them in the publish environment, and the catalog's signing key, passed by
+# name to mac-catalog.yml.
 # It exists only in the catalog-release environment, so here it resolves to
 # empty; only the job that runs in the catalog-release environment (the sign
 # job, also when mac-catalog.yml forwards the key to a nested signing
@@ -55,6 +58,11 @@ on:
         description: The VM acceptance job's runs-on as JSON; empty for mac-acceptance.yml's default (Namespace's Apple-backed Linux ARM64 runner)
         type: string
         default: ''
+      host:
+        description: Where the image goes (mac-upload.yml); the catalog then points at it there
+        type: choice
+        options: [r2, github-release]
+        default: r2
 
 permissions: {}
 
@@ -185,6 +193,11 @@ jobs:
       evidence-artifact: ${{ needs.acceptance.outputs.evidence-artifact }}
       evidence-run-id: ${{ needs.acceptance.outputs.evidence-run-id }}
       make-public: ${{ !inputs.dry-run }}
+      host: ${{ inputs.host }}
+    secrets:
+      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
 
   catalog:
     name: Catalog

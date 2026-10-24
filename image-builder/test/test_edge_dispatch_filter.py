@@ -124,7 +124,7 @@ class EdgeDispatchFilterTest(unittest.TestCase):
 
     def test_a_channel_set_package_is_relevant(self):
         # The unified image's set: the runtime and every Aurora boot and support package.
-        for name in ("linux-aurora", "aura", "uboot-aurora", "aurora-audio", "alsa-ucm-conf-aurora", "speakerguardd",
+        for name in ("linux-aurora", "m1n1-aurora", "uboot-aurora", "aurora-audio", "alsa-ucm-conf-aurora", "speakerguardd",
                      "omarchy-aurora-firmware", "mesa-aurora", "vulkan-aurora", "aurora-bless", "omarchy-dev",
                      "omarchy-settings-dev", "omarchy-mac", "omarchy-mac-boot"):
             decision = self.decide(name, "claude-code")
@@ -132,7 +132,7 @@ class EdgeDispatchFilterTest(unittest.TestCase):
             self.assertEqual(decision["matched"], [name])
 
     def test_the_replaced_asahi_boot_chain_does_not_trigger_an_image(self):
-        self.assertFalse(self.decide("m1n1-aurora", "uboot-asahi")["relevant"])
+        self.assertFalse(self.decide("aura", "m1n1-neo", "uboot-asahi")["relevant"])
 
     def test_runtime_lists_builder_packages_and_their_dependencies_are_relevant(self):
         self.assertEqual(self.decide("zram-generator")["matched"], ["zram-generator"], "the runtime's aarch64 list")
@@ -173,11 +173,18 @@ class EdgeDispatchFilterTest(unittest.TestCase):
     def test_a_template_that_does_not_name_the_pinned_repositories_is_refused(self):
         for name, text, message in (
                 ("missing", False, "no Apple pacman template"),
-                ("short", template(EDGE_ORDER[:-1]), "names the repositories omarchy asahi-alarm core extra alarm, not"),
+                ("short", template(tuple(n for n in EDGE_ORDER if n != "extra")),
+                 "names the repositories omarchy asahi-alarm core alarm aur, not"),
+                ("short-without-aur", template(tuple(n for n in EDGE_ORDER if n not in ("extra", "aur"))),
+                 "names the repositories omarchy asahi-alarm core alarm, not"),
                 ("extra", template(EDGE_ORDER + ("testing",)), "not the pinned"),
                 ("crlf-missing", template(EDGE_ORDER[1:]).replace(b"\n", b"\r\n"), "not the pinned")):
             with self.subTest(name), self.assertRaisesRegex(ValueError, message):
                 self.decide("linux-aurora", edge=make_edge(self.base / f"edge-{name}", template_text=text))
+
+    def test_a_template_may_leave_out_aur(self):
+        edge = make_edge(self.base / "edge-without-aur", order=EDGE_ORDER[:-1])
+        self.assertEqual(self.decide(edge=edge)["repository_order"], list(EDGE_ORDER[:-1]))
 
     def test_a_crlf_template_reads_as_sed_reads_it(self):
         edge = make_edge(self.base / "edge-crlf", template_text=template(EDGE_ORDER).replace(b"\n", b"\r\n"))

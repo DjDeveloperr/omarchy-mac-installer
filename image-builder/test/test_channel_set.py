@@ -81,7 +81,7 @@ class ChannelSetTest(unittest.TestCase):
         chosen = channel_set.resolve(entries, fixtures.POLICY, fixtures.POLICY["channel"])
         self.assertEqual({entry["NAME"][0] for _, _, entry in chosen}, set(entries))
         self.assertEqual(sum(group == "support" for _, group, _ in chosen), len(fixtures.POLICY["support_packages"]))
-        for name in ("aura", "uboot-aurora", "mesa-aurora", "vulkan-aurora", "aurora-bless", "speakerguardd"):
+        for name in ("m1n1-aurora", "uboot-aurora", "mesa-aurora", "vulkan-aurora", "aurora-bless", "speakerguardd"):
             self.assertIn(name, entries)
 
     def test_the_channel_set_is_the_unified_aurora_set_with_the_dev_runtime(self):
@@ -93,9 +93,9 @@ class ChannelSetTest(unittest.TestCase):
         names = {p.get("role", p["name"]): p["name"] for p in summary["packages"]}
         self.assertEqual(names["omarchy"], "omarchy-dev")
         self.assertEqual(names["omarchy-settings"], "omarchy-settings-dev")
-        for package in ("aura", "uboot-aurora", "mesa-aurora", "vulkan-aurora", "aurora-bless"):
+        for package in ("m1n1-aurora", "uboot-aurora", "mesa-aurora", "vulkan-aurora", "aurora-bless"):
             self.assertIn(package, names)
-        self.assertNotIn("m1n1-aurora", names)
+        self.assertNotIn("aura", names)
         self.assertNotIn("uboot-asahi", names)
         self.assertEqual(set(channel_set.files(database, "edge", self.trust)),
                          {p["filename"] for p in summary["packages"]})
@@ -109,20 +109,31 @@ class ChannelSetTest(unittest.TestCase):
         self.assertIn("t8140-j700", report["supported_models"])
         self.assertIn("t8122-j613", report["supported_models"])
 
+    def test_an_edge_database_still_on_the_aurora_silicon_m1n1_is_refused(self):
+        # Until omacom/omarchy-pkgs#1513 publishes, edge carries m1n1-aurora 1.6.1.aurora1.
+        database, sha256 = self.snapshot(versions={"m1n1-aurora": "1.6.1.aurora1-3"})
+        self.refused("m1n1-aurora 1.6.1.aurora1-3 is below the minimum 1.6.1.aurora20-3", database, sha256)
+
+    def test_aura_and_m1n1_neo_left_in_the_database_are_never_chosen(self):
+        database, sha256 = self.snapshot(extra=[("aura", "0.1.0.r20261023-1"), ("m1n1-neo", "1.6.1.aurora16-1")])
+        names = {p["name"] for p in self.freeze(database, sha256)["packages"]}
+        self.assertIn("m1n1-aurora", names)
+        self.assertFalse({"aura", "m1n1-neo"} & names)
+
     def test_the_channel_rejects_missing_unsigned_and_wrong_boot_payloads(self):
         for defect in ("missing", "unsigned", "wrong-key", "wrong-payload", "replaced"):
             with self.subTest(defect=defect):
                 self.work = Path(tempfile.mkdtemp(dir=self.base))
                 options = {}
                 if defect == "missing":
-                    options["entry_edit"] = lambda name, text: text.replace("%NAME%\naura\n", "%NAME%\nother\n")
+                    options["entry_edit"] = lambda name, text: text.replace("%NAME%\nm1n1-aurora\n", "%NAME%\nother\n")
                 elif defect == "unsigned":
-                    options["unsigned"] = ("aura",)
+                    options["unsigned"] = ("m1n1-aurora",)
                 elif defect == "wrong-key":
-                    options["signers"] = {"aura": self.candidate}
+                    options["signers"] = {"m1n1-aurora": self.candidate}
                 elif defect == "wrong-payload":
                     contents = fixtures.channel_contents()
-                    del contents["aura"]["usr/share/aura/stage1/aura-raw.bin"]
+                    del contents["m1n1-aurora"]["usr/share/m1n1-aurora/stage1/m1n1-raw.bin"]
                     options["contents"] = contents
                 else:
                     # Only the Asahi boot chain: the Aurora stack is gone from the channel.
@@ -159,8 +170,8 @@ class ChannelSetTest(unittest.TestCase):
 
     def test_a_tampered_package_signed_again_is_refused(self):
         database, sha256 = self.snapshot()
-        archive = next((self.work / "edge/packages").glob("aura-*.xz"))
-        fixtures.write_archive(archive, "aura", fixtures.VERSIONS["aura"],
+        archive = next((self.work / "edge/packages").glob("m1n1-aurora-*.xz"))
+        fixtures.write_archive(archive, "m1n1-aurora", fixtures.VERSIONS["m1n1-aurora"],
                                {"usr/lib/asahi-boot/m1n1.bin": b"another m1n1"}, [])
         self.channel.sign(archive)
         self.refused("is not the archive the channel database lists", database, sha256)

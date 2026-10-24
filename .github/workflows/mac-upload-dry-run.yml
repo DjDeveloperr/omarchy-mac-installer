@@ -2,14 +2,22 @@ name: Mac image upload (dry run)
 
 # Runs the upload job end to end against GitHub with a small fake image and a
 # fixture evidence record: the same call shape the VM acceptance job will use,
-# with dry-run on and 1 MiB parts so the image is split. It uploads to a
-# dryrun- scratch draft release, verifies every file back, checks that an
-# identical re-upload writes nothing and a changed file is refused, and
-# deletes the scratch release. It runs only when dispatched, never for pull
-# requests.
+# with dry-run on and, on GitHub, 1 MiB parts so the image is split. It
+# uploads to a dryrun- scratch draft release (on R2, dryrun/<release>/ in the
+# bucket), verifies every file back (on R2, also SHA256SUMS through
+# mac.omarchy.org), checks that an identical re-upload writes nothing and a
+# changed file is refused, and deletes the scratch release. It runs only when
+# dispatched, never for pull requests; the R2 host only from main, in the
+# publish environment that holds its credentials.
 
 on:
   workflow_dispatch:
+    inputs:
+      host:
+        description: Where the fake image goes
+        type: choice
+        options: [github-release, r2]
+        default: github-release
 
 permissions: {}
 
@@ -76,4 +84,9 @@ jobs:
       image-sha256: ${{ needs.fixture.outputs.sha256 }}
       dry-run: true
       evidence-artifact: mac-upload-fixture-evidence
-      part-bytes: '1048576'
+      part-bytes: ${{ inputs.host == 'github-release' && '1048576' || '' }}
+      host: ${{ inputs.host }}
+    secrets:
+      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
