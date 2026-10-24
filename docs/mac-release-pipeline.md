@@ -35,8 +35,8 @@ The catalog takes the evidence record the upload checked, and the upload took it
 
 ## `.github/mac-release-pipeline.json`
 
-- `engine`: only `{"downstreamRevision"}`. The run's engine is the one `Engine/source-lock.json` pins, the only place the engine is pinned ([Engine versions](engine-versions.md)); `catalog-inputs` adds its version, file name, size and digest, and its URL in the `engine-<version>` release (`catalog_release.pipeline_engine`). Ticket 13 moves the archive to `mac.omarchy.org/v1/engine/`.
-- `installer`: the app compatibility block, `{"minimumVersion", "latestVersion", "downloadURL"}`: app 2.3.0, the floor `Engine/source-lock.json` sets for its engine (`downstream_overlay.minimum_app_version`), and its published `.dmg`. A `null` block (no app release at all) makes `catalog-inputs` refuse on a real run with a message saying so, before the upload, so nothing is made public. `minimumVersion` 2.3.0 makes every edge user, M1, M2 and M3 included, update the app before their next install.
+- `engine`: only `{"downstreamRevision"}`. The run's engine is the one `Engine/source-lock.json` pins, the only place the engine is pinned ([Engine versions](engine-versions.md)); `catalog-inputs` adds its version, file name, size and digest, and its URL under the catalog base's `engine/<version>/` (`catalog_release.pipeline_engine`), where `mac-mirror.yml` copies it from its published `engine-<version>` release.
+- `installer`: the app compatibility block, `{"minimumVersion", "latestVersion", "downloadURL"}`: app 2.3.0, the floor `Engine/source-lock.json` sets for its engine (`downstream_overlay.minimum_app_version`), and its published `.dmg`, from the catalog base's `installer/<version>/`, where `mac-mirror.yml` (`artifact: app`) copies it from the published `v<version>` release. A `null` block (no app release at all) makes `catalog-inputs` refuse on a real run with a message saying so, before the upload, so nothing is made public. `minimumVersion` 2.3.0 makes every edge user, M1, M2 and M3 included, update the app before their next install.
 
 ## New installs only
 

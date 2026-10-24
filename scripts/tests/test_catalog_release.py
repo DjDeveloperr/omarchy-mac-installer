@@ -658,6 +658,32 @@ else:
         finally:
             release.open_url = saved
 
+    def test_remote_verification_reads_the_app_against_its_sidecar(self) -> None:
+        base = release.identity()["INSTALLER_CATALOG_BASE"]
+        url = f"{base}/installer/2.4.0/App-2.4.0.dmg"
+        dmg = b"notarized disk image"
+        served = {url: dmg, f"{url}.sha256": f"{hashlib.sha256(dmg).hexdigest()}  App-2.4.0.dmg\n".encode()}
+
+        def fake_open(requested, timeout=60, headers=None):
+            if requested not in served:
+                raise urllib.error.HTTPError(requested, 404, "Not Found", {}, io.BytesIO())
+            return contextlib.closing(io.BytesIO(served[requested]))
+        saved = release.open_url
+        release.open_url = fake_open
+        self.addCleanup(setattr, release, "open_url", saved)
+        installer = {"minimumVersion": "2.4.0", "latestVersion": "2.4.0", "downloadURL": url}
+        with contextlib.redirect_stdout(io.StringIO()):
+            release.verify_remote_installer(installer)
+        served[url] = b"tampered"
+        with self.assertRaisesRegex(release.Refusal, "not its .sha256's"):
+            release.verify_remote_installer(installer)
+        served[f"{url}.sha256"] = b"%s  Other.dmg\n" % hashlib.sha256(dmg).hexdigest().encode()
+        with self.assertRaisesRegex(release.Refusal, "does not read"):
+            release.verify_remote_installer(installer)
+        del served[f"{url}.sha256"]
+        with self.assertRaisesRegex(release.Refusal, "answers HTTP 404; mirror the app first"):
+            release.verify_remote_installer(installer)
+
     # ── the workflows ────────────────────────────────────────────────────────
 
     def test_the_key_is_read_in_one_approved_step_of_one_workflow(self) -> None:
