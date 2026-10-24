@@ -415,6 +415,63 @@ class CatalogReleaseTests(ReleaseTestCase):
         (scratch / "catalog-edge.signed.json").write_text("{}")
         self.assert_refused(publish(newer), "does not verify")
 
+    def publish_to(self, envelope: Path, *hosts: Path) -> subprocess.CompletedProcess:
+        return self.run_tool("publish", "--channel", "edge", "--envelope", str(envelope),
+                             "--host", ",".join(f"scratch:{host}" for host in hosts), "--trust-root", str(self.trust_root))
+
+    def test_a_catalog_goes_to_every_host_in_order(self) -> None:
+        base, mirror = self.directory / "base", self.directory / "mirror"
+        envelope = self.signed_at(NOW, "both")
+        result = self.publish_to(envelope, base, mirror)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for host in (base, mirror):
+            self.assertEqual((host / "catalog-edge.signed.json").read_bytes(), envelope.read_bytes())
+        published = [line for line in result.stdout.splitlines() if line.startswith("published=")]
+        self.assertEqual(published, [f"published={base}/catalog-edge.signed.json", f"published={mirror}/catalog-edge.signed.json"])
+
+    def test_every_host_is_checked_before_any_is_written(self) -> None:
+        base, mirror = self.directory / "base", self.directory / "mirror"
+        older, newer = self.signed_at("2026-10-13T00:00:00Z", "older"), self.signed_at(NOW, "newer")
+        self.assertEqual(self.publish_to(newer, mirror).returncode, 0)
+        self.assert_refused(self.publish_to(older, base, mirror), f"does not follow the published {SEQUENCE} at {mirror}")
+        self.assertFalse((base / "catalog-edge.signed.json").exists(), "the base must not get ahead of a refused mirror")
+
+    def test_a_host_already_serving_the_catalog_is_skipped_and_the_next_still_published(self) -> None:
+        base, mirror = self.directory / "base", self.directory / "mirror"
+        envelope = self.signed_at(NOW, "retry")
+        self.assertEqual(self.publish_to(envelope, base).returncode, 0)
+        result = self.publish_to(envelope, base, mirror)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"published={base}/catalog-edge.signed.json (already live)", result.stdout)
+        self.assertEqual((mirror / "catalog-edge.signed.json").read_bytes(), envelope.read_bytes())
+
+    def test_a_failed_first_host_writes_no_mirror(self) -> None:
+        base, mirror = self.directory / "base", self.directory / "mirror"
+        base.write_text("not a directory: the base host's write fails")
+        result = self.publish_to(self.signed_at(NOW, "first-fails"), base, mirror)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((mirror / "catalog-edge.signed.json").exists(), "the mirror must never get ahead of the base")
+
+    def test_a_failed_mirror_resumes_without_rewriting_the_base(self) -> None:
+        base, mirror = self.directory / "base", self.directory / "mirror"
+        envelope = self.signed_at(NOW, "mirror-fails")
+        mirror.write_text("not a directory: the mirror's write fails")
+        self.assertNotEqual(self.publish_to(envelope, base, mirror).returncode, 0)
+        self.assertEqual((base / "catalog-edge.signed.json").read_bytes(), envelope.read_bytes())
+        written = (base / "catalog-edge.signed.json").stat().st_mtime_ns
+        mirror.unlink()
+        result = self.publish_to(envelope, base, mirror)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"published={base}/catalog-edge.signed.json (already live)", result.stdout)
+        self.assertEqual((base / "catalog-edge.signed.json").stat().st_mtime_ns, written)
+        self.assertEqual((mirror / "catalog-edge.signed.json").read_bytes(), envelope.read_bytes())
+
+    def test_a_host_list_names_each_host_once(self) -> None:
+        for spec in ("github-release,github-release", "r2,", "", "s3"):
+            with self.subTest(spec):
+                with self.assertRaises(release.Refusal):
+                    release.catalog_hosts(spec)
+
     def fake_github(self) -> Path:
         """A gh stand-in holding one repository's releases in a directory."""
         state = self.directory / "github"
@@ -467,7 +524,7 @@ else:
 """)
         return state
 
-    def publish_to_fake_github(self, envelope: Path, state: Path) -> tuple[int, str]:
+    def publish_to_fake_github(self, envelope: Path, state: Path, hosts: str = "github-release") -> tuple[int, str]:
         host = release.GitHubReleaseHost(release.stopgap_repo())
         served = state / "assets" / "catalog-edge.signed.json"
 
@@ -477,7 +534,7 @@ else:
                 raise urllib.error.HTTPError(url, 404, "Not Found", {}, io.BytesIO())
             return contextlib.closing(io.BytesIO(served.read_bytes()))
 
-        arguments = ["publish", "--channel", "edge", "--envelope", str(envelope), "--host", "github-release",
+        arguments = ["publish", "--channel", "edge", "--envelope", str(envelope), "--host", hosts,
                      "--trust-root", str(self.trust_root)]
         saved = release.open_url, dict(os.environ)
         release.open_url = fake_open
@@ -542,6 +599,33 @@ else:
         finally:
             release.time.sleep = saved_sleep
 
+    def test_a_staged_leftover_on_the_stopgap_holds_back_the_base_too(self) -> None:
+        state = self.fake_github()
+        base = self.directory / "base"
+        saved_sleep = release.time.sleep
+        release.time.sleep = lambda seconds: None
+        try:
+            self.assertEqual(self.publish_to_fake_github(self.signed_at("2026-10-14T00:00:00Z", "a"), state)[0], 0)
+            (state / "rename-fails").touch()
+            self.assertEqual(self.publish_to_fake_github(self.signed_at("2026-10-16T00:00:00Z", "c"), state)[0], 1)
+            (state / "rename-fails").unlink()
+            status, output = self.publish_to_fake_github(self.signed_at("2026-10-17T00:00:00Z", "d"), state,
+                                                         f"scratch:{base},github-release")
+            self.assertEqual(status, 1, output)
+            self.assertIn("left catalog-edge.signed.json.next", output)
+            self.assertFalse((base / "catalog-edge.signed.json").exists())
+        finally:
+            release.time.sleep = saved_sleep
+
+    def test_a_draft_stopgap_release_holds_back_the_base_too(self) -> None:
+        state = self.fake_github()
+        base = self.directory / "base"
+        (state / "release.json").write_text('{"draft": true, "prerelease": true, "assets": []}')
+        status, output = self.publish_to_fake_github(self.signed_at(NOW, "draft-mirror"), state, f"scratch:{base},github-release")
+        self.assertEqual(status, 1)
+        self.assertIn("must be a published prerelease", output)
+        self.assertFalse((base / "catalog-edge.signed.json").exists())
+
     def test_the_github_release_host_refuses_a_draft(self) -> None:
         state = self.fake_github()
         (state / "release.json").write_text('{"draft": true, "prerelease": true, "assets": []}')
@@ -585,12 +669,18 @@ else:
         self.assertEqual([name for name, text in texts.items() if "environment: catalog-release" in text],
                          ["mac-catalog-sign.yml"])
         text = texts["mac-catalog-sign.yml"]
-        self.assertEqual(text.count("secrets."), 1)
+        self.assertEqual(text.count("secrets.CATALOG_SIGNING_KEY"), 1)
         self.assertEqual(text.count("environment: catalog-release"), 1)
+        # The key and the R2 write key never share a job.
+        publish_job = text.split("\n  publish:\n")[1]
+        self.assertNotIn("CATALOG_SIGNING_KEY", publish_job)
+        self.assertEqual(sorted({line.split("secrets.")[1].split()[0] for line in publish_job.splitlines() if "secrets." in line}),
+                         ["R2_ACCESS_KEY_ID", "R2_ENDPOINT", "R2_SECRET_ACCESS_KEY"])
         self.assertIn("on:\n  workflow_call:\n", text)
         self.assertNotIn("workflow_dispatch", text)
         sign_job = text.split("\n  sign:\n")[1].split("\n  publish:\n")[0]
         self.assertIn("environment: catalog-release", sign_job)
+        self.assertNotIn("R2_", sign_job)
         self.assertIn("secrets.CATALOG_SIGNING_KEY", sign_job)
         self.assertIn("contents: read", sign_job)
         self.assertIn("github.repository == 'omacom/omarchy-mac-installer'", sign_job)
@@ -601,7 +691,7 @@ else:
         self.assertIn("promotion:rc | promotion:stable)", gate_step)
         publish_job = text.split("\n  publish:\n")[1]
         self.assertIn("needs.sign.result == 'success' && !inputs.dry-run", publish_job)
-        self.assertNotIn("secrets.", publish_job)
+        self.assertNotIn("secrets.CATALOG_SIGNING_KEY", publish_job)
 
     def test_both_catalog_writers_sign_through_the_shared_job(self) -> None:
         for workflow, gate in ((WORKFLOW, "evidence"), (PROMOTE_WORKFLOW, "promotion")):
@@ -838,6 +928,67 @@ class PromotionTests(ReleaseTestCase):
         self.assertEqual(self.publish("rc", self.directory / "newer-signed" / "catalog-rc.signed.json").returncode, 0)
         self.assert_refused(self.promote("rc", "edge", LATER, "older"), "does not follow the published rc")
 
+
+
+class R2CatalogHostTests(unittest.TestCase):
+    ENDPOINT = release.r2_s3.Endpoint("account.r2.cloudflarestorage.com", "omarchy-mac", "id", "secret")
+    BASE = release.identity()["INSTALLER_CATALOG_BASE"]
+
+    def host(self, answer=None):
+        host = release.R2CatalogHost(self.ENDPOINT, self.BASE)
+        sent = []
+
+        def request(method, key, **kwargs):
+            sent.append((method, key, kwargs, kwargs["body"].read() if kwargs.get("body") else None))
+            if isinstance(answer, Exception):
+                raise answer
+            return io.BytesIO(b"")
+        host.endpoint = type("Endpoint", (), {"request": staticmethod(request)})()
+        return host, sent
+
+    def test_the_catalog_is_one_put_at_the_url_apps_read(self) -> None:
+        host, sent = self.host()
+        envelope = Path(tempfile.mkdtemp()) / "catalog-edge.signed.json"
+        self.addCleanup(shutil.rmtree, envelope.parent)
+        envelope.write_bytes(b'{"catalog": "x"}')
+        host.publish("edge", envelope)
+        self.assertEqual(host.describe("edge"), f"{self.BASE}/catalog-edge.signed.json")
+        self.assertEqual(host.prefix, self.BASE.split("/", 3)[3] + "/")
+        [(method, key, kwargs, body)] = sent
+        self.assertEqual((method, key, body), ("PUT", "v1/catalog-edge.signed.json", b'{"catalog": "x"}'))
+        self.assertEqual(kwargs["headers"], {"Content-Type": "application/json"})
+        self.assertEqual(kwargs["payload_sha256"], hashlib.sha256(b'{"catalog": "x"}').hexdigest())
+
+    def test_a_bucket_lock_over_the_catalogs_is_named(self) -> None:
+        locked = urllib.error.HTTPError("x", 403, "Forbidden", None,
+                                        io.BytesIO(b"<Error><Code>ObjectLockedByBucketPolicy</Code></Error>"))
+        host, _ = self.host(locked)
+        envelope = Path(tempfile.mkdtemp()) / "e.json"
+        self.addCleanup(shutil.rmtree, envelope.parent)
+        envelope.write_bytes(b"{}")
+        with self.assertRaisesRegex(release.Refusal, "403 ObjectLockedByBucketPolicy.*bucket lock covers the catalogs"):
+            host.publish("edge", envelope)
+
+    def test_fetch_reads_the_unchanged_url_without_a_cached_copy(self) -> None:
+        opened = []
+
+        def recording_open(url, timeout=60, headers=None):
+            opened.append((url, timeout, headers))
+            return io.BytesIO(b"catalog")
+        original, release.open_url = release.open_url, recording_open
+        self.addCleanup(setattr, release, "open_url", original)
+        host, _ = self.host()
+        self.assertEqual(host.fetch("edge", timeout=release.READBACK_TIMEOUT), b"catalog")
+        self.assertEqual(opened, [(f"{self.BASE}/catalog-edge.signed.json", release.READBACK_TIMEOUT, release.NO_CACHE)])
+
+    def test_without_credentials_r2_is_refused_before_anything(self) -> None:
+        environment = {key: value for key, value in os.environ.items() if not key.startswith("R2_")}
+        original = os.environ.copy()
+        os.environ.clear()
+        os.environ.update(environment)
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(original)))
+        with self.assertRaisesRegex(release.Refusal, "no R2 credentials"):
+            release.catalog_host("r2")
 
 
 class ReadBackTests(unittest.TestCase):
