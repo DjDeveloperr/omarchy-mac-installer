@@ -7,8 +7,8 @@ R2, written once and never replaced.
 
 `engine` is the engine Engine/source-lock.json pins (`validation_artifact`),
 from its published `engine-<version>` release, to
-`<catalog base>/engine/<version>/<file>` (INSTALLER_CATALOG_BASE, so
-https://mac.omarchy.org/v1/engine/...). The release must be published, not a
+`<catalog base>/engine/<version>/<file>` (the catalog base is
+INSTALLER_CATALOG_BASE in identity.conf). The release must be published, not a
 draft, and its asset's size and GitHub-computed sha256 must be the lock's; the
 downloaded bytes must match too. An object already at the key with the same
 bytes is left alone (a re-run, or a bucket lock), and different bytes refuse.
