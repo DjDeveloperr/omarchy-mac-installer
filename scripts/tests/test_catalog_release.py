@@ -847,12 +847,14 @@ class ReadBackTests(unittest.TestCase):
         def __init__(self, replies):
             self.replies = list(replies)
             self.fetches = 0
+            self.timeouts: list[float] = []
 
         def describe(self, channel: str) -> str:
             return f"host/catalog-{channel}.signed.json"
 
-        def fetch(self, channel: str) -> bytes | None:
+        def fetch(self, channel: str, timeout: float = 60) -> bytes | None:
             self.fetches += 1
+            self.timeouts.append(timeout)
             reply = self.replies.pop(0) if self.replies else b"stale"
             if isinstance(reply, Exception):
                 raise reply
@@ -889,9 +891,38 @@ class ReadBackTests(unittest.TestCase):
         self.assertGreaterEqual(sum(release.READBACK_DELAYS), 240)
         self.assertLessEqual(sum(release.READBACK_DELAYS), 600)
 
+    def test_every_fetch_hanging_still_ends_inside_the_publish_job(self) -> None:
+        host = self.Host([])
+        with self.assertRaises(release.Refusal):
+            self.read_back(host)
+        self.assertEqual(set(host.timeouts), {release.READBACK_TIMEOUT})
+        worst = sum(release.READBACK_DELAYS) + (len(release.READBACK_DELAYS) + 1) * release.READBACK_TIMEOUT
+        self.assertLess(worst, 12 * 60, "mac-catalog-sign.yml's publish job has 15 minutes, checkout and the swap included")
+
+    def test_a_stale_read_is_logged(self) -> None:
+        log = io.StringIO()
+        with contextlib.redirect_stderr(log):
+            release.read_back(self.Host([b"old", b"new"]), "edge", b"new", sleep=lambda seconds: None)
+        self.assertIn("serves 3 other bytes", log.getvalue())
+
     def test_the_github_host_asks_for_an_uncached_copy(self) -> None:
-        source = SCRIPT.read_text()
-        self.assertIn("open_url(self.describe(channel), headers=NO_CACHE)", source)
+        sent = []
+
+        class Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def recording_open(url, timeout=60, headers=None):
+            sent.append((url, timeout, headers))
+            return Response(b"catalog")
+        original, release.open_url = release.open_url, recording_open
+        self.addCleanup(setattr, release, "open_url", original)
+        host = release.GitHubReleaseHost("omacom/omarchy-mac-installer")
+        self.assertEqual(host.fetch("edge", timeout=release.READBACK_TIMEOUT), b"catalog")
+        self.assertEqual(sent, [(host.describe("edge"), release.READBACK_TIMEOUT, release.NO_CACHE)])
         self.assertEqual(release.NO_CACHE["Cache-Control"], "no-cache")
 
 

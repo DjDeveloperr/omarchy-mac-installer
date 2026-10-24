@@ -774,7 +774,7 @@ class ScratchHost:
     def describe(self, channel: str) -> str:
         return str(self.directory / f"catalog-{channel}.signed.json")
 
-    def fetch(self, channel: str) -> bytes | None:
+    def fetch(self, channel: str, timeout: float = 60) -> bytes | None:
         path = self.directory / f"catalog-{channel}.signed.json"
         return path.read_bytes() if path.is_file() else None
 
@@ -802,9 +802,9 @@ class GitHubReleaseHost:
     def describe(self, channel: str) -> str:
         return f"https://github.com/{self.repo}/releases/download/catalog-{channel}/catalog-{channel}.signed.json"
 
-    def fetch(self, channel: str) -> bytes | None:
+    def fetch(self, channel: str, timeout: float = 60) -> bytes | None:
         try:
-            with open_url(self.describe(channel), headers=NO_CACHE) as response:
+            with open_url(self.describe(channel), timeout=timeout, headers=NO_CACHE) as response:
                 data = response.read(MAXIMUM_CATALOG_BYTES * 2 + 1)
         except urllib.error.HTTPError as error:
             if error.code == 404:
@@ -1091,9 +1091,12 @@ def command_check_promotion(arguments) -> None:
     print(f"promotion=checked {source_channel} to {channel}, sequence {source['sequence']} to {promoted['sequence']}")
 
 
-# GitHub can keep serving a replaced release asset's old bytes for over a
-# minute (2026-10-21: still stale 61 s after the upload).
+# GitHub can keep serving a replaced release asset's old bytes for minutes
+# (2026-10-21: stale 61 s after the upload; 2026-10-24: about 120 s).
 READBACK_DELAYS = (5, 5, 10, 10, 15, 15, 20, 30, 30, 30, 30, 30, 30, 30)
+# Each readback fetch is bounded so that every attempt timing out, plus the
+# delays, still ends inside the publish job's 15 minutes.
+READBACK_TIMEOUT = 20
 NO_CACHE = {"Cache-Control": "no-cache", "Pragma": "no-cache"}
 
 
@@ -1104,10 +1107,14 @@ def read_back(host, channel: str, data: bytes, sleep=time.sleep) -> None:
         if delay:
             sleep(delay)
         try:
-            if host.fetch(channel) == data:
-                return
+            served = host.fetch(channel, timeout=READBACK_TIMEOUT)
         except (OSError, urllib.error.URLError) as error:
             print(f"readback attempt {attempt}: {error}", file=sys.stderr)
+            continue
+        if served == data:
+            return
+        found = "nothing" if served is None else f"{len(served)} other bytes (sha256 {hashlib.sha256(served).hexdigest()[:12]})"
+        print(f"readback attempt {attempt}: {host.describe(channel)} serves {found}, not the new catalog", file=sys.stderr)
     raise Refusal(f"{host.describe(channel)} does not serve the catalog just published")
 
 
