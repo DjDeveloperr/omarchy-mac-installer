@@ -923,9 +923,10 @@ class PromotionTests(ReleaseTestCase):
 
 class R2CatalogHostTests(unittest.TestCase):
     ENDPOINT = release.r2_s3.Endpoint("account.r2.cloudflarestorage.com", "omarchy-mac", "id", "secret")
+    BASE = release.identity()["INSTALLER_CATALOG_BASE"]
 
     def host(self, answer=None):
-        host = release.R2CatalogHost(self.ENDPOINT, "https://mac.omarchy.org/v1")
+        host = release.R2CatalogHost(self.ENDPOINT, self.BASE)
         sent = []
 
         def request(method, key, **kwargs):
@@ -942,8 +943,8 @@ class R2CatalogHostTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, envelope.parent)
         envelope.write_bytes(b'{"catalog": "x"}')
         host.publish("edge", envelope)
-        self.assertEqual(host.describe("edge"), "https://mac.omarchy.org/v1/catalog-edge.signed.json")
-        self.assertEqual(release.identity()["INSTALLER_CATALOG_BASE"], "https://mac.omarchy.org/v1")
+        self.assertEqual(host.describe("edge"), f"{self.BASE}/catalog-edge.signed.json")
+        self.assertEqual(host.prefix, self.BASE.split("/", 3)[3] + "/")
         [(method, key, kwargs, body)] = sent
         self.assertEqual((method, key, body), ("PUT", "v1/catalog-edge.signed.json", b'{"catalog": "x"}'))
         self.assertEqual(kwargs["headers"], {"Content-Type": "application/json"})
@@ -969,7 +970,7 @@ class R2CatalogHostTests(unittest.TestCase):
         self.addCleanup(setattr, release, "open_url", original)
         host, _ = self.host()
         self.assertEqual(host.fetch("edge", timeout=release.READBACK_TIMEOUT), b"catalog")
-        self.assertEqual(opened, [("https://mac.omarchy.org/v1/catalog-edge.signed.json", release.READBACK_TIMEOUT, release.NO_CACHE)])
+        self.assertEqual(opened, [(f"{self.BASE}/catalog-edge.signed.json", release.READBACK_TIMEOUT, release.NO_CACHE)])
 
     def test_without_credentials_r2_is_refused_before_anything(self) -> None:
         environment = {key: value for key, value in os.environ.items() if not key.startswith("R2_")}
