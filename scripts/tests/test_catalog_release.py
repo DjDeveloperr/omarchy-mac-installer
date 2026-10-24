@@ -925,6 +925,23 @@ class ReadBackTests(unittest.TestCase):
         self.assertEqual(sent, [(host.describe("edge"), release.READBACK_TIMEOUT, release.NO_CACHE)])
         self.assertEqual(release.NO_CACHE["Cache-Control"], "no-cache")
 
+    def test_open_url_puts_the_headers_on_the_request(self) -> None:
+        opened = []
+
+        class Opener:
+            def open(self, request, timeout=None):
+                opened.append((request, timeout))
+                return io.BytesIO(b"")
+        original = release.urllib.request.build_opener
+        release.urllib.request.build_opener = lambda *handlers: Opener()
+        self.addCleanup(setattr, release.urllib.request, "build_opener", original)
+        release.open_url("https://example.invalid/catalog", timeout=7, headers=release.NO_CACHE)
+        request, timeout = opened[0]
+        self.assertEqual(timeout, 7)
+        self.assertEqual(request.get_header("Cache-control"), "no-cache")
+        self.assertEqual(request.get_header("Pragma"), "no-cache")
+        self.assertEqual(request.get_header("User-agent"), "omarchy-mac-catalog")
+
 
 if __name__ == "__main__":
     unittest.main()
