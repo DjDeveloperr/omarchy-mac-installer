@@ -617,6 +617,15 @@ else:
         finally:
             release.time.sleep = saved_sleep
 
+    def test_a_draft_stopgap_release_holds_back_the_base_too(self) -> None:
+        state = self.fake_github()
+        base = self.directory / "base"
+        (state / "release.json").write_text('{"draft": true, "prerelease": true, "assets": []}')
+        status, output = self.publish_to_fake_github(self.signed_at(NOW, "draft-mirror"), state, f"scratch:{base},github-release")
+        self.assertEqual(status, 1)
+        self.assertIn("must be a published prerelease", output)
+        self.assertFalse((base / "catalog-edge.signed.json").exists())
+
     def test_the_github_release_host_refuses_a_draft(self) -> None:
         state = self.fake_github()
         (state / "release.json").write_text('{"draft": true, "prerelease": true, "assets": []}')

@@ -838,6 +838,9 @@ class GitHubReleaseHost:
         """Refuse while an earlier publish left its staged catalog behind: it
         may be newer than whatever is (or is not) served, so nothing may be
         published over it until someone resolves it by hand."""
+        release = self.release(f"catalog-{channel}")
+        if release is not None and (release.get("draft") or not release.get("prerelease")):
+            raise Refusal(f"the catalog-{channel} release must be a published prerelease")
         staged = f"catalog-{channel}.signed.json.next"
         if staged in self.asset_ids(f"catalog-{channel}"):
             raise Refusal(f"an earlier publish left {staged} on the catalog-{channel} release; "
