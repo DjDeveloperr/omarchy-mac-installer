@@ -10,7 +10,7 @@ them to a destination:
 - the image zip, split into `<zip>.partNN` files when the destination limits
   file size (the GitHub release stopgap: 1992294400-byte parts, 2 to 16 of
   them, the convention `publish-m1-release` and the app's catalog parser
-  share), or whole when it doesn't (R2, ticket 13);
+  share), or whole when it doesn't (R2);
 - `<zip>.sha256`, the build's whole-image digest line;
 - the image records: installer_data.json, IMAGE, PROVENANCE, INSPECTION,
   inputs;
@@ -25,11 +25,16 @@ upload. After uploading, every file is downloaded back and its sha256 checked.
 A real upload refuses without passing acceptance evidence for the image's
 sha256 (`docs/mac-acceptance-evidence.md`). A dry run writes only to a
 scratch release whose name starts with `dryrun-`, which it deletes
-afterwards.
+afterwards. A destination that serves files publicly must serve SHA256SUMS
+back byte for byte at its public URL, or the upload fails.
 
 Destinations implement the small `Destination` interface below; the job's
 logic never looks past it. `dir:PATH` is a local directory (tests, local
-dry runs); `github-release:OWNER/REPO` is a draft prerelease on GitHub.
+dry runs); `github-release:OWNER/REPO` is a draft prerelease on GitHub;
+`r2:BUCKET` is Cloudflare R2 over its S3 API, `v1/releases/<image>/`
+(scratch: `dryrun/<release>/`), credentials from R2_ENDPOINT,
+R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY, served at R2_PUBLIC_BASE
+(default https://mac.omarchy.org).
 
 Usage:
   mac-upload.py check-inputs --image NAME --sha256 HEX [--dry-run]
@@ -43,14 +48,15 @@ Usage:
                         [--part-bytes N] [--target SHA]
                         [--run-url URL] [--report FILE]
   mac-upload.py discard --destination DEST --release NAME
-  mac-upload.py make-public --destination github-release:OWNER/REPO --release NAME
-  mac-upload.py catalog-inputs --report FILE --destination github-release:OWNER/REPO
-                               --release NAME
+  mac-upload.py make-public --destination DEST --release NAME
+  mac-upload.py catalog-inputs --report FILE --destination DEST --release NAME
 """
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -61,6 +67,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ElementTree
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Protocol
@@ -86,6 +93,12 @@ EVIDENCE_NAME = "acceptance-evidence.json"
 SUMS_NAME = "SHA256SUMS"
 REQUIRED_SCENARIOS = ("first-boot", "conversion", "second-boot")
 DRY_RUN_PREFIX = "dryrun-"
+# R2 takes at most 5 GiB in one PUT; larger needs a multipart upload.
+R2_PUT_BYTES = 5 * 1024 ** 3
+R2_BUCKET = re.compile(r"^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$")
+S3_NAMESPACE = "{http://s3.amazonaws.com/doc/2006-03-01/}"
+EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
+IMMUTABLE = "public, max-age=31536000, immutable"
 PULL_REQUEST_EVENTS = ("pull_request", "pull_request_target")
 
 
@@ -208,8 +221,10 @@ class Destination(Protocol):
     `part_bytes` is the largest file the destination takes, or None for no
     limit. `listing` lists the release (empty if it doesn't exist yet) and
     writes nothing. `put` must never replace an existing file; it creates the
-    release on first use. `fetch` streams a published file back. `discard`
-    deletes a dry run's scratch release and must refuse any other.
+    release on first use. `fetch` streams a published file back. `check_served`
+    refuses unless a public destination serves the file at its public URL
+    (nothing for one that isn't public yet). `discard` deletes a dry run's
+    scratch release and must refuse any other.
     """
 
     part_bytes: int | None
@@ -221,6 +236,8 @@ class Destination(Protocol):
     def put(self, name: str, path: Path) -> None: ...
 
     def fetch(self, name: str, sink: BinaryIO) -> None: ...
+
+    def check_served(self, path: Path) -> None: ...
 
     def discard(self) -> None: ...
 
@@ -267,6 +284,9 @@ class DirectoryDestination:
         with (self.root / self.release / name).open("rb") as stream:
             while block := stream.read(READ_BLOCK_BYTES):
                 sink.write(block)
+
+    def check_served(self, path: Path) -> None:
+        pass
 
     def discard(self) -> None:
         require_scratch(self.release)
@@ -413,6 +433,9 @@ class GitHubReleaseDestination:
             while block := response.read(READ_BLOCK_BYTES):
                 sink.write(block)
 
+    def check_served(self, path: Path) -> None:
+        pass  # a draft serves nothing until make_public
+
     def discard(self) -> None:
         require_scratch(self.release)
         release = self._find()
@@ -422,7 +445,6 @@ class GitHubReleaseDestination:
         require(release.get("tag_name") == self.release, "refusing to delete a release with another tag")
         self._json("DELETE", f"/repos/{self.repository}/releases/{release['id']}")
         self._release = None
-
 
     def download_base(self) -> str:
         """Where a published release serves its files: the catalog's URLs."""
@@ -461,6 +483,203 @@ class GitHubReleaseDestination:
         require(self._tag_commit() == commit, f"the tag {self.release} does not name the uploaded commit {commit}")
 
 
+def sigv4_headers(*, method: str, host: str, path: str, query: dict[str, str], headers: dict[str, str],
+                  payload_sha256: str, access_key: str, secret_key: str, region: str, amz_date: str,
+                  service: str = "s3") -> dict[str, str]:
+    """AWS Signature Version 4 request headers, Authorization included.
+
+    `path` is already URI-encoded, as sent.
+    """
+    def quote(value: str) -> str:
+        return urllib.parse.quote(value, safe="-_.~")
+
+    signed_headers = {key.lower(): " ".join(value.split()) for key, value in headers.items()}
+    signed_headers |= {"host": host, "x-amz-content-sha256": payload_sha256, "x-amz-date": amz_date}
+    names = ";".join(sorted(signed_headers))
+    canonical = "\n".join([
+        method,
+        path,
+        "&".join(f"{quote(key)}={quote(value)}" for key, value in sorted(query.items())),
+        "".join(f"{key}:{signed_headers[key]}\n" for key in sorted(signed_headers)),
+        names,
+        payload_sha256,
+    ])
+    day = amz_date[:8]
+    scope = f"{day}/{region}/{service}/aws4_request"
+    to_sign = "\n".join(["AWS4-HMAC-SHA256", amz_date, scope, hashlib.sha256(canonical.encode()).hexdigest()])
+    key = f"AWS4{secret_key}".encode()
+    for part in (day, region, service, "aws4_request"):
+        key = hmac.new(key, part.encode(), hashlib.sha256).digest()
+    signature = hmac.new(key, to_sign.encode(), hashlib.sha256).hexdigest()
+    signed_headers["authorization"] = (f"AWS4-HMAC-SHA256 Credential={access_key}/{scope}, "
+                                       f"SignedHeaders={names}, Signature={signature}")
+    return signed_headers
+
+
+def content_type(name: str) -> str:
+    if name.endswith(".zip"):
+        return "application/zip"
+    if name.endswith(".json"):
+        return "application/json"
+    return "text/plain; charset=utf-8"
+
+
+class R2Destination:
+    """A prefix in a Cloudflare R2 bucket, over its S3 API.
+
+    A real release is `v1/releases/<image>/`, public at R2_PUBLIC_BASE as soon
+    as it is written (the bucket lock is meant to keep it there); a dry run's
+    scratch release is `dryrun/<release>/`, outside the lock, so it can be
+    deleted. Files are whole (no parts) and written with `If-None-Match: *`,
+    so R2 itself refuses to replace one. The listing has no sha256 (an ETag is
+    not one), so an existing file is downloaded to compare it.
+    """
+
+    part_bytes = None
+
+    def __init__(self, bucket: str, release: str, *, endpoint: str, access_key: str, secret_key: str,
+                 public_base: str = "https://mac.omarchy.org") -> None:
+        require(R2_BUCKET.fullmatch(bucket) is not None, f"invalid R2 bucket name: {bucket}")
+        require(access_key != "" and secret_key != "", "no R2 credentials (R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY)")
+        parsed = urllib.parse.urlsplit(endpoint)
+        # The secret endpoint is never printed: it names the account.
+        require(parsed.scheme == "https" and parsed.hostname and not parsed.query and not parsed.fragment
+                and not parsed.username and parsed.port is None,
+                "R2_ENDPOINT must be https://<account>.r2.cloudflarestorage.com")
+        require(parsed.path.strip("/") in ("", bucket),
+                "R2_ENDPOINT has a path other than the bucket's name; set it to the account's S3 endpoint")
+        public = urllib.parse.urlsplit(public_base)
+        require(public.scheme == "https" and public.hostname and public.path.strip("/") == "" and not public.query,
+                f"R2_PUBLIC_BASE must be an https origin, not {public_base}")
+        self.bucket = bucket
+        self.release = release
+        self.host = parsed.hostname
+        self.access_key = access_key
+        self.secret_key = secret_key
+        self.public_base = f"https://{public.hostname}/"
+        self.prefix = f"dryrun/{release}/" if release.startswith(DRY_RUN_PREFIX) else f"v1/releases/{release}/"
+
+    def location(self) -> str:
+        return f"r2://{self.bucket}/{self.prefix}"
+
+    def download_base(self) -> str:
+        return self.public_base + self.prefix
+
+    def _request(self, method: str, key: str, *, query: dict[str, str] | None = None,
+                 headers: dict[str, str] | None = None, body: BinaryIO | None = None, size: int = 0,
+                 payload_sha256: str = EMPTY_SHA256):
+        path = f"/{self.bucket}/" + urllib.parse.quote(key, safe="/-_.~")
+        query = query or {}
+        signed = sigv4_headers(method=method, host=self.host, path=path, query=query, headers=headers or {},
+                               payload_sha256=payload_sha256, access_key=self.access_key,
+                               secret_key=self.secret_key, region="auto",
+                               amz_date=time.strftime("%Y%m%dT%H%M%SZ", time.gmtime()))
+        url = f"https://{self.host}{path}"
+        if query:
+            url += "?" + urllib.parse.urlencode(sorted(query.items()), quote_via=urllib.parse.quote, safe="-_.~")
+        request = urllib.request.Request(url, data=body, method=method)
+        for name, value in signed.items():
+            if name != "host":
+                request.add_unredirected_header(name.title(), value)
+        if body is not None:
+            request.add_unredirected_header("Content-Length", str(size))
+        return urllib.request.urlopen(request, timeout=600)
+
+    def _refusal(self, action: str, error: urllib.error.HTTPError) -> Refusal:
+        detail = error.read().decode(errors="replace")
+        code = re.search(r"<Code>([^<]{1,100})</Code>", detail)
+        return Refusal(f"R2 refused to {action} ({error.code}{f' {code.group(1)}' if code else ''})")
+
+    def listing(self) -> dict[str, Remote]:
+        remote: dict[str, Remote] = {}
+        token = ""
+        while True:
+            query = {"list-type": "2", "prefix": self.prefix}
+            if token:
+                query["continuation-token"] = token
+            try:
+                with self._request("GET", "", query=query) as response:
+                    document = ElementTree.fromstring(response.read())
+            except urllib.error.HTTPError as error:
+                raise self._refusal(f"list {self.location()}", error) from error
+            for item in document.iter(f"{S3_NAMESPACE}Contents"):
+                key = item.findtext(f"{S3_NAMESPACE}Key") or ""
+                name = key[len(self.prefix):]
+                require(key.startswith(self.prefix) and name != "" and "/" not in name,
+                        f"{self.location()} holds an unexpected object {key}; resolve that by hand")
+                remote[name] = Remote(int(item.findtext(f"{S3_NAMESPACE}Size") or "-1"), None)
+            if document.findtext(f"{S3_NAMESPACE}IsTruncated") != "true":
+                return remote
+            token = document.findtext(f"{S3_NAMESPACE}NextContinuationToken") or ""
+            require(token != "", "R2 truncated the listing without a continuation token")
+
+    def put(self, name: str, path: Path) -> None:
+        size = path.stat().st_size
+        require(size <= R2_PUT_BYTES, f"{name} is {size} bytes; one R2 upload takes at most {R2_PUT_BYTES}")
+        digest = sha256_of(path)
+        headers = {
+            "Cache-Control": IMMUTABLE,
+            "Content-Type": content_type(name),
+            "If-None-Match": "*",
+            "x-amz-meta-sha256": digest,
+        }
+        with path.open("rb") as stream:
+            try:
+                with self._request("PUT", self.prefix + name, headers=headers, body=stream, size=size,
+                                   payload_sha256=digest) as response:
+                    response.read()
+            except urllib.error.HTTPError as error:
+                if error.code == 412:
+                    error.close()
+                    raise Refusal(f"{name} already exists at {self.location()}") from error
+                raise self._refusal(f"store {name}", error) from error
+
+    def fetch(self, name: str, sink: BinaryIO) -> None:
+        try:
+            with self._request("GET", self.prefix + name) as response:
+                while block := response.read(READ_BLOCK_BYTES):
+                    sink.write(block)
+        except urllib.error.HTTPError as error:
+            raise self._refusal(f"read {name} back", error) from error
+
+    def check_served(self, path: Path) -> None:
+        url = self.download_base() + urllib.parse.quote(path.name, safe="-_.~")
+        expected = sha256_of(path)
+        for attempt in range(LISTING_ATTEMPTS):
+            sink = HashSink()
+            try:
+                request = urllib.request.Request(url, headers={"User-Agent": "omarchy-mac-upload"})
+                with urllib.request.urlopen(request, timeout=120) as response:
+                    while block := response.read(READ_BLOCK_BYTES):
+                        sink.write(block)
+            except urllib.error.HTTPError as error:
+                error.close()
+                found = f"HTTP {error.code}"
+            else:
+                if sink.hash.hexdigest() == expected:
+                    print(f"  served {url}")
+                    return
+                found = f"{sink.size} bytes with sha256 {sink.hash.hexdigest()}"
+            time.sleep(attempt + 1)
+        raise Refusal(f"{url} serves {found}, not the uploaded {path.name} ({expected}); "
+                      "check the bucket's public domain")
+
+    def discard(self) -> None:
+        require_scratch(self.release)
+        require(self.prefix.startswith("dryrun/"), f"refusing to delete {self.prefix}: not a scratch prefix")
+        for name in self.listing():
+            try:
+                with self._request("DELETE", self.prefix + name) as response:
+                    response.read()
+            except urllib.error.HTTPError as error:
+                raise self._refusal(f"delete scratch {name}", error) from error
+
+    def make_public(self) -> None:
+        """R2 serves a file as soon as it is written; nothing to publish."""
+        require(not self.release.startswith(DRY_RUN_PREFIX), f"a scratch release is never published: {self.release}")
+        print(f"  {self.download_base()} is served as uploaded")
+
+
 def open_destination(spec: str, release: str, *, target: str = "", notes: str = "") -> Destination:
     require(RELEASE_NAME.fullmatch(release) is not None, f"invalid release name: {release}")
     kind, _, value = spec.partition(":")
@@ -470,7 +689,12 @@ def open_destination(spec: str, release: str, *, target: str = "", notes: str = 
         return GitHubReleaseDestination(
             value, release, os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN", ""),
             api=os.environ.get("GITHUB_API_URL", "https://api.github.com"), target=target, notes=notes)
-    raise Refusal(f"unknown destination {spec!r}; use dir:PATH or github-release:OWNER/REPO")
+    if kind == "r2" and value:
+        return R2Destination(
+            value, release, endpoint=os.environ.get("R2_ENDPOINT", ""),
+            access_key=os.environ.get("R2_ACCESS_KEY_ID", ""), secret_key=os.environ.get("R2_SECRET_ACCESS_KEY", ""),
+            public_base=os.environ.get("R2_PUBLIC_BASE", "") or "https://mac.omarchy.org")
+    raise Refusal(f"unknown destination {spec!r}; use dir:PATH, github-release:OWNER/REPO or r2:BUCKET")
 
 
 # Staging and publishing
@@ -623,6 +847,7 @@ def publish(*, artifact: Path, image: str, sha256: str, destination: Destination
                 if path not in missing:
                     print(f"  already published {path.name}")
             verify(files, destination)
+            destination.check_served(files[-1])
             if dry_run:
                 probe_refusals(files, destination, staging)
         finally:
@@ -755,11 +980,12 @@ def main(argv: list[str]) -> int:
                   f"{len(report['uploaded'])} uploaded, {len(report['files'])} verified")
         elif args.command in ("make-public", "catalog-inputs"):
             destination = open_destination(args.destination, args.release)
-            require(isinstance(destination, GitHubReleaseDestination),
-                    f"{args.command} is for the github-release destination (R2 serves uploads as they land)")
+            require(isinstance(destination, (GitHubReleaseDestination, R2Destination)),
+                    f"{args.command} is for the github-release and r2 destinations")
             if args.command == "make-public":
                 destination.make_public()
-                print(f"{args.release} is a published prerelease (never latest)")
+                if isinstance(destination, GitHubReleaseDestination):
+                    print(f"{args.release} is a published prerelease (never latest)")
             else:
                 inputs = catalog_inputs(json.loads(args.report.read_text()), destination.download_base())
                 print(f"payload={json.dumps(inputs['payload'], separators=(',', ':'))}")

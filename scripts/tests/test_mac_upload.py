@@ -12,6 +12,7 @@ import sys
 import tempfile
 import unittest
 import urllib.error
+import urllib.parse
 from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parents[1]
@@ -543,12 +544,181 @@ class MakePublicTests(unittest.TestCase):
         with self.assertRaisesRegex(upload.Refusal, "not a commit"):
             PublishingGitHub(self.release(target_commitish="main"), None).make_public()
 
-    def test_the_command_line_takes_only_the_github_destination(self):
+    def test_the_command_line_takes_only_the_public_destinations(self):
         result = subprocess.run(
             [sys.executable, "-I", str(SCRIPTS / "mac-upload.py"), "make-public", "--destination", "dir:/nonexistent",
              "--release", self.TAG], capture_output=True, text=True)
         self.assertEqual(result.returncode, 1)
-        self.assertIn("is for the github-release destination", result.stderr)
+        self.assertIn("is for the github-release and r2 destinations", result.stderr)
+
+
+class SigV4Tests(unittest.TestCase):
+    """AWS's published Signature Version 4 examples for S3."""
+
+    KEYS = {"access_key": "AKIAIOSFODNN7EXAMPLE", "secret_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            "region": "us-east-1", "amz_date": "20130524T000000Z"}
+
+    def test_get_object(self):
+        headers = upload.sigv4_headers(method="GET", host="examplebucket.s3.amazonaws.com", path="/test.txt",
+                                       query={}, headers={"Range": "bytes=0-9"}, payload_sha256=upload.EMPTY_SHA256,
+                                       **self.KEYS)
+        self.assertEqual(headers["authorization"],
+                         "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, "
+                         "SignedHeaders=host;range;x-amz-content-sha256;x-amz-date, "
+                         "Signature=f0e8bdb87c964420e857bd35b5d6ed310bd44f0170aba48dd91039c6036bdb41")
+
+    def test_list_objects(self):
+        headers = upload.sigv4_headers(method="GET", host="examplebucket.s3.amazonaws.com", path="/",
+                                       query={"max-keys": "2", "prefix": "J"}, headers={},
+                                       payload_sha256=upload.EMPTY_SHA256, **self.KEYS)
+        self.assertTrue(headers["authorization"].endswith(
+            "Signature=34b48302e7b5fa45bde8084f4b7868a86f0a534bc59db6670ed5711ef69dc6f7"))
+
+
+class FakeR2(upload.R2Destination):
+    """The R2 destination over an in-memory bucket, no network. Lists two keys a page."""
+
+    def __init__(self, store: dict, release: str, endpoint: str = "https://account.r2.cloudflarestorage.com") -> None:
+        super().__init__("omarchy-mac", release, endpoint=endpoint, access_key="id", secret_key="secret")
+        self.store = store
+        self.calls: list[tuple[str, str]] = []
+
+    def _request(self, method, key, *, query=None, headers=None, body=None, size=0, payload_sha256=upload.EMPTY_SHA256):
+        self.calls.append((method, key))
+        query = query or {}
+        if method == "GET" and key == "":
+            keys = sorted(name for name in self.store if name.startswith(query["prefix"]))
+            start = int(query.get("continuation-token") or 0)
+            page = keys[start:start + 2]
+            more = start + 2 < len(keys)
+            contents = "".join(f"<Contents><Key>{name}</Key><Size>{len(self.store[name])}</Size></Contents>" for name in page)
+            token = f"<NextContinuationToken>{start + 2}</NextContinuationToken>" if more else ""
+            return io.BytesIO(f'<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">{contents}'
+                              f'<IsTruncated>{"true" if more else "false"}</IsTruncated>{token}</ListBucketResult>'.encode())
+        if method == "PUT":
+            if key in self.store and headers.get("If-None-Match") == "*":
+                raise urllib.error.HTTPError(key, 412, "Precondition Failed", None, io.BytesIO(b""))
+            data = body.read()
+            assert len(data) == size and hashlib.sha256(data).hexdigest() == payload_sha256
+            self.store[key] = data
+            return io.BytesIO(b"")
+        if method == "GET":
+            if key not in self.store:
+                raise urllib.error.HTTPError(key, 404, "Not Found", None, io.BytesIO(b"<Error><Code>NoSuchKey</Code></Error>"))
+            return io.BytesIO(self.store[key])
+        if method == "DELETE":
+            self.store.pop(key, None)
+            return io.BytesIO(b"")
+        raise AssertionError(f"unexpected call {method} {key}")
+
+
+class R2DestinationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.directory = Path(tempfile.mkdtemp(prefix="omarchy-mac-upload-r2-test-"))
+        self.addCleanup(lambda: subprocess.run(["rm", "-rf", str(self.directory)], check=True))
+        self.artifact = self.directory / "artifact"
+        self.image, self.sha256 = fixture.make(self.artifact, 3 * PART + 77, "test")
+        self.evidence = self.directory / "evidence.json"
+        self.evidence.write_text(json.dumps(fixture.evidence(self.sha256, RUN_URL)))
+        self.store: dict[str, bytes] = {}
+        self.served: list[str] = []
+        self.serve_from = self.store
+
+        def urlopen(request, timeout=None):
+            url = request.full_url
+            self.served.append(url)
+            key = urllib.parse.unquote(url.removeprefix("https://mac.omarchy.org/"))
+            if key not in self.serve_from:
+                raise urllib.error.HTTPError(url, 404, "Not Found", None, io.BytesIO(b""))
+            return io.BytesIO(self.serve_from[key])
+        original = upload.urllib.request.urlopen
+        upload.urllib.request.urlopen = urlopen
+        self.addCleanup(setattr, upload.urllib.request, "urlopen", original)
+        sleep, upload.time.sleep = upload.time.sleep, lambda seconds: None
+        self.addCleanup(setattr, upload.time, "sleep", sleep)
+
+    def run_publish(self, destination, dry_run=False):
+        with contextlib.redirect_stdout(io.StringIO()):
+            return upload.publish(artifact=self.artifact, image=self.image, sha256=self.sha256, destination=destination,
+                                  release=destination.release, dry_run=dry_run, evidence=self.evidence,
+                                  evidence_run_url=RUN_URL)
+
+    def test_a_real_upload_lands_whole_under_v1_releases_and_is_served(self):
+        destination = FakeR2(self.store, self.image)
+        report = self.run_publish(destination)
+        prefix = f"v1/releases/{self.image}/"
+        zip_name = next(self.artifact.glob("*.zip")).name
+        self.assertEqual(report["destination"], f"r2://omarchy-mac/{prefix}")
+        self.assertEqual(sorted(self.store), sorted(prefix + name for name in report["uploaded"]))
+        self.assertEqual(hashlib.sha256(self.store[prefix + zip_name]).hexdigest(), self.sha256)
+        self.assertFalse(any(".part" in key for key in self.store))
+        self.assertEqual(self.served, [f"https://mac.omarchy.org/{prefix}{upload.SUMS_NAME}"])
+        inputs = upload.catalog_inputs(report, destination.download_base())
+        self.assertEqual(inputs["payload"]["url"], f"https://mac.omarchy.org/{prefix}{zip_name}")
+        self.assertNotIn("parts", inputs["payload"])
+
+    def test_an_identical_upload_writes_nothing_and_a_changed_one_is_refused(self):
+        self.run_publish(FakeR2(self.store, self.image))
+        again = FakeR2(self.store, self.image)
+        report = self.run_publish(again)
+        self.assertEqual(report["uploaded"], [])
+        self.assertNotIn("PUT", [method for method, _ in again.calls])
+        key = f"v1/releases/{self.image}/IMAGE"
+        self.store[key] = self.store[key][:-1] + b"?"
+        with self.assertRaisesRegex(upload.Refusal, "IMAGE is already published with different bytes"):
+            self.run_publish(FakeR2(self.store, self.image))
+
+    def test_r2_refuses_to_replace_a_file(self):
+        destination = FakeR2(self.store, self.image)
+        destination.put("IMAGE", self.artifact / "IMAGE")
+        with self.assertRaisesRegex(upload.Refusal, "IMAGE already exists at r2://omarchy-mac/v1/releases/"):
+            destination.put("IMAGE", self.artifact / "IMAGE")
+
+    def test_a_file_stored_but_not_served_fails_the_upload(self):
+        self.serve_from = {}
+        with self.assertRaisesRegex(upload.Refusal, "serves HTTP 404, not the uploaded SHA256SUMS"):
+            self.run_publish(FakeR2(self.store, self.image))
+
+    def test_a_dry_run_writes_only_scratch_and_deletes_it(self):
+        release = f"dryrun-{self.image}-1-1"
+        destination = FakeR2(self.store, release)
+        report = self.run_publish(destination, dry_run=True)
+        self.assertEqual(self.store, {})
+        puts = [key for method, key in destination.calls if method == "PUT"]
+        self.assertTrue(puts and all(key.startswith(f"dryrun/{release}/") for key in puts))
+        self.assertEqual(report["destination"], f"r2://omarchy-mac/dryrun/{release}/")
+
+    def test_only_scratch_is_ever_deleted_or_left_unpublished(self):
+        self.store[f"v1/releases/{self.image}/IMAGE"] = b"x"
+        destination = FakeR2(self.store, self.image)
+        with self.assertRaisesRegex(upload.Refusal, "only a dryrun- scratch release is ever deleted"):
+            destination.discard()
+        self.assertEqual(len(self.store), 1)
+        with self.assertRaisesRegex(upload.Refusal, "never published"):
+            FakeR2(self.store, f"dryrun-{self.image}").make_public()
+
+    def test_an_unexpected_nested_object_is_refused(self):
+        self.store[f"v1/releases/{self.image}/nested/IMAGE"] = b"x"
+        with self.assertRaisesRegex(upload.Refusal, "unexpected object"):
+            FakeR2(self.store, self.image).listing()
+
+    def test_the_endpoint_may_name_the_bucket_but_nothing_else(self):
+        self.assertEqual(FakeR2({}, self.image, "https://a.r2.cloudflarestorage.com/omarchy-mac/").host, "a.r2.cloudflarestorage.com")
+        for endpoint in ("http://a.r2.cloudflarestorage.com", "https://a.r2.cloudflarestorage.com/other", ""):
+            with self.assertRaisesRegex(upload.Refusal, "R2_ENDPOINT") as caught:
+                FakeR2({}, self.image, endpoint)
+            self.assertNotIn("a.r2", str(caught.exception))
+        with self.assertRaisesRegex(upload.Refusal, "no R2 credentials"):
+            upload.R2Destination("omarchy-mac", self.image, endpoint="https://a.r2.cloudflarestorage.com",
+                                 access_key="", secret_key="")
+
+    def test_a_file_over_one_put_is_refused_before_writing(self):
+        destination = FakeR2(self.store, self.image)
+        limit, upload.R2_PUT_BYTES = upload.R2_PUT_BYTES, 10
+        self.addCleanup(setattr, upload, "R2_PUT_BYTES", limit)
+        with self.assertRaisesRegex(upload.Refusal, "one R2 upload takes at most 10"):
+            destination.put("IMAGE", self.artifact / "IMAGE")
+        self.assertEqual(self.store, {})
 
 
 if __name__ == "__main__":
