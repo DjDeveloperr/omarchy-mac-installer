@@ -47,6 +47,7 @@ import base64
 import binascii
 import datetime
 import hashlib
+import io
 import json
 import os
 import re
@@ -63,6 +64,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import supported_models  # noqa: E402
+import r2_s3  # noqa: E402
 
 IDENTITY = ROOT / "Packaging" / "identity.conf"
 DEFAULT_TRUST_ROOT = ROOT / "Release" / "trust-root.ed25519.pub"
@@ -877,12 +879,86 @@ class GitHubReleaseHost:
                       "rename it by hand to restore the channel")
 
 
+class R2CatalogHost:
+    """The catalog base (INSTALLER_CATALOG_BASE) on R2: catalog-<channel>.signed.json
+    under the base's path in the bucket, replaced in place by one PUT, as the
+    x86 side replaces its latest.json and omarchy.db. The publish job's
+    per-channel concurrency group keeps two publishes apart; a PUT that timed
+    out and lands after a newer one leaves an older sequence served, which the
+    next publish of the newer catalog repairs. The bucket's lock must not cover
+    these keys (only images, engines and apps are immutable)."""
+
+    def __init__(self, endpoint: r2_s3.Endpoint, base: str):
+        parsed = urllib.parse.urlsplit(base)
+        if parsed.scheme != "https" or not parsed.hostname or parsed.query or not parsed.path.strip("/"):
+            raise Refusal(f"invalid catalog base: {base}")
+        self.endpoint = endpoint
+        self.base = base.rstrip("/")
+        self.prefix = parsed.path.strip("/") + "/"
+
+    @classmethod
+    def from_environment(cls) -> "R2CatalogHost":
+        try:
+            endpoint = r2_s3.Endpoint.parse(os.environ.get("R2_BUCKET", "") or "omarchy-mac",
+                                            os.environ.get("R2_ENDPOINT", ""), os.environ.get("R2_ACCESS_KEY_ID", ""),
+                                            os.environ.get("R2_SECRET_ACCESS_KEY", ""))
+        except r2_s3.R2Error as error:
+            raise Refusal(str(error)) from None
+        return cls(endpoint, identity()["INSTALLER_CATALOG_BASE"])
+
+    def describe(self, channel: str) -> str:
+        return f"{self.base}/catalog-{channel}.signed.json"
+
+    def fetch(self, channel: str, timeout: float = 60) -> bytes | None:
+        """What an app is served: the URL it fetches, unchanged."""
+        try:
+            with open_url(self.describe(channel), timeout=timeout, headers=NO_CACHE) as response:
+                data = response.read(MAXIMUM_CATALOG_BYTES * 2 + 1)
+        except urllib.error.HTTPError as error:
+            if error.code == 404:
+                return None
+            raise
+        if len(data) > MAXIMUM_CATALOG_BYTES * 2:
+            raise Refusal("the published catalog envelope is oversized")
+        return data
+
+    def preflight(self, channel: str) -> None:
+        pass
+
+    def publish(self, channel: str, envelope: Path) -> None:
+        data = envelope.read_bytes()
+        key = f"{self.prefix}catalog-{channel}.signed.json"
+        try:
+            with self.endpoint.request("PUT", key, headers={"Content-Type": "application/json"},
+                                       body=io.BytesIO(data), size=len(data),
+                                       payload_sha256=hashlib.sha256(data).hexdigest(), timeout=60) as response:
+                response.read()
+        except urllib.error.HTTPError as error:
+            text = r2_s3.refusal_text(f"store {key}", error)
+            if "ObjectLockedByBucketPolicy" in text:
+                text += "; the bucket lock covers the catalogs, which must stay replaceable"
+            raise Refusal(text) from None
+        except r2_s3.R2Error as error:
+            raise Refusal(str(error)) from None
+
+
 def catalog_host(spec: str):
     if spec.startswith("scratch:"):
         return ScratchHost(Path(spec[len("scratch:"):]))
     if spec == "github-release":
         return GitHubReleaseHost(stopgap_repo())
-    raise Refusal(f"unknown catalog host {spec!r} (github-release or scratch:DIR)")
+    if spec == "r2":
+        return R2CatalogHost.from_environment()
+    raise Refusal(f"unknown catalog host {spec!r} (r2, github-release or scratch:DIR)")
+
+
+def catalog_hosts(spec: str) -> list:
+    """A comma list of hosts, written in order: the first is the catalog base,
+    the rest mirror it (the GitHub stopgap, for apps that read it)."""
+    names = [name.strip() for name in spec.split(",")]
+    if "" in names or len(set(names)) != len(names):
+        raise Refusal(f"invalid catalog host list: {spec!r}")
+    return [catalog_host(name) for name in names]
 
 
 def live_sequence(host, channel: str, trust_root: bytes, openssl: str) -> int:
@@ -1125,19 +1201,24 @@ def command_publish(arguments) -> None:
     trust_root = read_trust_root(arguments.trust_root)
     data = arguments.envelope.read_bytes()
     document = verify_envelope(data, trust_root, openssl)
-    host = catalog_host(arguments.host)
-    if host.fetch(channel) == data:
-        # A retry after a publish whose readback failed: already live.
-        print(f"published={host.describe(channel)} (already live)")
-        return
-    host.preflight(channel)
-    live = live_sequence(host, channel, trust_root, openssl)
-    if document["sequence"] <= live:
-        raise Refusal(f"sequence {document['sequence']} does not follow the published {live}")
-    host.publish(channel, arguments.envelope)
-    read_back(host, channel, data)
-    print(f"published={host.describe(channel)}")
-    print(f"sequence={document['sequence']} (was {live})")
+    # Every host is checked before any is written, so a refusal on the
+    # second never leaves the first ahead.
+    pending = []
+    for host in catalog_hosts(arguments.host):
+        if host.fetch(channel) == data:
+            # A retry after a publish whose readback failed: already live.
+            print(f"published={host.describe(channel)} (already live)")
+            continue
+        host.preflight(channel)
+        live = live_sequence(host, channel, trust_root, openssl)
+        if document["sequence"] <= live:
+            raise Refusal(f"sequence {document['sequence']} does not follow the published {live} at {host.describe(channel)}")
+        pending.append((host, live))
+    for host, live in pending:
+        host.publish(channel, arguments.envelope)
+        read_back(host, channel, data)
+        print(f"published={host.describe(channel)}")
+        print(f"sequence={document['sequence']} (was {live})")
 
 
 def command_public_key(arguments) -> None:

@@ -51,11 +51,23 @@ on:
         description: Sign and publish to a scratch directory only
         type: boolean
         default: true
+      catalog-hosts:
+        description: Where the signed catalog goes, in order (mac-catalog-sign.yml)
+        type: string
+        default: github-release
     secrets:
       # The sign job reads the catalog-release environment's secret, which a
       # caller must still pass: call with `secrets: inherit`. Callers must be
       # workflows of this repository; catalog_release.py refuses others.
       CATALOG_SIGNING_KEY:
+        required: false
+      # The publish environment's R2 key, read only by the publish job when
+      # catalog-hosts names r2. Passed on the same way.
+      R2_ENDPOINT:
+        required: false
+      R2_ACCESS_KEY_ID:
+        required: false
+      R2_SECRET_ACCESS_KEY:
         required: false
     outputs:
       catalog-sha256:
@@ -96,6 +108,11 @@ on:
         description: Sign and publish to a scratch directory only
         type: boolean
         default: true
+      catalog-hosts:
+        description: Where the signed catalog goes, in order
+        type: choice
+        options: [github-release, 'r2,github-release']
+        default: github-release
 
 permissions: {}
 
@@ -188,4 +205,5 @@ jobs:
       catalog-sha256: ${{ needs.prepare.outputs.catalog-sha256 }}
       gate: evidence
       dry-run: ${{ inputs.dry-run }}
+      catalog-hosts: ${{ inputs.catalog-hosts }}
     secrets: inherit
