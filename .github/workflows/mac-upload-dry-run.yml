@@ -84,7 +84,7 @@ jobs:
       image-sha256: ${{ needs.fixture.outputs.sha256 }}
       dry-run: true
       evidence-artifact: mac-upload-fixture-evidence
-      part-bytes: ${{ inputs.host == 'r2' && '' || '1048576' }}
+      part-bytes: ${{ inputs.host == 'github-release' && '1048576' || '' }}
       host: ${{ inputs.host }}
     secrets:
       R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}

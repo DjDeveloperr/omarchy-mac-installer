@@ -197,13 +197,37 @@ class Secrets(unittest.TestCase):
                     with self.subTest(f"{workflow.name} {job}"):
                         self.assertEqual(field(body, "uses"), "./.github/workflows/mac-catalog-sign.yml")
 
-    def test_the_pipeline_passes_only_the_catalog_key_and_only_to_the_catalog(self):
+    R2_SECRETS = ("R2_ENDPOINT", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY")
+
+    def test_the_pipeline_passes_the_catalog_key_to_the_catalog_and_r2_to_the_upload_only(self):
         pipeline_jobs = jobs(PIPELINE)
         for job, body in pipeline_jobs.items():
             with self.subTest(job):
-                expected = ["CATALOG_SIGNING_KEY: ${{ secrets.CATALOG_SIGNING_KEY }}"] if job == "catalog" else []
+                expected = {
+                    "catalog": ["CATALOG_SIGNING_KEY: ${{ secrets.CATALOG_SIGNING_KEY }}"],
+                    "upload": [f"{name}: ${{{{ secrets.{name} }}}}" for name in self.R2_SECRETS],
+                }.get(job, [])
                 self.assertEqual([line.strip() for line in body.splitlines() if "secrets." in line], expected)
                 self.assertNotIn("environment:", body)
+
+    def test_r2_credentials_are_read_only_by_the_upload_job_in_publish(self):
+        readers = []
+        for workflow in sorted(WORKFLOWS.glob("*.yml")):
+            for job, body in jobs(workflow).items():
+                if not any(f"secrets.{name}" in body for name in self.R2_SECRETS):
+                    continue
+                with self.subTest(f"{workflow.name} {job}"):
+                    if field(body, "uses").startswith("./.github/workflows/"):
+                        self.assertEqual(field(body, "uses"), "./.github/workflows/mac-upload.yml")
+                        for name in self.R2_SECRETS:
+                            self.assertRegex(body, rf"(?m)^      {name}: \$\{{\{{ secrets\.{name} \}}\}}$")
+                    else:
+                        readers.append(f"{workflow.name} {job}")
+                        self.assertIn("'publish'", field(body, "environment"))
+                        for line in body.splitlines():
+                            if "secrets.R2_" in line:
+                                self.assertIn("inputs.host == 'r2' && secrets.R2_", line)
+        self.assertEqual(readers, ["mac-upload.yml upload"])
 
     def test_the_key_is_read_only_in_the_catalog_release_environment(self):
         # Wherever the signing job lives, only a job in catalog-release reads
@@ -226,9 +250,9 @@ class Secrets(unittest.TestCase):
             with self.subTest(workflow):
                 self.assertNotIn("secrets.", text(WORKFLOWS / workflow))
 
-    def test_a_real_upload_runs_in_the_publish_environment(self):
+    def test_a_real_upload_and_an_r2_dry_run_run_in_the_publish_environment(self):
         self.assertEqual(field(jobs(WORKFLOWS / "mac-upload.yml")["upload"], "environment"),
-                         "${{ !inputs.dry-run && 'publish' || '' }}")
+                         "${{ (!inputs.dry-run || inputs.host == 'r2') && 'publish' || '' }}")
 
 
 class Hardening(unittest.TestCase):

@@ -712,6 +712,39 @@ class R2DestinationTests(unittest.TestCase):
             upload.R2Destination("omarchy-mac", self.image, endpoint="https://a.r2.cloudflarestorage.com",
                                  access_key="", secret_key="")
 
+    def test_real_requests_are_path_style_signed_and_stream_the_file(self):
+        destination = upload.R2Destination("omarchy-mac", self.image, endpoint="https://a.r2.cloudflarestorage.com",
+                                           access_key="id", secret_key="secret")
+        sent = []
+
+        def urlopen(request, timeout=None):
+            body = request.data.read() if request.data is not None else None
+            sent.append((request.get_method(), request.full_url, dict(request.header_items()), body))
+            return io.BytesIO(b"")
+        upload.urllib.request.urlopen = urlopen
+        destination.put("installer_data.json", self.artifact / "installer_data.json")
+        method, url, headers, body = sent[0]
+        data = (self.artifact / "installer_data.json").read_bytes()
+        self.assertEqual(method, "PUT")
+        self.assertEqual(url, f"https://a.r2.cloudflarestorage.com/omarchy-mac/v1/releases/{self.image}/installer_data.json")
+        self.assertEqual(body, data)
+        self.assertEqual(headers["Content-length"], str(len(data)))
+        self.assertEqual(headers["Content-type"], "application/json")
+        self.assertEqual(headers["If-none-match"], "*")
+        self.assertEqual(headers["X-amz-content-sha256"], hashlib.sha256(data).hexdigest())
+        self.assertIn("SignedHeaders=cache-control;content-type;host;if-none-match;x-amz-content-sha256;x-amz-date;"
+                      "x-amz-meta-sha256,", headers["Authorization"])
+        self.assertNotIn("Host", headers)
+
+        sent.clear()
+        destination._request("GET", "", query={"list-type": "2", "prefix": destination.prefix,
+                                               "continuation-token": "a+b/c=="})
+        method, url, headers, body = sent[0]
+        self.assertEqual(url, "https://a.r2.cloudflarestorage.com/omarchy-mac/?continuation-token=a%2Bb%2Fc%3D%3D"
+                              f"&list-type=2&prefix=v1%2Freleases%2F{self.image}%2F")
+        self.assertEqual((method, body), ("GET", None))
+        self.assertNotIn("Content-length", headers)
+
     def test_a_file_over_one_put_is_refused_before_writing(self):
         destination = FakeR2(self.store, self.image)
         limit, upload.R2_PUT_BYTES = upload.R2_PUT_BYTES, 10
