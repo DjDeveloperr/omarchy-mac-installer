@@ -115,6 +115,7 @@ class Triggers(unittest.TestCase):
         "mac-upload.yml": {"workflow_call", "workflow_dispatch"},
         "mac-catalog.yml": {"workflow_call", "workflow_dispatch"},
         "edge-dispatch.yml": {"repository_dispatch"},
+        "mac-mirror.yml": {"workflow_dispatch"},
     }
 
     def test_no_pipeline_workflow_runs_for_pull_requests_pushes_or_other_runs(self):
@@ -221,6 +222,7 @@ class Secrets(unittest.TestCase):
     R2_READERS = {
         "mac-upload.yml upload": "inputs.host == 'r2' && secrets.R2_",
         "mac-catalog-sign.yml publish": "contains(inputs.catalog-hosts, 'r2') && secrets.R2_",
+        "mac-mirror.yml mirror": "${{ secrets.R2_",
     }
     R2_PASSERS = ("./.github/workflows/mac-upload.yml", "./.github/workflows/mac-catalog.yml")
 
@@ -238,11 +240,24 @@ class Secrets(unittest.TestCase):
                             self.assertRegex(body, rf"(?m)^      {secret}: \$\{{\{{ secrets\.{secret} \}}\}}$")
                     else:
                         readers.append(name)
-                        self.assertIn("'publish'", field(body, "environment"))
+                        self.assertIn(field(body, "environment").strip("'"),
+                                      ("publish", "${{ (!inputs.dry-run || inputs.host == 'r2') && 'publish' || '' }}",
+                                       "${{ contains(inputs.catalog-hosts, 'r2') && 'publish' || '' }}"))
                         for line in body.splitlines():
                             if "secrets.R2_" in line:
                                 self.assertIn(self.R2_READERS.get(name, "unexpected reader"), line)
         self.assertEqual(sorted(readers), sorted(self.R2_READERS))
+
+    def test_the_mirror_runs_by_hand_from_main_only(self):
+        mirror = text(WORKFLOWS / "mac-mirror.yml")
+        self.assertEqual(triggers(WORKFLOWS / "mac-mirror.yml"), {"workflow_dispatch"})
+        job = jobs(WORKFLOWS / "mac-mirror.yml")["mirror"]
+        self.assertEqual(field(job, "if"), "github.repository == 'omacom/omarchy-mac-installer' && github.ref == 'refs/heads/main'")
+        self.assertEqual(field(job, "environment"), "publish")
+        self.assertEqual(field(job, "runs-on"), "ubuntu-24.04")
+        self.assertIn("\npermissions: {}\n", mirror)
+        self.assertRegex(job, r"\n    permissions:\n      contents: read # [^\n]*\n    concurrency:")
+        self.assertNotIn("pull_request", mirror)
 
     def test_catalogs_stay_on_github_until_r2_is_chosen(self):
         for workflow in ("mac-catalog.yml", "mac-catalog-sign.yml"):
@@ -284,7 +299,7 @@ class Secrets(unittest.TestCase):
 
 class Hardening(unittest.TestCase):
     PIPELINE_FILES = ("mac-release-pipeline.yml", "mac-acceptance.yml", "mac-image.yml", "recovery-app.yml",
-                      "mac-upload.yml", "mac-catalog.yml", "edge-dispatch.yml")
+                      "mac-upload.yml", "mac-catalog.yml", "edge-dispatch.yml", "mac-mirror.yml")
 
     def test_every_action_is_pinned_to_a_commit(self):
         for workflow in sorted(WORKFLOWS.glob("*.yml")):
