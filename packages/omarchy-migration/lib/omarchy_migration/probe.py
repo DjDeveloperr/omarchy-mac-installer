@@ -433,6 +433,14 @@ class AgeProcess:
             # Deliberately do not expose raw terminal/error output to callers.
             raise Rejected("age rejected the transfer")
 
+    def passphrase_rejected(self):
+        """Whether age stopped because the passphrase doesn't open the file."""
+        try:
+            self.process.wait(timeout=65)
+            return b"age: error: incorrect passphrase" in self.process.stderr.read(4096)
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+
     def close(self):
         if self.process.poll() is None:
             self.process.kill()
@@ -620,7 +628,12 @@ def _decode(age, secret, ciphertext, limit, *, objects=None, digest=None, budget
             feeder = threading.Thread(target=feed, daemon=True)
             feeder.start()
             try:
-                manifest = validate_archive(child.process.stdout, _objects=objects, budget=budget)
+                try:
+                    manifest = validate_archive(child.process.stdout, _objects=objects, budget=budget)
+                except Rejected:
+                    if child.passphrase_rejected():
+                        raise Rejected("passphrase_incorrect") from None
+                    raise
                 child.finish()
                 feeder.join(timeout=1)
                 if errors or feeder.is_alive():

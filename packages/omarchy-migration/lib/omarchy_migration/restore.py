@@ -105,9 +105,9 @@ class _VerifiedBundle:
 
 
 @contextlib.contextmanager
-def verified_bundle(age, secret, ciphertext):
+def verified_bundle(age, secret, ciphertext, scratch=None):
     """Yield only after complete authentication; remove plaintext on every exit."""
-    with tempfile.TemporaryDirectory(prefix="migration-verified-") as directory:
+    with tempfile.TemporaryDirectory(prefix="migration-verified-", dir=scratch) as directory:
         root = Path(directory)
 
         @contextlib.contextmanager
@@ -238,7 +238,7 @@ class Restorer:
     the archive except validated relative file names.
     """
 
-    def __init__(self, bundle, target, job, *, replace=()):
+    def __init__(self, bundle, target, job, *, replace=(), replace_matching=None):
         bundle._check()
         if os.geteuid() == 0:
             raise probe.Rejected("run this experiment as an unprivileged owner")
@@ -257,7 +257,19 @@ class Restorer:
                 or any(path not in self._entries or probe.entry_kind(self._entries[path]) != "file"
                        for path in replace)):
             raise probe.Rejected("replacement approval must name selected regular files")
+        if replace_matching is not None:
+            # Each path may be replaced only while its destination has exactly this digest.
+            if (replace or not isinstance(replace_matching, dict)
+                    or any(type(digest) is not str or len(digest) != 64
+                           or any(char not in "0123456789abcdef" for char in digest)
+                           for digest in replace_matching.values())):
+                raise probe.Rejected("conditional replacement must map selected regular files to digests")
+            replace = tuple(replace_matching)
+            if any(type(path) is not str or path not in self._entries
+                   or probe.entry_kind(self._entries[path]) != "file" for path in replace):
+                raise probe.Rejected("replacement approval must name selected regular files")
         self._replace = frozenset(replace)
+        self._originals = dict(sorted(replace_matching.items())) if replace_matching else None
         try:
             # Caller paths are trusted, but the final component must not be a
             # symlink. Resolve parents only for containment checks.
@@ -286,6 +298,8 @@ class Restorer:
             }
             if self._replace:
                 self._binding["replacement_paths"] = sorted(self._replace)
+            if self._originals:
+                self._binding["replacement_originals"] = self._originals
             self._journal = self._load()
             self._written = {key: _json_bytes(value) for key, value in self._journal["entries"].items()}
             # A torn tail must be removed before appending again; an overgrown
@@ -568,6 +582,9 @@ class Restorer:
                 status, reason = "create", "new file"
             elif _matches(entry, observed):
                 status, reason = "present", "matching file already exists"
+            elif (entry["path"] in self._replace and observed is not None and "blocked" not in observed
+                  and self._originals is not None and observed["sha256"] != self._originals[entry["path"]]):
+                status, reason = "conflict", "existing file differs from its default"
             elif entry["path"] in self._replace and observed is not None and "blocked" not in observed:
                 status, reason = "replace", "approved regular file; private original backup required"
             else:

@@ -1,6 +1,6 @@
 # Authenticated, additive restoration experiment
 
-This extends the existing synthetic bundle probe with a library interface for restoration into a disposable destination. The original file-only format remains supported; the [v2 tree extension](TREE.md) adds explicit directories and selected relative links. It is not a real-home importer or an installed command. The production module still belongs in the shared Omarchy runtime at `install/migration/omarchy_migration/`, exposed by `bin/omarchy-migration`; Try and native installation must consume one pinned implementation. These experiments settle behavior before that promotion, rather than establishing an independent installer-side import engine.
+This extends the existing synthetic bundle probe with a library interface for restoration into a disposable destination. The original file-only format remains supported; the [v2 tree extension](TREE.md) adds explicit directories and selected relative links. The native import (`omarchy-migration import`) uses it to restore into the owner's home, with the job and scratch in a private work folder beside the home, on the same filesystem ([native import](../../../docs/native-import.md)). Try and the native installation consume one pinned build of this package.
 
 ## Interface
 
