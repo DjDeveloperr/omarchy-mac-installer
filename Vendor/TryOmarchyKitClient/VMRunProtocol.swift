@@ -24,9 +24,9 @@ public enum VMRunNetwork: String, Codable, Sendable {
     case bridged
 }
 
-/// What the run mode needs to start the VM. The storage folder here is the
-/// VM. The settings stored for that VM win: memory, CPUs and network here
-/// apply only where the launcher stored nothing (docs/vm-kit.md).
+/// What the run mode needs to start the VM. The settings stored for the VM
+/// win: the storage folder, memory, CPUs and network here apply only where
+/// the launcher stored nothing (docs/vm-kit.md).
 public struct VMRunConfiguration: Equatable, Sendable {
     /// Names the app in messages, the Touch ID prompt, and the Omarchy
     /// window's Dock entry and menus.
@@ -34,8 +34,8 @@ public struct VMRunConfiguration: Equatable, Sendable {
     /// The Omarchy window's Dock icon: an existing .icns or .png file. Nil is
     /// the kit's own icon.
     public var iconPath: String?
-    /// The VM's storage folder, whatever folder Try Omarchy chose. Nil is the
-    /// folder chosen in Try Omarchy, else its default folder.
+    /// The VM's storage folder when none was chosen in the settings. Nil is
+    /// the full app's default folder.
     public var storageRoot: String?
     public var bridges: [VMRunBridge]
     /// Used when no resources are stored. Nil leaves the size to the
@@ -45,6 +45,11 @@ public struct VMRunConfiguration: Equatable, Sendable {
     /// Used when no network is stored. A bridged one that cannot start fails
     /// with `bridgedNetworkUnavailable`.
     public var network: VMRunNetwork
+    /// Offers Omarchy's Move to Native Install, with the outbox it exports
+    /// into (docs/native-install-export.md). Only an app that can stage the
+    /// export onto a native install asks for it, and only from a kit whose
+    /// manifest lists `TryOmarchyKitCapability.nativeExports`.
+    public var nativeExports: Bool
 
     public init(
         productName: String,
@@ -53,7 +58,8 @@ public struct VMRunConfiguration: Equatable, Sendable {
         bridges: [VMRunBridge] = VMRunBridge.allCases,
         memoryMiB: Int? = nil,
         cpus: Int? = nil,
-        network: VMRunNetwork = .shared
+        network: VMRunNetwork = .shared,
+        nativeExports: Bool = false
     ) {
         self.productName = productName
         self.iconPath = iconPath
@@ -62,6 +68,7 @@ public struct VMRunConfiguration: Equatable, Sendable {
         self.memoryMiB = memoryMiB
         self.cpus = cpus
         self.network = network
+        self.nativeExports = nativeExports
     }
 
     public func encodedLine() throws -> Data {
@@ -76,12 +83,14 @@ public struct VMRunConfiguration: Equatable, Sendable {
         if let storageRoot { object["storageRoot"] = storageRoot }
         if let memoryMiB { object["memoryMiB"] = memoryMiB }
         if let cpus { object["cpus"] = cpus }
+        if nativeExports { object["nativeExports"] = true }
         return try VMRunLine.encode(object)
     }
 
     public static func decode(line: Data) throws -> Self {
         let object = try VMRunLine.decode(line)
-        let allowed: Set = ["version", "productName", "iconPath", "storageRoot", "bridges", "memoryMiB", "cpus", "network"]
+        let allowed: Set = ["version", "productName", "iconPath", "storageRoot", "bridges", "memoryMiB", "cpus", "network",
+                            "nativeExports"]
         guard Set(object.keys).isSubset(of: allowed),
               VMRunLine.integer(object["version"]) == VMRunProtocol.version,
               let productName = object["productName"] as? String,
@@ -112,6 +121,12 @@ public struct VMRunConfiguration: Equatable, Sendable {
         if let value = object["cpus"] {
             guard let cpus = VMRunLine.integer(value) else { throw VMRunProtocolError.invalidConfiguration }
             configuration.cpus = cpus
+        }
+        if let value = object["nativeExports"] {
+            guard let offered = value as? Bool, CFGetTypeID(value as CFTypeRef) == CFBooleanGetTypeID() else {
+                throw VMRunProtocolError.invalidConfiguration
+            }
+            configuration.nativeExports = offered
         }
         try configuration.validate()
         return configuration

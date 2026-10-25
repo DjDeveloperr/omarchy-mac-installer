@@ -32,7 +32,7 @@ People who used Try Omarchy 1.2 keep what they had in its default folder. The in
 
 ## Migrating to native
 
-Omarchy exports the home folder from inside the virtual machine with **Setup → Move to Native Install**, encrypted with a transfer passphrase. Only virtual machines the installer runs offer it: the kit's run mode asks the launcher for the outbox, and Try Omarchy on its own doesn't. The launcher publishes the export to Try Omarchy's Exports folder when the virtual machine stops. The contract is Try's [native install export](https://github.com/omacom/try-omarchy/blob/main/docs/native-install-export.md).
+Omarchy exports the home folder from inside the virtual machine with **Setup → Move to Native Install**, encrypted with a transfer passphrase. Only virtual machines the installer runs offer it, and only when this installer can stage the export (`TrialRunConfiguration.offersNativeExports`): the configuration asks the kit's run mode for the outbox with `nativeExports`, and Try Omarchy on its own doesn't. The kit client drops the request for a kit whose manifest doesn't list `native-exports`. The launcher publishes the export to Try Omarchy's Exports folder when the virtual machine stops. The contract is Try's [native install export](https://github.com/omacom/try-omarchy/blob/main/docs/native-install-export.md).
 
 **Migrate to Native** opens a sheet that depends on what it finds:
 
