@@ -15,6 +15,10 @@ public struct TryOmarchyExport: Equatable, Sendable {
   public var bundleURL: URL {
     directory.appendingPathComponent(TryOmarchyExportDiscovery.bundleName)
   }
+
+  public var receiptURL: URL {
+    directory.appendingPathComponent(TryOmarchyExportDiscovery.receiptName)
+  }
 }
 
 struct TryOmarchyExportFileIdentity: Equatable, Sendable {

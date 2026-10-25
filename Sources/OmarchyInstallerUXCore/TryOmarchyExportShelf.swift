@@ -74,6 +74,11 @@
       }
     }
 
+    /// The export with this id, once a check passed.
+    public func verifiedExport(id: String) -> TryOmarchyExport? {
+      lock.withLock { exports[id].flatMap { $0.verified ? $0 : nil } }
+    }
+
     /// Stops the check under way, if any; its answer is no longer wanted.
     public func cancelVerification() {
       lock.withLock { verification += 1 }

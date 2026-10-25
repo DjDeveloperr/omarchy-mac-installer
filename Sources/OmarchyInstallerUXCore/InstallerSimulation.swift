@@ -104,6 +104,7 @@
     private var approved = false
     private var attempts = 0
     private var cancelled = false
+    private var tryExportForInstall: String?
     public let channel: ReleaseChannel
     private let tryExportShelf: TryOmarchyExportShelf?
 
@@ -121,6 +122,9 @@
     }
 
     public var isSimulation: Bool { true }
+    public func useTryExportForInstall(_ exportID: String?) {
+      lock.withLock { tryExportForInstall = exportID }
+    }
     public var installationBlocked: Bool { scenario == .unsupported }
     public var engineSupported: Bool { scenario != .unsupported && scenario != .engineUnavailable }
     public var hasApprovedPlan: Bool { lock.withLock { approved } }
@@ -361,6 +365,9 @@
     }
 
     private func completion() -> CompletionDisplay {
+      let tryExport = lock.withLock { tryExportForInstall }.map {
+        PlainLanguage.tryExportStaging(.staged(exportID: $0))
+      }
       let next: InstallerNextAction =
         switch scenario {
         case .manualRecovery: .manualRecovery
@@ -375,10 +382,11 @@
             ? PlainLanguage.recoveryHeadline : PlainLanguage.mediaHeadline,
           steps: PlainLanguage.recoverySteps(for: [
             "enterOneTrueRecovery", "authenticateMachineOwner",
-          ])) : nil
+          ]), tryExport: tryExport) : nil
       return CompletionDisplay(
         nextAction: next, headline: PlainLanguage.doneHeadline,
-        subheadline: PlainLanguage.nextActionMessage(next), verified: [], handoff: handoff)
+        subheadline: PlainLanguage.nextActionMessage(next), verified: [], handoff: handoff,
+        tryExport: tryExport)
     }
 
     public func requestShutdown() -> Bool { scenario != .shutdownFailure }

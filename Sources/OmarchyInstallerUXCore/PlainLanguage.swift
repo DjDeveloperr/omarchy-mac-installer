@@ -28,9 +28,23 @@
     public static let tryExportChecking = "Checking the encrypted export…"
     public static let tryExportVerified =
       "The encrypted export is intact. You’ll need its transfer passphrase after Omarchy starts."
-    /// Until staging lands, choosing an export only checks it.
-    public static let tryExportNotYet =
-      "This installer checks the export but can’t bring it across yet."
+    public static let tryExportComesAlong =
+      "The installer copies the encrypted export onto Omarchy’s disk. At the first login, Omarchy asks for its transfer passphrase and brings your files in."
+    public static let tryExportNoRoom =
+      "Omarchy needs more space to bring these files along. Make Omarchy larger, or install without them."
+    public static func tryExportStaging(_ outcome: TryExportStagingOutcome) -> String {
+      switch outcome {
+      case .staged:
+        return
+          "Your files from Omarchy are on the new disk. At the first login, Omarchy offers to bring them in."
+      case .notStaged(.noRoom):
+        return
+          "There wasn’t room on the new disk for your files from Omarchy, so it starts without them. They stay in Try Omarchy’s Exports folder."
+      case .notStaged:
+        return
+          "Your files from Omarchy couldn’t be copied onto the new disk, so it starts without them. They stay in Try Omarchy’s Exports folder."
+      }
+    }
     public static let tryExportUnavailable =
       "Try Omarchy’s Exports folder can be changed by other users, so its exports were skipped."
     public static let tryExportMissing =

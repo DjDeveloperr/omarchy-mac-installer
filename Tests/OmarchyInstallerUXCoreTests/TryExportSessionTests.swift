@@ -32,6 +32,37 @@
       return session
     }
 
+    func testThePlanAndTheInstallBringTheCheckedExport() async throws {
+      let environment = MockInstallerEnvironment()
+      environment.tryExportAnswers = [.found([Self.newer], unusable: 0)]
+      let session = await welcomed(environment)
+      await session.refreshTryExports()
+      await session.chooseTryExport(Self.newer.id)
+      await session.continueToPlan()
+      session.continueToPlanReview()
+      session.setAcknowledged(true)
+      session.approve()
+      session.presentInstallCredentials()
+      await session.submit(
+        try MachineOwnerAuthorization(username: "owner", password: Data("pw".utf8)))
+      XCTAssertEqual(environment.executeCount, 1)
+      XCTAssertEqual(environment.exportsForInstall.first, Self.newer.id)
+      XCTAssertEqual(environment.exportsForInstall.last, Self.newer.id)
+
+      let plain = MockInstallerEnvironment()
+      let other = await welcomed(plain)
+      await other.continueToPlan()
+      XCTAssertEqual(plain.exportsForInstall, [nil])
+    }
+
+    func testStagingOutcomesAreWorded() {
+      XCTAssertTrue(
+        PlainLanguage.tryExportStaging(.staged(exportID: Self.newer.id)).contains("first login"))
+      XCTAssertTrue(PlainLanguage.tryExportStaging(.notStaged(.noRoom)).contains("room"))
+      XCTAssertTrue(
+        PlainLanguage.tryExportStaging(.notStaged(.helperFailed)).contains("Exports folder"))
+    }
+
     func testFindsExportsWithoutChoosingOne() async {
       let environment = MockInstallerEnvironment()
       environment.tryExportAnswers = [.found([Self.newer, Self.older], unusable: 1)]

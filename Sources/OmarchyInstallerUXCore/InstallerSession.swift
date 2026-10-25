@@ -399,6 +399,7 @@
       defer { isBusy = false }
 
       do {
+        environment.useTryExportForInstall(chosenTryExport?.id)
         let outcome = try await environment.preparePlan(omarchyBytes: omarchyBytes) {
           [weak self] update in
           Task { @MainActor in
@@ -697,6 +698,7 @@
           throw InstallerPreSubmissionFailure(PayloadPrefetchError.cancelled)
         }
         isExecutionInProgress = true
+        environment.useTryExportForInstall(chosenTryExport?.id)
         let completion = try await environment.execute(
           operation: context.kind,
           authorization: authorization,
