@@ -107,6 +107,24 @@
       XCTAssertEqual(environment.checkedTryExports, [])
     }
 
+    func testAPlanStartedDuringTheCheckWaitsForIt() async {
+      let environment = MockInstallerEnvironment()
+      let slow = OperationGate()
+      environment.tryExportAnswers = [.found([Self.newer], unusable: 0)]
+      environment.tryExportCheckGates = [slow]
+      let session = await welcomed(environment)
+      await session.refreshTryExports()
+      let choice = Task { await session.chooseTryExport(Self.newer.id) }
+      await slow.waitUntilEntered()
+      let plan = Task { await session.continueToPlan() }
+      for _ in 0..<20 { await Task.yield() }
+      XCTAssertEqual(environment.exportsForInstall, [])
+      await slow.release()
+      await choice.value
+      await plan.value
+      XCTAssertEqual(environment.exportsForInstall, [Self.newer.id])
+    }
+
     func testOnlyTheLatestChoicesCheckIsKept() async {
       let environment = MockInstallerEnvironment()
       let slow = OperationGate()

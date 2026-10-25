@@ -87,6 +87,8 @@
     private var tryExportDiscoveryRequest = 0
     private var tryExportCheckRequest = 0
     private var tryExportOfferRequest = 0
+    /// The check under way, which a plan waits for.
+    private var tryExportCheckTask: Task<Void, Never>?
 
     /// An export is chosen on the first page, before any plan exists.
     public var canChooseTryExport: Bool {
@@ -155,9 +157,16 @@
       }
       chosenTryExportID = id
       tryExportCheck = .checking
-      let check = await environment.verifyTryOmarchyExport(id: id)
-      guard request == tryExportCheckRequest, chosenTryExportID == id else { return }
-      tryExportCheck = check
+      let environment = environment
+      let task = Task { @MainActor [weak self] in
+        let check = await environment.verifyTryOmarchyExport(id: id)
+        guard let self, request == self.tryExportCheckRequest, self.chosenTryExportID == id else {
+          return
+        }
+        self.tryExportCheck = check
+      }
+      tryExportCheckTask = task
+      await task.value
     }
 
     public var isSimulation: Bool { environment.isSimulation }
@@ -399,6 +408,7 @@
       defer { isBusy = false }
 
       do {
+        if tryExportCheck == .checking { await tryExportCheckTask?.value }
         environment.useTryExportForInstall(chosenTryExport?.id)
         let outcome = try await environment.preparePlan(omarchyBytes: omarchyBytes) {
           [weak self] update in

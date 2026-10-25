@@ -30,7 +30,7 @@ The mapping is part of the job binding (`replacement_originals`) beside the appr
 2. Synchronize the backup and job directory. Prepare and synchronize the authenticated replacement through the existing staging path.
 3. Persist replacement intent with the original fingerprint, backup basename/fingerprint, and prepared replacement fingerprint. Synchronize the journal and job directory before replacement.
 4. Verify the private backup, then recheck the destination and parent identities against the plan. A changed input becomes a conflict with the original destination preserved.
-5. Atomically move the prepared regular file over the destination. Synchronize both source job directory and destination parent before recording completion.
+5. Journal that a swap is under way, then exchange the prepared regular file and the destination atomically (`renameat2` with `RENAME_EXCHANGE`). The file the swap moved out is the one the destination held. Unless it is still the planned original, an application wrote it since: it is swapped back, and the replacement becomes a conflict, "destination changed during publication". Otherwise it stays in the job as `<backup>.displaced`, so a write through a descriptor an application still holds lands in a private file and is never lost. Where the system or filesystem can't exchange names, the prepared file moves over the destination with a plain rename, and the destination must be quiescent. Synchronize both directories before recording completion.
 6. Retain the independent backup. Normal temporary cleanup never deletes journaled backups.
 
 If preparation fails normally before replacement intent, remove only the backup inode created by that invocation and synchronize removal. Abrupt death before intent can still leave unreferenced private artifacts; this experiment does not sweep or reconcile them. After durable intent, backup and pending evidence remain even when the destination conflicts.
@@ -39,7 +39,7 @@ If preparation fails normally before replacement intent, remove only the backup 
 
 | Observed state on retry | Result |
 | --- | --- |
-| Exact recorded replacement inode, bytes, mode, and mtime, plus an intact private backup | Resynchronize both directories and reconcile completion without replacing again. |
+| Exact recorded replacement inode, bytes, mode, and mtime, plus an intact private backup | Resynchronize both directories and reconcile completion without replacing again. A swap journaled as under way is settled first: a displaced file that isn't the planned original is swapped back, and the result is a conflict. |
 | Original still present after intent | Conflict: interruption and a later user rollback cannot be distinguished safely. |
 | Destination edited, missing, replaced, or otherwise uncertain | Conflict: preserve its current state. |
 | Backup changed, missing, symlinked, or multiply linked | Conflict: preserve the destination and report incomplete recovery. |

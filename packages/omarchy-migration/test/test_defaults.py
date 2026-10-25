@@ -107,7 +107,7 @@ class DefaultsTests(unittest.TestCase):
         self.assertEqual((self.target / UNTOUCHED).read_bytes(), self.files[UNTOUCHED])
         self.assertEqual((self.target / CHANGED).read_bytes(), b"changed on this Mac\n")
         self.assertEqual((self.target / PERSONAL).read_bytes(), b"native edit\n")
-        backups = [path for path in self.job.iterdir() if path.name != "journal.json"]
+        backups = [path for path in self.job.iterdir() if path.name != "journal.json" and not path.name.endswith(".displaced")]
         self.assertEqual([path.read_bytes() for path in backups], [DEFAULT])
         self.assertEqual(backups[0].stat().st_mode & 0o777, 0o600)
         configuration = next(item for item in report["categories"] if item["id"] == "configuration")

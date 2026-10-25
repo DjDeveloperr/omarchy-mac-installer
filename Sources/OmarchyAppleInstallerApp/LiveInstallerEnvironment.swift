@@ -353,9 +353,8 @@ final class LiveInstallerEnvironment: InstallerEnvironment, @unchecked Sendable 
     if !existing.isEmpty {
       return .existingInstallChoice(existing)
     }
-    let chosenExport = lock.withLock { tryExportForInstall }.flatMap {
-      tryExportShelf.verifiedExport(id: $0)
-    }
+    let chosenID = lock.withLock { tryExportForInstall }
+    let chosenExport = chosenID.flatMap { tryExportShelf.verifiedExport(id: $0) }
     func recommend(additionalMinimumBytes: UInt64) throws -> InstallerAllocationRecommendation {
       try InstallerAllocationRecommendation(
         inventory: inventory,
@@ -369,7 +368,10 @@ final class LiveInstallerEnvironment: InstallerEnvironment, @unchecked Sendable 
     }
     var tryExportPlan: TryExportPlan? = nil
     let recommendation: InstallerAllocationRecommendation
-    if chosenExport != nil,
+    if chosenID != nil, chosenExport == nil {
+      recommendation = try recommend(additionalMinimumBytes: 0)
+      tryExportPlan = .changedSinceCheck
+    } else if chosenExport != nil,
       !TryExportImageSupport.claimsExports(metadataURL: release.assets.metadata.fileURL)
     {
       recommendation = try recommend(additionalMinimumBytes: 0)

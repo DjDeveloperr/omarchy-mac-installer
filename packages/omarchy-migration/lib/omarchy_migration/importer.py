@@ -125,6 +125,12 @@ def run_review(operation, secret, arguments, migration):
         return None, "review_operation_failed"
 
 
+def shown(path):
+    """A path from the export as the terminal shows it: control characters,
+    which could move the cursor or redraw the review, appear as escapes."""
+    return "".join(char if char.isprintable() else char.encode("unicode_escape").decode("ascii") for char in path)
+
+
 def summary_lines(summary):
     """The plan's summary for a person: what comes, what replaces a default, what stays, what's left out."""
     totals = dict.fromkeys(("create", "replace", "present", "conflict", "inert"), 0)
@@ -137,12 +143,12 @@ def summary_lines(summary):
     lines = [f"Comes across: {totals['create']} files" + (f" ({', '.join(created)})" if created else "")]
     replaced = summary["replaces_default"]
     lines.append(f"Replaces untouched Omarchy defaults: {len(replaced)} files, each with a backup")
-    lines.extend(f"    {path}" for path in replaced[:SHOWN])
+    lines.extend(f"    {shown(path)}" for path in replaced[:SHOWN])
     if len(replaced) > SHOWN:
         lines.append(f"    and {len(replaced) - SHOWN} more")
     kept = summary["kept"]
     lines.append(f"Stays as it is here, because this Mac's file differs: {len(kept)}")
-    lines.extend(f"    {item['path']}" for item in kept[:SHOWN])
+    lines.extend(f"    {shown(item['path'])}" for item in kept[:SHOWN])
     if len(kept) > SHOWN:
         lines.append(f"    and {len(kept) - SHOWN} more")
     if totals["present"]:

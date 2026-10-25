@@ -122,7 +122,7 @@ class ReplacementTests(unittest.TestCase):
             self.assertEqual(retry[FILE].status, "restored")
             self.assertEqual(retry[FILE].backup, backup.name)
             self.assertEqual(self.file.stat().st_ino, inode)
-        self.assertEqual({path.name for path in self.job.iterdir()}, {"journal.json", backup.name})
+        self.assertEqual({path.name for path in self.job.iterdir() if not path.name.endswith(".displaced")}, {"journal.json", backup.name})
 
     def test_v1_regular_file_bundle_supports_explicit_replacement(self):
         with self.verified(self.v1) as bundle:
@@ -232,8 +232,10 @@ class ReplacementTests(unittest.TestCase):
             report = self.run_restore(bundle)
         self.assertEqual(report[FILE].status, "replaced")
         self.assertEqual(self.file.read_bytes(), NEW)
+        backup = self.saved()["backup"]["name"]
         self.assertEqual({path.name for path in self.job.iterdir()},
-                         {"journal.json", self.saved()["backup"]["name"]})
+                         {"journal.json", backup, backup + ".displaced"})
+        self.assertEqual((self.job / (backup + ".displaced")).read_bytes(), OLD)
 
     def test_backup_failure_prevents_replacement(self):
         sync = os.fsync
@@ -277,7 +279,7 @@ class ReplacementTests(unittest.TestCase):
             self.assertEqual([path.name for path in self.job.iterdir()], ["journal.json"])
             self.assertEqual(self.run_restore(bundle)[FILE].status, "replaced")
             backup = self.assert_backup(self.saved())
-            self.assertEqual({path.name for path in self.job.iterdir()}, {"journal.json", backup.name})
+            self.assertEqual({path.name for path in self.job.iterdir() if not path.name.endswith(".displaced")}, {"journal.json", backup.name})
 
     def test_backup_modified_before_publication_preserves_original_and_reports_reference(self):
         prepare = restore.Restorer._prepare
@@ -408,6 +410,20 @@ with restore.verified_bundle(sys.argv[1], b'synthetic-only-otter-maple-window-co
         with self.verified() as bundle:
             self.assertEqual(self.run_restore(bundle)[FILE].status, "conflict")
         self.assertEqual(self.file.read_bytes(), b"autosave just before the swap")
+
+    def test_a_write_through_a_descriptor_held_open_is_kept(self):
+        with open(self.file, "r+b") as held:
+            with self.verified() as bundle:
+                report = self.run_restore(bundle)
+            self.assertEqual(report[FILE].status, "replaced")
+            held.seek(0)
+            held.write(b"written by an application that kept the file open")
+            held.flush()
+        displaced = [path for path in self.job.iterdir() if path.name.endswith(".displaced")]
+        if not displaced:
+            self.skipTest("this filesystem cannot swap names atomically")
+        self.assertEqual(displaced[0].read_bytes()[:16], b"written by an ap")
+        self.assertEqual(self.file.read_bytes(), NEW)
 
     def test_a_link_swapped_out_is_put_back(self):
         exchange = restore._exchange

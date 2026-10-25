@@ -39,6 +39,9 @@
       case .releaseCannotImport:
         return
           "This Omarchy release can’t bring files across, so it installs without them. They stay in Try Omarchy’s Exports folder."
+      case .changedSinceCheck:
+        return
+          "The export changed after it was checked, so this install leaves it out. Go back and choose Migrate to Native again to check it."
       }
     }
     public static func tryExportStaging(_ outcome: TryExportStagingOutcome) -> String {

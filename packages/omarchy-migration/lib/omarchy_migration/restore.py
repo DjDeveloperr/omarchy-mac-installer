@@ -759,7 +759,11 @@ class Restorer:
             self._save(entry["object"])
             return False
         if displaced is not None:
-            os.unlink(saved["temporary"], dir_fd=self._job_fd)
+            # An application holding the original open may still write to
+            # it, so it stays in the private job beside the backup copy
+            # rather than being unlinked.
+            os.rename(saved["temporary"], saved["backup"]["name"] + ".displaced",
+                      src_dir_fd=self._job_fd, dst_dir_fd=self._job_fd)
             os.fsync(self._job_fd)
         saved["exchanging"] = False
         return True

@@ -114,6 +114,8 @@
     case noRoom
     /// The release this plan installs can't import an export.
     case releaseCannotImport
+    /// The export's files changed since its check, so the plan leaves it out.
+    case changedSinceCheck
   }
 
   public struct PlanDisplay: Equatable, Sendable {

@@ -57,6 +57,18 @@ class SummaryTests(unittest.TestCase):
         self.assertIn("Already here: 1 files", lines)
         self.assertTrue(lines[-1].startswith("Left out by Try Omarchy's export policy: 4"))
 
+    def test_control_characters_in_paths_are_shown_escaped(self):
+        summary = {"categories": [], "replaces_default": ["clear\x1b[2J\x1b[H.conf"],
+                   "kept": [{"path": "bell\x07\u202e.txt", "reason": "native_file_changed"}],
+                   "left_out": {"held-out": 0, "excluded": 0, "unsupported": 0}}
+        text = "\n".join(importer.summary_lines(summary))
+        self.assertNotIn("\x1b", text)
+        self.assertNotIn("\x07", text)
+        self.assertNotIn("\u202e", text)
+        self.assertIn("    clear\\x1b[2J\\x1b[H.conf", text)
+        self.assertIn("    café/naïve.txt", "\n".join(importer.summary_lines({**summary, "kept": [
+            {"path": "café/naïve.txt", "reason": "native_file_changed"}]})))
+
     def test_long_lists_are_shortened(self):
         summary = {"categories": [], "replaces_default": [f"p{index}" for index in range(30)], "kept": [],
                    "left_out": {"held-out": 0, "excluded": 0, "unsupported": 0}}
@@ -120,7 +132,8 @@ class ImportTests(unittest.TestCase):
         self.assertEqual(record["export_id"], self.export_id)
         self.assertFalse(self.folder.exists())
         self.assertFalse((self.work / "scratch").exists())
-        backups = [path for path in (self.work / "jobs" / self.export_id).iterdir() if path.name != "journal.json"]
+        backups = [path for path in (self.work / "jobs" / self.export_id).iterdir() if path.name != "journal.json"
+                   and not path.name.endswith(".displaced")]
         self.assertEqual([path.read_bytes() for path in backups], [b"tokyo-night\n"])
         again = ScriptedTerminal([], None)
         self.assertEqual(self.run_import(again), 0)
