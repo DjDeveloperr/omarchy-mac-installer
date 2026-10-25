@@ -10,6 +10,9 @@ commands:
   trial      export, restore into a private scratch folder and compare, without touching the home
   plan       review what importing an exported bundle would do
   apply      import a bundle according to a reviewed plan
+  claim      at a native first boot, claim the export the installer staged (root)
+  import     review and import a claimed export into this home, interactively
+  offer      notify this user when a claimed export waits
   validate   check contract documents
   evidence   check a policy's evidence against a provider checkout
   fixture    synthetic exporter for integration development (capabilities, inventory, export)
@@ -35,6 +38,15 @@ def main(argv=None):
     if command in ("plan", "apply"):
         from . import review
         return review.main([command, *rest])
+    if command == "claim":
+        from . import claim
+        return claim.main(rest)
+    if command == "import":
+        from . import importer
+        return importer.main(rest)
+    if command == "offer":
+        from . import offer
+        return offer.main(rest)
     if command == "validate":
         from . import contract
         return contract.main(["validate", *rest])
