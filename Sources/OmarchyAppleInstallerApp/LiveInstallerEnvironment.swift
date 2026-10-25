@@ -364,18 +364,23 @@ final class LiveInstallerEnvironment: InstallerEnvironment, @unchecked Sendable 
         }
       )
     }
-    var tryExportFits: Bool? = nil
+    var tryExportPlan: TryExportPlan? = nil
     let recommendation: InstallerAllocationRecommendation
-    if let chosenExport {
+    if chosenExport != nil,
+      !TryExportImageSupport.claimsExports(metadataURL: release.assets.metadata.fileURL)
+    {
+      recommendation = try recommend(additionalMinimumBytes: 0)
+      tryExportPlan = .releaseCannotImport
+    } else if let chosenExport {
       do {
         recommendation = try recommend(
           additionalMinimumBytes: TryExportStagingRegion.additionalInstallBytes(
             bundleBytes: UInt64(chosenExport.receipt.bundleBytes),
             expandedBytes: UInt64(chosenExport.receipt.expandedBytes)))
-        tryExportFits = true
+        tryExportPlan = .comesAlong
       } catch {
         recommendation = try recommend(additionalMinimumBytes: 0)
-        tryExportFits = false
+        tryExportPlan = .noRoom
       }
     } else {
       recommendation = try recommend(additionalMinimumBytes: 0)
@@ -402,13 +407,13 @@ final class LiveInstallerEnvironment: InstallerEnvironment, @unchecked Sendable 
       preparedPlan = prepared
       planReview = prepared.review
       releaseConfiguration = configuration
-      plannedTryExport = tryExportFits == true ? chosenExport : nil
+      plannedTryExport = tryExportPlan == .comesAlong ? chosenExport : nil
     }
 
     return .plan(
       Self.planDisplay(
         review: prepared.review, host: freshHost, recommendation: recommendation,
-        reservedBytes: planningReserve, tryExportFits: tryExportFits,
+        reservedBytes: planningReserve, tryExport: tryExportPlan,
         release:
           "\(channel.rawValue.capitalized) · \(release.assets.payload.fileURL.lastPathComponent)"
       ))
@@ -774,7 +779,7 @@ final class LiveInstallerEnvironment: InstallerEnvironment, @unchecked Sendable 
     host: AppleSiliconHostInspection,
     recommendation: InstallerAllocationRecommendation,
     reservedBytes: UInt64 = 0,
-    tryExportFits: Bool? = nil,
+    tryExport: TryExportPlan? = nil,
     release: String
   ) -> PlanDisplay {
     let length = review.plan.lengthBytes
@@ -800,7 +805,7 @@ final class LiveInstallerEnvironment: InstallerEnvironment, @unchecked Sendable 
         ? host.storage.containerFreeBytes - min(host.storage.containerFreeBytes, reservedBytes)
         : nil,
       recommendedOmarchyBytes: recommendation.candidate.recommendedInstallBytes,
-      tryExportFits: tryExportFits
+      tryExport: tryExport
     )
   }
 

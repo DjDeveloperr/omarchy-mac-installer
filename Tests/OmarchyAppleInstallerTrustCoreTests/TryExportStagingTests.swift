@@ -54,6 +54,31 @@
       #expect(TryExportStagingRegion.offset(partitionBytes: .max, bundleBytes: .max) == nil)
     }
 
+    @Test func onlyAnImageWhoseMetadataNamesTheMarkerClaimsExports() throws {
+      let folder = FileManager.default.temporaryDirectory
+        .appendingPathComponent("try-export-image-\(UUID().uuidString)", isDirectory: true)
+      try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+      defer { try? FileManager.default.removeItem(at: folder) }
+      func claims(_ entries: [[String: Any]]) throws -> Bool {
+        let url = folder.appendingPathComponent("installer_data.json")
+        try JSONSerialization.data(withJSONObject: ["os_list": entries]).write(to: url)
+        return TryExportImageSupport.claimsExports(metadataURL: url)
+      }
+      let target: [String: Any] = ["omarchy_target": "apple-silicon-full-os", "name": "Omarchy"]
+      #expect(try claims([target.merging(["native_import": "omarchy-migration/staging/1"]) { $1 }]))
+      #expect(try !claims([target]))
+      #expect(
+        try !claims([target.merging(["native_import": "omarchy-migration/staging/2"]) { $1 }]))
+      #expect(try !claims([target.merging(["native_import": true]) { $1 }]))
+      #expect(
+        try !claims(
+          Array(
+            repeating: target.merging(["native_import": "omarchy-migration/staging/1"]) { $1 },
+            count: 2)))
+      #expect(
+        !TryExportImageSupport.claimsExports(metadataURL: folder.appendingPathComponent("none")))
+    }
+
     @Test func theRootIsTheLastLinuxPartitionInsideTheExtent() throws {
       let root = try TryExportRootLocator.identify(
         storeIdentifier: "disk0", offsetBytes: 800 * Self.gibibyte, lengthBytes: 46 * Self.gibibyte,

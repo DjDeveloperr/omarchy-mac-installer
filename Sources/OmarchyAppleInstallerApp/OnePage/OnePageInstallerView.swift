@@ -304,10 +304,7 @@ struct OnePageInstallerView: View {
           Text(PlainLanguage.tryExportPlanLine(export))
             .font(OmarchyTheme.body)
             .foregroundStyle(OmarchyTheme.secondaryText)
-          Text(
-            plan.tryExportFits == false
-              ? PlainLanguage.tryExportNoRoom : PlainLanguage.tryExportComesAlong
-          ).omarchyHelpText()
+          Text(PlainLanguage.tryExportPlan(plan.tryExport ?? .comesAlong)).omarchyHelpText()
         }
         .fixedSize(horizontal: false, vertical: true)
       }

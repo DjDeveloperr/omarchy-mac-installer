@@ -109,6 +109,13 @@
     case existingInstallChoice([ExistingInstallDisplay])
   }
 
+  public enum TryExportPlan: Equatable, Sendable {
+    case comesAlong
+    case noRoom
+    /// The release this plan installs can't import an export.
+    case releaseCannotImport
+  }
+
   public struct PlanDisplay: Equatable, Sendable {
     public let diskTotalBytes: UInt64
     public let omarchyBytes: UInt64
@@ -126,9 +133,8 @@
     /// existing install and reuses its exact extent, so there is nothing to
     /// drag; showing a divider there invites a re-plan the engine refuses.
     public let isResizable: Bool
-    /// For a plan with a Try export chosen: whether this install has room to
-    /// stage and import it. Nil without an export.
-    public let tryExportFits: Bool?
+    /// What the install does with the chosen Try export. Nil without one.
+    public let tryExport: TryExportPlan?
 
     public init(
       diskTotalBytes: UInt64,
@@ -142,9 +148,9 @@
       fixedMacOSBytes: UInt64? = nil,
       macOSFreeBeforeAllocationBytes: UInt64? = nil,
       recommendedOmarchyBytes: UInt64? = nil,
-      tryExportFits: Bool? = nil
+      tryExport: TryExportPlan? = nil
     ) {
-      self.tryExportFits = tryExportFits
+      self.tryExport = tryExport
       self.diskTotalBytes = diskTotalBytes
       self.omarchyBytes = omarchyBytes
       self.bindingDigest = bindingDigest

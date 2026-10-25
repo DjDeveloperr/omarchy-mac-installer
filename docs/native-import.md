@@ -4,7 +4,7 @@ Status: the contract for bringing a Try Omarchy export onto a native install. Th
 
 ## What people see
 
-1. In the installer, **Migrate to Native** chooses an export, and the plan review names it. The install needs room for the export twice, once staged and once claimed, and for its files once imported.
+1. In the installer, **Migrate to Native** chooses an export, and the plan review names it. The install needs room for the export twice, once staged and once claimed, and for its files once imported. A release whose image can't claim an export says so in the plan review, and installs without it.
 2. When the install finishes in macOS, the installer stages the export onto the new Root partition. The result screen says whether it did. A failure never stops the install: the export stays in Exports.
 3. The first boot of the native system claims the staged export, before owner setup.
 4. At the owner's first login, a notification offers **Bring your files from Try Omarchy**. It opens a terminal that asks for the transfer passphrase, shows what the import brings and what it leaves, and imports after a confirmation. Declining leaves the offer for the next login.
@@ -83,6 +83,10 @@ A digest that doesn't match, or a region that breaks the rules, deletes the mark
 5. Records the import in `~/.local/state/omarchy-migration/`, deletes the bundle, and asks the owner to log out and back in.
 
 `--defaults DIR` lets a plan replace a regular file whose destination is byte-identical to the file at the same relative path under `DIR`. Each replacement keeps a private backup, as approved replacements do ([REPLACEMENT](../packages/omarchy-migration/docs/REPLACEMENT.md)). Any other existing file stays a conflict.
+
+## Which images can claim
+
+An image that claims exports declares it in its `installer_data.json`: the Omarchy target's `native_import` names the marker schema it reads, `omarchy-migration/staging/1`. The app reads it from the release's metadata when it prepares the plan (`TryExportImageSupport`), and stages only for an image that declares it.
 
 ## Packaging
 

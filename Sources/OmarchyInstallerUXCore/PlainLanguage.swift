@@ -30,8 +30,17 @@
       "The encrypted export is intact. You’ll need its transfer passphrase after Omarchy starts."
     public static let tryExportComesAlong =
       "The installer copies the encrypted export onto Omarchy’s disk. At the first login, Omarchy asks for its transfer passphrase and brings your files in."
-    public static let tryExportNoRoom =
-      "Omarchy needs more space to bring these files along. Make Omarchy larger, or install without them."
+    public static func tryExportPlan(_ plan: TryExportPlan) -> String {
+      switch plan {
+      case .comesAlong: return tryExportComesAlong
+      case .noRoom:
+        return
+          "Omarchy needs more space to bring these files along. Make Omarchy larger, or install without them."
+      case .releaseCannotImport:
+        return
+          "This Omarchy release can’t bring files across, so it installs without them. They stay in Try Omarchy’s Exports folder."
+      }
+    }
     public static func tryExportStaging(_ outcome: TryExportStagingOutcome) -> String {
       switch outcome {
       case .staged:

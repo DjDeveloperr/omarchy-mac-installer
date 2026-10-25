@@ -50,6 +50,25 @@
     }
   }
 
+  /// Whether the image a plan installs claims staged exports at its first
+  /// boot: its metadata's Omarchy target names the marker schema it reads.
+  public enum TryExportImageSupport {
+    public static let metadataKey = "native_import"
+
+    public static func claimsExports(metadataURL: URL) -> Bool {
+      var status = stat()
+      guard metadataURL.isFileURL, lstat(metadataURL.path, &status) == 0,
+        status.st_mode & S_IFMT == S_IFREG, status.st_size > 0, status.st_size <= 1 << 20,
+        let bytes = try? Data(contentsOf: metadataURL),
+        let metadata = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
+        let entries = metadata["os_list"] as? [[String: Any]]
+      else { return false }
+      let targets = entries.filter { $0["omarchy_target"] as? String == "apple-silicon-full-os" }
+      return targets.count == 1
+        && targets[0][metadataKey] as? String == TryExportStagingMarker.schema
+    }
+  }
+
   public enum TryExportStagingReason: String, Codable, Equatable, Sendable {
     case noRoom = "no-room"
     case rootNotFound = "root-not-found"
@@ -57,6 +76,8 @@
     case writeFailed = "write-failed"
     case readbackMismatch = "readback-mismatch"
     case markerFailed = "marker-failed"
+    /// The image installed doesn't claim staged exports.
+    case imageCannotImport = "image-cannot-import"
     /// The helper couldn't be asked or refused the request.
     case helperFailed = "helper-failed"
   }
