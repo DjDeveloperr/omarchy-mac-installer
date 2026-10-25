@@ -359,12 +359,17 @@ class _Snapshot:
                              "multiply-linked-file" if before.st_nlink != 1 else "unreadable-owner-file",
                              rule=rule_id)
                 return
-            if not self._room(before.st_size):
+            if before.st_size > probe.MAX_MEMBER:
+                self._report(source, archive, "unsupported", "file-too-large", rule=rule_id)
+                return
+            in_place = self.direct and not transform
+            # A file read in place takes no scratch space, only its share of the content ceiling.
+            if not (self.total + before.st_size <= probe.MAX_TOTAL if in_place else self._room(before.st_size)):
                 raise probe.Rejected("collection byte limit")
             if transform and before.st_size > migration_policy.MAX_TRANSFORM_INPUT:
                 self._report(source, archive, "unsupported", "transform-too-large", rule=rule_id)
                 return
-            if self.direct and not transform:
+            if in_place:
                 self._in_place(parent, name, source, archive, before, rule_id)
                 return
             fd = os.open(name, FILE_FLAGS, dir_fd=parent)

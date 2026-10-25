@@ -595,6 +595,12 @@ class Restorer:
         saved = self._journal["entries"].get(entry["object"], {})
         return Action(entry["path"], status, reason, saved.get("backup", {}).get("name"))
 
+    def destination_bytes(self):
+        """The size of each existing destination file the last plan observed."""
+        return {entry["path"]: observed["bytes"]
+                for entry, (observed, _) in zip(self.bundle._manifest["entries"], self._observations)
+                if isinstance(observed, dict) and isinstance(observed.get("bytes"), int)}
+
     def plan(self):
         self._check()
         actions, observations = [], []

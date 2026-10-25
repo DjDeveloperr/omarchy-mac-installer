@@ -512,6 +512,20 @@ class CollectionTests(unittest.TestCase):
             self.assertEqual(self.entry(snapshot, ".config/app-flags.conf")["reason"], "transform-too-large")
             self.assertNotIn(".config/app-flags.conf", snapshot.paths)
 
+    def test_a_file_too_large_for_a_bundle_member_is_left_out(self):
+        self.write("Videos/huge.mov", b"")
+        with open(self.source / "Videos/huge.mov", "r+b") as huge:
+            huge.truncate(probe.MAX_MEMBER + 1)
+        opened = os.open
+
+        def guarded_open(value, flags, *args, **kwargs):
+            self.assertNotEqual(value, "huge.mov")
+            return opened(value, flags, *args, **kwargs)
+
+        with patch.object(collection.os, "open", side_effect=guarded_open), self.capture() as snapshot:
+            self.assertEqual(self.entry(snapshot, "Videos/huge.mov")["reason"], "file-too-large")
+            self.assertNotIn("Videos/huge.mov", snapshot.paths)
+
     def test_links_into_the_mac_share_are_inert_metadata(self):
         (self.source / "Work").symlink_to("/mnt/mac")
         (self.source / "Notes").symlink_to("/mnt/mac/Projects/notes")

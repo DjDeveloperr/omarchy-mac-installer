@@ -16,6 +16,7 @@ import subprocess
 import sys
 
 from . import contract
+from .display import shown
 from .categories import CATEGORIES
 from .handoff import INCOMING
 from .offer import user_state
@@ -123,12 +124,6 @@ def run_review(operation, secret, arguments, migration):
         return None, json.loads(result.stderr.strip().splitlines()[-1])["error"]
     except (ValueError, IndexError, KeyError, TypeError):
         return None, "review_operation_failed"
-
-
-def shown(path):
-    """A path from the export as the terminal shows it: control characters,
-    which could move the cursor or redraw the review, appear as escapes."""
-    return "".join(char if char.isprintable() else char.encode("unicode_escape").decode("ascii") for char in path)
 
 
 def summary_lines(summary):

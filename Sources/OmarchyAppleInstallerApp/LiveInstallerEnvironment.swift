@@ -370,7 +370,7 @@ final class LiveInstallerEnvironment: InstallerEnvironment, @unchecked Sendable 
     let recommendation: InstallerAllocationRecommendation
     if chosenID != nil, chosenExport == nil {
       recommendation = try recommend(additionalMinimumBytes: 0)
-      tryExportPlan = .changedSinceCheck
+      tryExportPlan = .notVerified
     } else if chosenExport != nil,
       !TryExportImageSupport.claimsExports(metadataURL: release.assets.metadata.fileURL)
     {

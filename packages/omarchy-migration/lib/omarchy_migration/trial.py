@@ -19,6 +19,7 @@ import time
 import uuid
 
 from . import contract, export, restore, review
+from .display import shown
 from .categories import CATEGORIES, DEFAULT_SELECTED
 from .dependency import admit_age
 
@@ -109,7 +110,8 @@ def run_trial(home, workdir, *, age, policy_document, categories=None, emit=lamb
     with restore.verified_bundle(age, secret, workdir / "export/bundle.age") as bundle:
         with restore.Restorer(bundle, target, job) as importer:
             actions = importer.plan()
-            plan = review.plan_document(bundle, actions, receipt, os.getuid(), importer._binding)
+            plan = review.plan_document(bundle, actions, receipt, os.getuid(), importer._binding,
+                                        importer.destination_bytes())
             results = importer.apply(actions)
             report = review.report_document(plan, results, review.job_identity(importer._binding), bundle)
         manifest = bundle._manifest
@@ -150,7 +152,7 @@ def describe(summary, removing=False):
     if not removing:
         lines += ["", f"Details: {summary['workdir']}/trial-report.json",
                   f"The restored copy is a private plaintext copy of your files; remove it with: rm -rf {summary['workdir']}"]
-    return "\n".join(lines)
+    return "\n".join(shown(line) for line in lines)
 
 
 def main(argv=None):

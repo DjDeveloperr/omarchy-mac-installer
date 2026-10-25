@@ -36,6 +36,8 @@ METADATA_LOSSES = ("acl", "extended-attributes", "sparse", "special-permission-b
 MAX_MANIFEST = contract.MAX_MANIFEST
 MAX_ENTRIES = contract.MAX_ENTRIES
 MAX_TOTAL = contract.MAX_EXPANDED
+# The largest file a USTAR member's 11 octal size digits can hold.
+MAX_MEMBER = 0o77777777777
 MAX_CIPHERTEXT = contract.MAX_CIPHERTEXT
 # tarfile ends with two zero blocks, then pads the archive to a whole record.
 MAX_ARCHIVE_TAIL = 2 * tarfile.BLOCKSIZE + tarfile.RECORDSIZE - tarfile.BLOCKSIZE
@@ -334,7 +336,7 @@ def validate_manifest(manifest):
         if type(entry["mtime_ns"]) is not int or not 0 <= entry["mtime_ns"] < 2**63:
             raise Rejected("mtime")
         if kind == "file":
-            if type(entry["bytes"]) is not int or not 0 <= entry["bytes"] <= MAX_TOTAL:
+            if type(entry["bytes"]) is not int or not 0 <= entry["bytes"] <= min(MAX_TOTAL, MAX_MEMBER):
                 raise Rejected("entry size")
             checksum = entry["sha256"]
             if not isinstance(checksum, str) or len(checksum) != 64 or any(

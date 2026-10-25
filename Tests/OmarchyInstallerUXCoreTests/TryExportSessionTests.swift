@@ -107,6 +107,18 @@
       XCTAssertEqual(environment.checkedTryExports, [])
     }
 
+    func testTheEnvironmentHearsOfAnExportThatFailedItsCheck() async {
+      let environment = MockInstallerEnvironment()
+      environment.tryExportAnswers = [.found([Self.newer], unusable: 0)]
+      environment.tryExportChecks = [Self.newer.id: .failed("tampered")]
+      let session = await welcomed(environment)
+      await session.refreshTryExports()
+      await session.chooseTryExport(Self.newer.id)
+      await session.continueToPlan()
+      XCTAssertNil(session.chosenTryExport)
+      XCTAssertEqual(environment.exportsForInstall, [Self.newer.id])
+    }
+
     func testAPlanStartedDuringTheCheckWaitsForIt() async {
       let environment = MockInstallerEnvironment()
       let slow = OperationGate()

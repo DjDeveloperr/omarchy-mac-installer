@@ -93,6 +93,14 @@ class DefaultsTests(unittest.TestCase):
         self.assertNotEqual(without["plan_id"], plan["plan_id"])
         self.assertEqual(self.command("plan", summary=summary_path).returncode, 1)
 
+    def test_space_counts_the_backup_of_a_large_default(self):
+        large = b"x" * (4 * 1024 * 1024)
+        self.write(self.skel, UNTOUCHED, large)
+        self.write(self.target, UNTOUCHED, large)
+        plan = self.plan()
+        self.assertEqual(plan["actions"]["replace"], 1)
+        self.assertGreaterEqual(plan["required_bytes"], len(large))
+
     def test_plan_id_binds_the_defaults(self):
         first = self.plan()["plan_id"]
         self.assertEqual(self.plan()["plan_id"], first)

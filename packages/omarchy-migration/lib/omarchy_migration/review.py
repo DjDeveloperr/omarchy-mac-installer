@@ -106,7 +106,9 @@ def check_receipt(bundle, receipt):
         raise ReviewError("receipt_mismatch")
 
 
-def plan_document(bundle, actions, receipt, account_uid, binding):
+def plan_document(bundle, actions, receipt, account_uid, binding, originals=None):
+    """ORIGINALS maps a replaced destination to its size, for its private copy."""
+    originals = originals or {}
     check_receipt(bundle, receipt)
     if not actions:
         # report/1 needs at least one category; an empty export has nothing to review.
@@ -121,8 +123,10 @@ def plan_document(bundle, actions, receipt, account_uid, binding):
         reason_code(action)
         counts[PLAN_COUNTS[action.status]] += 1
         if action.status in ("create", "replace") and probe.entry_kind(entries[action.path]) == "file":
-            # Whole blocks per file; a replacement also keeps a private backup.
-            required += probe.footprint(entries[action.path]["bytes"]) * (2 if action.status == "replace" else 1)
+            # Whole blocks per file; a replacement also keeps a private copy of the original.
+            required += probe.footprint(entries[action.path]["bytes"])
+            if action.status == "replace":
+                required += probe.footprint(originals.get(action.path, entries[action.path]["bytes"]))
         elif action.status == "create":
             required += probe.BLOCK
     document = {
@@ -318,7 +322,8 @@ def main(argv=None):
             defaults = default_digests(bundle, arguments.defaults) if arguments.defaults else None
             with restore.Restorer(bundle, arguments.target, arguments.job, replace_matching=defaults) as importer:
                 actions = importer.plan()
-                plan = plan_document(bundle, actions, receipt, account_uid, importer._binding)
+                plan = plan_document(bundle, actions, receipt, account_uid, importer._binding,
+                                     importer.destination_bytes())
                 shortfall = space_shortfall(plan, arguments.target)
                 if arguments.summary:
                     write_private(arguments.summary, summary_document(bundle, actions, plan))

@@ -18,6 +18,7 @@ import uuid
 
 from . import contract, policy as migration_policy
 from . import collection
+from .display import shown
 from .categories import CATEGORIES, DEFAULT_SELECTED, category
 
 POLICY_PATH = migration_policy.SHIPPED
@@ -301,7 +302,7 @@ def summary(survey, document):
     if largest:
         lines += ["", "Largest entries that would migrate by default (dot-folders shown three levels deep):"]
         lines += [f"  ~/{name:<30} {size(total):>11}" for name, total in largest]
-    return "\n".join(lines)
+    return "\n".join(shown(line) for line in lines)
 
 
 def main(argv=None):

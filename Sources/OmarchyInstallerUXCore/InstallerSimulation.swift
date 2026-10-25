@@ -122,6 +122,9 @@
     }
 
     public var isSimulation: Bool { true }
+    private var tryExportPlan: TryExportPlan? {
+      lock.withLock { tryExportForInstall } == nil ? nil : .comesAlong
+    }
     public func useTryExportForInstall(_ exportID: String?) {
       lock.withLock { tryExportForInstall = exportID }
     }
@@ -286,7 +289,7 @@
             bindingDigest: "simulation-tight-\(chosen)", minimumBytes: 40_000_000_000,
             maximumBytes: maximum,
             macOSFreeBeforeAllocationBytes: 80_000_000_000,
-            recommendedOmarchyBytes: 77_000_000_000))
+            recommendedOmarchyBytes: 77_000_000_000, tryExport: tryExportPlan))
       }
       progress(AssetProgressUpdate(stage: .planning))
       try await tick()
@@ -307,7 +310,8 @@
             "SIMULATION · \(channel.rawValue.uppercased()) · Omarchy test release",
           targetDescription:
             "Simulated internal disk · \(scenario == .freeSpace ? "Use free space" : "Resize macOS container")",
-          fixedMacOSBytes: scenario == .freeSpace ? 100_000_000_000 : nil))
+          fixedMacOSBytes: scenario == .freeSpace ? 100_000_000_000 : nil, tryExport: tryExportPlan)
+      )
     }
 
     public func approve() throws {

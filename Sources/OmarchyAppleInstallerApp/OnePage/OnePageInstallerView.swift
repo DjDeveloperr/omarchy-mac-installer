@@ -299,12 +299,14 @@ struct OnePageInstallerView: View {
           .foregroundStyle(OmarchyTheme.secondaryText)
           .fixedSize(horizontal: false, vertical: true)
       }
-      if let export = session.chosenTryExport {
+      if let tryExport = plan.tryExport,
+        let export = session.tryExports.exports.first(where: { $0.id == session.chosenTryExportID })
+      {
         VStack(alignment: .leading, spacing: 4) {
           Text(PlainLanguage.tryExportPlanLine(export))
             .font(OmarchyTheme.body)
             .foregroundStyle(OmarchyTheme.secondaryText)
-          Text(PlainLanguage.tryExportPlan(plan.tryExport ?? .comesAlong)).omarchyHelpText()
+          Text(PlainLanguage.tryExportPlan(tryExport)).omarchyHelpText()
         }
         .fixedSize(horizontal: false, vertical: true)
       }
