@@ -4,10 +4,10 @@ Status: the contract for bringing a Try Omarchy export onto a native install. Th
 
 ## What people see
 
-1. In the installer, **Migrate to Native** chooses an export, and the plan review names it. The install needs room for the export twice, once staged and once claimed, and for its files once imported.
+1. In the installer, **Migrate to Native** chooses an export, and the plan review names it. The install needs room for the export twice, once staged and once claimed, and for its files twice: once imported, and once decrypted while the import runs.
 2. When the install finishes in macOS, the installer stages the export onto the new Root partition. The result screen says whether it did. A failure never stops the install: the export stays in Exports.
 3. The first boot of the native system claims the staged export, before owner setup.
-4. At the owner's first login, a notification offers **Bring your files from Try Omarchy**. It opens a terminal that asks for the transfer passphrase, shows what the import brings and what it leaves, and imports after a confirmation. Declining leaves the offer for the next login.
+4. At the owner's first login, a notification offers **Bring your files from Try Omarchy**. It opens a terminal that asks for the transfer passphrase, shows what the import brings and what it leaves, and imports after a confirmation. **Not now** leaves the offer for the next login. **Don't offer again** ends it.
 5. Settings that Omarchy shipped and the owner never changed are replaced by the Try home's versions, with a backup. A file the owner changed on the native system stays, and the summary lists it.
 
 ## Staging
@@ -66,27 +66,36 @@ UUIDs are lowercase. `receipt` is the export's receipt as an object, with the sa
 2. Checks that `partition_uuid` is the partition under `/`, directly or through the LUKS mapping, and that the region fits the rules above for that partition's length.
 3. Checks that `/` has `length + 4 GiB` free.
 4. Copies the region into `/var/lib/omarchy-migration/incoming/<export_id>/bundle.age` through a `.partial` file, hashing it, and writes `receipt.json` beside it. The folder is root's, mode 0700. It fsyncs both and the folder.
-5. Deletes the marker from the ESP.
+5. Lists the export as waiting with an empty, world-readable `pending/<export_id>`, and records the claim in root's `claimed/<export_id>`.
+6. Deletes the marker from the ESP.
 
-A digest that doesn't match, or a region that breaks the rules, deletes the marker and records `/var/lib/omarchy-migration/claim-failed.json` with a stable reason code, so the offer can say the files stayed on the Mac. A claim that already completed only deletes the marker. A failure never stops the boot.
+The claim accepts exactly the offset the region rules give for the partition's length and the bundle's length. It finds the partition under `/` from the mount's source device: the device itself when it is a partition, or the one slave of a `CRYPT-LUKS` device-mapper device. `partition_uuid` must name that partition in `/dev/disk/by-partuuid`, with the length sysfs reports.
+
+Any failure deletes the marker and records `/var/lib/omarchy-migration/claim-failed.json`, mode 0644, so the offer can say the files stayed on the Mac:
+
+```json
+{ "schema": "omarchy-migration/claim-failed/1", "export_id": "the marker's, or null", "reason": "digest_mismatch" }
+```
+
+Reason codes: `marker_unsafe`, `marker_oversized`, `marker_invalid`, `receipt_invalid`, `receipt_mismatch`, `root_device_unknown`, `root_device_unsupported`, `partition_mismatch`, `region_invalid`, `insufficient_space`, `region_unreadable`, `digest_mismatch`, `state_unsafe` and `claim_operation_failed`. A claim that already completed, including one already handed to its owner, only deletes the marker. An interrupted claim starts its copy again. The command exits 0 after recording a failure, and nothing requires the unit, so a failure never stops the boot.
 
 ## The offer and the import
 
-`omarchy-migration-offer.service` is a user unit in `graphical-session.target`. When a claimed export waits and this user hasn't imported or dismissed it, it waits for notifications and sends one that opens `omarchy-migration-import` in a floating terminal.
+`omarchy-migration-offer.service` is a user unit in `graphical-session.target`. When a claimed export waits and this user hasn't imported or dismissed it, it waits for notifications and sends one that opens `omarchy-migration-import` in a floating terminal. An export waits when root's `pending/<export_id>` lists it, or when it was handed to this user and its bundle is still in their incoming folder. The user's own records are in `~/.local/state/omarchy-migration/`: `imported/<export_id>.json`, `dismissed/<export_id>`, and `claim-failed-notified`. A failed claim is told once, as **Your Try Omarchy files stayed on the Mac**.
 
 `omarchy-migration-import`, as the owner:
 
-1. Takes the claimed export through `sudo /usr/lib/omarchy-migration/handoff`, which the package's sudo rule allows for `wheel` without a password. The handoff moves the bundle and receipt into the user's `~/.local/share/omarchy-migration/incoming/<export_id>/`, owned by the user, mode 0700 and 0600.
+1. Takes the claimed export through `sudo /usr/lib/omarchy-migration/handoff`, which the package's sudo rule allows for `wheel` without a password and without arguments. The handoff moves the bundle and receipt into the user's `~/.local/share/omarchy-migration/incoming/<export_id>/`, owned by the user, mode 0700 and 0600. It writes the home only as that user, after dropping root, and never follows a link there. It clones the bundle when the filesystem can, so the move needs no second copy on Btrfs. It also gives the user a private work folder beside the home, `/home/.omarchy-migration/<uid>/`. The restorer publishes by hard link, so its job must share the home's filesystem, and it must sit outside the home. With `/home` on its own subvolume, only a folder under `/home` qualifies. The work folder holds the restore job, with the backups of replaced defaults, and the decrypted scratch, which `/tmp` in memory couldn't hold.
 2. Asks for the transfer passphrase, and asks again after a wrong one.
 3. Runs `omarchy-migration plan` with `--defaults /etc/skel`, and shows the summary by category: what comes across, what replaces an untouched Omarchy default, and what stays because the native file differs.
 4. Runs `omarchy-migration apply` for exactly that plan after the owner confirms.
-5. Records the import in `~/.local/state/omarchy-migration/`, deletes the bundle, and asks the owner to log out and back in.
+5. Records the import in `~/.local/state/omarchy-migration/imported/`, deletes the incoming folder and the scratch, and asks the owner to log out and back in. The job stays, with its backups.
 
-`--defaults DIR` lets a plan replace a regular file whose destination is byte-identical to the file at the same relative path under `DIR`. Each replacement keeps a private backup, as approved replacements do ([REPLACEMENT](../packages/omarchy-migration/docs/REPLACEMENT.md)). Any other existing file stays a conflict.
+`--defaults DIR` lets a plan replace a regular file whose destination is byte-identical to the file at the same relative path under `DIR`. Each replacement keeps a private backup, as approved replacements do ([REPLACEMENT](../packages/omarchy-migration/docs/REPLACEMENT.md)). Any other existing file stays a conflict. The plan counts these replacements as `replace`, its `plan_id` binds every default it compared against, and `apply` refuses with `plan_changed` when a destination changed since the review ([REVIEW](../packages/omarchy-migration/docs/REVIEW.md)).
 
 ## Packaging
 
-The installer's image builder builds `omarchy-migration` from `packages/omarchy-migration` and installs it into the native image, with the pinned `age` it needs, so the claim and the import work offline. It enables the claim unit and the user unit. Try Omarchy vendors the same package as its exporter.
+The installer's image builder builds `omarchy-migration` from `packages/omarchy-migration` and installs it into the native image, with the pinned `age` it needs, so the claim and the import work offline. `packages/omarchy-migration/PKGBUILD` builds that pacman package from the local tree and pins `age` 1.3.2 for arm64 by the tarball's and the binary's digests; the package records the binary's digest in `age.sha256`, and `plan` and `apply` check it before use. The package enables the claim unit and the user unit with vendor `.wants` links, and ships the sudo rule in `/etc/sudoers.d/omarchy-migration`. Try Omarchy vendors the same package as its exporter. There the claim unit needs a marker and the offer needs a claimed export, so neither does anything.
 
 ## Not covered
 
