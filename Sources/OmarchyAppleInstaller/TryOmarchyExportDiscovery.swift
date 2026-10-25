@@ -247,6 +247,33 @@ public struct TryOmarchyExportDiscovery: Sendable {
     )
   }
 
+  /// The checked export's files, for the helper to stage: the receipt it was
+  /// reviewed with, byte for byte the same document, and an open bundle that
+  /// is still the file the check hashed. Anything replaced since fails.
+  public func openForStaging(_ export: TryOmarchyExport) throws -> (
+    bundle: FileHandle, receipt: Data
+  ) {
+    guard export.verified else { throw TryOmarchyExportProblem.changedDuringVerification }
+    let receipt: Data
+    switch readSmallFile(export.receiptURL) {
+    case .success(let (data, _)): receipt = data
+    case .failure(let problem): throw problem
+    }
+    guard (try? TryOmarchyExportReceipt.decode(receipt)) == export.receipt else {
+      throw TryOmarchyExportProblem.changedDuringVerification
+    }
+    let descriptor = open(export.bundleURL.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK)
+    guard descriptor >= 0 else { throw TryOmarchyExportProblem.unreadable }
+    var status = stat()
+    guard fstat(descriptor, &status) == 0,
+      TryOmarchyExportFileIdentity(status) == export.bundleIdentity
+    else {
+      close(descriptor)
+      throw TryOmarchyExportProblem.changedDuringVerification
+    }
+    return (FileHandle(fileDescriptor: descriptor, closeOnDealloc: true), receipt)
+  }
+
   /// Every open is non-blocking, so a named pipe planted in an export can't
   /// stall discovery before its type is checked; regular files read as usual.
   private func readSmallFile(_ url: URL) -> Result<(Data, stat), TryOmarchyExportProblem> {

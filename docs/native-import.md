@@ -99,7 +99,7 @@ An image that claims exports declares it in its `installer_data.json`: the Omarc
 
 ## Packaging
 
-The installer's image builder builds `omarchy-migration` from `packages/omarchy-migration` and installs it into the native image, with the pinned `age` it needs, so the claim and the import work offline. `packages/omarchy-migration/PKGBUILD` builds that pacman package from the local tree and pins `age` 1.3.2 for arm64 by the tarball's and the binary's digests; the package records the binary's digest in `age.sha256`, and `plan` and `apply` check it before use. The package enables the claim unit and the user unit with vendor `.wants` links, and ships the sudo rule in `/etc/sudoers.d/omarchy-migration`. Try Omarchy vendors the same package as its exporter. There the claim unit needs a marker and the offer needs a claimed export, so neither does anything.
+The installer's image builder stages `omarchy-migration` from `packages/omarchy-migration` into the native image with its `install` script, with the pinned `age` it needs, so the claim and the import work offline. The units come enabled. It is staged like owner provisioning's Node.js, not installed through pacman: the image's transactions read only the pinned databases and the signed candidate set, and this package comes from the builder's own commit, which `PROVENANCE` records. `/usr/lib/omarchy-migration/version` names the version staged. pacman doesn't track these files, so an update reaches them only through a new image; the import runs once, on the first login. `packages/omarchy-migration/PKGBUILD` builds the same files as a pacman package, for a native system installed before images carried it. Try Omarchy vendors the same package as its exporter.
 
 ## Testing
 

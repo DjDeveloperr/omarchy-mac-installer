@@ -462,6 +462,9 @@ def check_migration(root: Path) -> None:
     require(re.fullmatch(r"[0-9a-f]{64}", pin.get("binary_sha256", "")) is not None, "the age pin is malformed")
     command = root / "usr/bin/omarchy-migration"
     require(command.is_file() and os.access(command, os.X_OK), "omarchy-migration is not staged")
+    version = root / "usr/lib/omarchy-migration/version"
+    require(version.is_file() and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version.read_text().strip()) is not None,
+            "the staged omarchy-migration names no version")
     require((root / "usr/bin/python3").exists() and (root / "usr/bin/sudo").exists(),
             "the image has no Python or sudo for omarchy-migration")
     age = root / "usr/lib/omarchy-migration/age"

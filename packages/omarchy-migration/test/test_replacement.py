@@ -208,6 +208,33 @@ class ReplacementTests(unittest.TestCase):
         self.assertEqual(self.file.read_bytes(), b"late edit before publication")
         self.assert_backup(self.saved())
 
+    def test_edit_at_publication_is_swapped_back_without_loss(self):
+        exchange = restore._exchange
+        calls = []
+
+        def edit_first(*arguments):
+            if not calls:
+                self.file.write_bytes(b"autosave at the last moment")
+            calls.append(arguments)
+            return exchange(*arguments)
+
+        with self.verified() as bundle, patch.object(restore, "_exchange", edit_first):
+            report = self.run_restore(bundle)
+        if len(calls) < 2:
+            self.skipTest("this filesystem cannot swap names atomically")
+        self.assertEqual(report[FILE].status, "conflict")
+        self.assertEqual(report[FILE].reason, "destination changed during publication")
+        self.assertEqual(self.file.read_bytes(), b"autosave at the last moment")
+        self.assert_backup(self.saved())
+
+    def test_atomic_publication_leaves_only_the_backup_in_the_job(self):
+        with self.verified() as bundle:
+            report = self.run_restore(bundle)
+        self.assertEqual(report[FILE].status, "replaced")
+        self.assertEqual(self.file.read_bytes(), NEW)
+        self.assertEqual({path.name for path in self.job.iterdir()},
+                         {"journal.json", self.saved()["backup"]["name"]})
+
     def test_backup_failure_prevents_replacement(self):
         sync = os.fsync
 
@@ -294,13 +321,57 @@ class ReplacementTests(unittest.TestCase):
             return replace(source, destination, **kwargs)
 
         with self.verified() as bundle:
-            with patch.object(restore.os, "replace", side_effect=interrupt), self.assertRaises(RuntimeError):
+            with patch.object(restore, "_exchange", return_value=False), patch.object(
+                    restore.os, "replace", side_effect=interrupt), self.assertRaises(RuntimeError):
                 self.run_restore(bundle)
             retry = self.run_restore(bundle)[FILE]
             self.assertEqual(retry.status, "conflict")
             self.assertEqual(retry.backup, self.saved()["backup"]["name"])
         self.assertEqual(self.file.read_bytes(), OLD)
         self.assert_backup(self.saved())
+
+    def test_interruption_at_the_swap_never_retries_destructive_operation(self):
+        def interrupt(*arguments):
+            raise RuntimeError("synthetic interruption before the swap")
+
+        with self.verified() as bundle:
+            with patch.object(restore, "_exchange", side_effect=interrupt), self.assertRaises(RuntimeError):
+                self.run_restore(bundle)
+            retry = self.run_restore(bundle)[FILE]
+            self.assertEqual(retry.status, "conflict")
+        self.assertEqual(self.file.read_bytes(), OLD)
+        self.assert_backup(self.saved())
+
+    def test_real_sigkill_after_the_swap_is_recovered_without_replacing_again(self):
+        script = """
+import os, signal, sys
+from unittest.mock import patch
+from omarchy_migration import restore
+exchange = restore._exchange
+def kill(*arguments):
+    if not exchange(*arguments):
+        sys.exit(3)
+    os.kill(os.getpid(), signal.SIGKILL)
+with restore.verified_bundle(sys.argv[1], b'synthetic-only-otter-maple-window-cobalt', sys.argv[2]) as bundle:
+    with restore.Restorer(bundle, sys.argv[3], sys.argv[4], replace=('.config/demo/settings',)) as importer:
+        with patch.object(restore, '_exchange', side_effect=kill):
+            importer.apply(importer.plan())
+"""
+        scratch = self.root / "child-scratch"
+        scratch.mkdir(mode=0o700)
+        result = subprocess.run([sys.executable, "-c", script, str(self.age), str(self.ciphertext),
+                                 str(self.target), str(self.job)], capture_output=True, timeout=20,
+                                env={**os.environ, "TMPDIR": str(scratch)})
+        if result.returncode == 3:
+            self.skipTest("this filesystem cannot swap names atomically")
+        self.assertEqual(result.returncode, -signal.SIGKILL, result.stderr.decode())
+        inode = self.file.stat().st_ino
+        self.assert_backup(self.saved())
+        with self.verified() as bundle:
+            self.assertEqual(self.run_restore(bundle)[FILE].status, "restored")
+        self.assertEqual(self.file.stat().st_ino, inode)
+        self.assertEqual(self.saved()["state"], "applied")
+        self.assertEqual(self.file.read_bytes(), NEW)
 
     def test_completion_journal_failure_recovers_new_inode_and_original_backup(self):
         save = restore.Restorer._save
@@ -332,7 +403,7 @@ def kill(source, destination, **kwargs):
         os.kill(os.getpid(), signal.SIGKILL)
 with restore.verified_bundle(sys.argv[1], b'synthetic-only-otter-maple-window-cobalt', sys.argv[2]) as bundle:
     with restore.Restorer(bundle, sys.argv[3], sys.argv[4], replace=('.config/demo/settings',)) as importer:
-        with patch.object(restore.os, 'replace', side_effect=kill):
+        with patch.object(restore, '_exchange', return_value=False), patch.object(restore.os, 'replace', side_effect=kill):
             importer.apply(importer.plan())
 """
         scratch = self.root / "child-scratch"
@@ -369,7 +440,8 @@ with restore.verified_bundle(sys.argv[1], b'synthetic-only-otter-maple-window-co
                         raise OSError(errno.ENOSPC, "synthetic directory sync failure")
                     return sync(fd)
 
-                with patch.object(restore.os, "replace", side_effect=mark), patch.object(
+                with patch.object(restore, "_exchange", return_value=False), patch.object(
+                        restore.os, "replace", side_effect=mark), patch.object(
                         restore.os, "fsync", side_effect=fail), self.assertRaisesRegex(OSError, "directory sync"):
                     self.run_restore(bundle)
                 inode = self.file.stat().st_ino

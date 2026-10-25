@@ -5,7 +5,9 @@ disposable destination. Explicit regular-file replacement retains private backup
 """
 
 import contextlib
+import ctypes
 from dataclasses import dataclass
+import errno
 import fcntl
 import hashlib
 import json
@@ -142,6 +144,32 @@ def _directory(path):
     except BaseException:
         os.close(fd)
         raise
+
+
+RENAME_EXCHANGE = 2
+
+
+def _exchange(old_dir, old_name, new_dir, new_name):
+    """Swap two names atomically with renameat2; False where the system or filesystem can't."""
+    try:
+        renameat2 = ctypes.CDLL(None, use_errno=True).renameat2
+    except (OSError, AttributeError):
+        return False
+    renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    if renameat2(old_dir, os.fsencode(old_name), new_dir, os.fsencode(new_name), RENAME_EXCHANGE) == 0:
+        return True
+    error = ctypes.get_errno()
+    if error in (errno.ENOSYS, errno.EINVAL, errno.EOPNOTSUPP):
+        return False
+    raise OSError(error, os.strerror(error))
+
+
+def _fingerprint_at(directory, name):
+    fd = os.open(name, FILE_FLAGS, dir_fd=directory)
+    try:
+        return _fingerprint(fd)
+    finally:
+        os.close(fd)
 
 
 def _identity(fd):
@@ -924,14 +952,27 @@ class Restorer:
                 if parent is None:
                     raise probe.Rejected("destination parent disappeared")
                 try:
-                    if backup is not None:
-                        # The caller keeps leaves as well as directories
-                        # quiescent: replace() is not an inode compare-and-swap.
-                        os.replace(saved["temporary"], entry["path"].split("/")[-1],
-                                   src_dir_fd=self._job_fd, dst_dir_fd=parent)
+                    name = entry["path"].split("/")[-1]
+                    if backup is not None and _exchange(self._job_fd, saved["temporary"], parent, name):
+                        # The swap is atomic, so the file it moved out is the
+                        # one the destination held: unless it is still the
+                        # planned one, an application wrote it since, and it
+                        # goes back.
+                        if _fingerprint_at(self._job_fd, saved["temporary"]) != observed:
+                            _exchange(self._job_fd, saved["temporary"], parent, name)
+                            os.fsync(parent)
+                            report[index] = self._action(entry, "conflict", "destination changed during publication")
+                            continue
+                        os.unlink(saved["temporary"], dir_fd=self._job_fd)
+                        os.fsync(self._job_fd)
+                    elif backup is not None:
+                        # Without an atomic swap the caller keeps leaves as
+                        # well as directories quiescent: replace() is not an
+                        # inode compare-and-swap.
+                        os.replace(saved["temporary"], name, src_dir_fd=self._job_fd, dst_dir_fd=parent)
                         os.fsync(self._job_fd)
                     else:
-                        os.link(saved["temporary"], entry["path"].split("/")[-1],
+                        os.link(saved["temporary"], name,
                                 src_dir_fd=self._job_fd, dst_dir_fd=parent, follow_symlinks=False)
                 except FileExistsError:
                     report[index] = Action(entry["path"], "conflict", "destination appeared during publication")

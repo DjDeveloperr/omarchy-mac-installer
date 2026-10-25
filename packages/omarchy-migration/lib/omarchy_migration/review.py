@@ -51,6 +51,7 @@ REASONS = {
     "destination changed after planning": "destination_changed",
     "destination appeared during publication": "destination_changed",
     "replacement inputs changed": "destination_changed",
+    "destination changed during publication": "destination_changed",
     "original backup changed or disappeared": "backup_unavailable",
     "structure retained; source directory metadata deferred": "directory_metadata_deferred",
     "directory metadata restored": "directory_metadata_restored",

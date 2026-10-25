@@ -595,6 +595,7 @@ class MigrationTest(unittest.TestCase):
         command.chmod(0o755)
         for tool in ("python3", "sudo"):
             (self.root / "usr/bin" / tool).write_text("")
+        (self.root / "usr/lib/omarchy-migration/version").write_text("0.2.0\n")
         for unit, wants in (("system/omarchy-migration-claim.service", "system/multi-user.target.wants"),
                             ("user/omarchy-migration-offer.service", "user/graphical-session.target.wants")):
             path = self.root / "usr/lib/systemd" / unit

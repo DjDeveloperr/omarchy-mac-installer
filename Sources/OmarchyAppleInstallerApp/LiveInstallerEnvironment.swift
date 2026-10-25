@@ -24,6 +24,8 @@ final class LiveInstallerEnvironment: InstallerEnvironment, @unchecked Sendable 
   private var tryExportForInstall: String?
   /// The export the prepared plan has room for.
   private var plannedTryExport: TryOmarchyExport?
+  /// Set once the helper staged it for the prepared plan.
+  private var stagedTryExport: TryExportStagingOutcome?
   private let buildProfile = InstallerBuildProfile.current
   private var encryptLinuxDisk = true
   private var selectedLane = ReleaseChannel.stable.rawValue
@@ -263,6 +265,7 @@ final class LiveInstallerEnvironment: InstallerEnvironment, @unchecked Sendable 
       planApproval = nil
       releaseConfiguration = nil
       plannedTryExport = nil
+      stagedTryExport = nil
       return retained
     }
 
@@ -634,10 +637,18 @@ final class LiveInstallerEnvironment: InstallerEnvironment, @unchecked Sendable 
         authorization: authorization,
         encrypt: encryptLinuxDisk
       )
-      if operation == .install, let export = lock.withLock({ plannedTryExport }) {
-        tryExport = await stageTryExport(
-          export, configuration: configuration, plan: prepared.review.plan,
-          authorization: authorization)
+      // A Recovery retry stages too: an install that failed at Recovery
+      // authorization stopped before staging.
+      if let export = lock.withLock({ plannedTryExport }) {
+        if let staged = lock.withLock({ stagedTryExport }) {
+          tryExport = staged
+        } else {
+          let outcome = await stageTryExport(
+            export, configuration: configuration, plan: prepared.review.plan,
+            authorization: authorization)
+          if case .staged = outcome { lock.withLock { stagedTryExport = outcome } }
+          tryExport = outcome
+        }
       }
       if operation == .install {
         InstallationTimingHistory.recordCompleted(
@@ -654,12 +665,9 @@ final class LiveInstallerEnvironment: InstallerEnvironment, @unchecked Sendable 
     plan: ValidatedEnginePlan,
     authorization: MachineOwnerAuthorization
   ) async -> TryExportStagingOutcome {
-    guard let receipt = try? Data(contentsOf: export.receiptURL) else {
+    guard let (bundle, receipt) = try? tryExportShelf.openForStaging(export) else {
       return .notStaged(.bundleChanged)
     }
-    let descriptor = open(export.bundleURL.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
-    guard descriptor >= 0 else { return .notStaged(.bundleChanged) }
-    let bundle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
     do {
       let submitter = try AuthenticatedEngineXPCSubmitter(
         machServiceName: configuration.helperMachServiceName,

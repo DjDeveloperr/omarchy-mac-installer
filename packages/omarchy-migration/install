@@ -23,6 +23,7 @@ install -m 0644 "$here"/lib/omarchy_migration/policies/*.json "$lib/policies/"
 install -m 0755 "$here/bin/omarchy-migration" "$here/bin/omarchy-migration-import" "$here/bin/omarchy-migration-offer" \
   "$destdir/usr/bin/"
 install -m 0755 "$here/libexec/handoff" "$base/handoff"
+install -m 0644 "$here/version" "$base/version"
 install -m 0644 "$here/systemd/system/omarchy-migration-claim.service" "$system/"
 install -m 0644 "$here/systemd/user/omarchy-migration-offer.service" "$user/"
 ln -sfn ../omarchy-migration-claim.service "$system/multi-user.target.wants/omarchy-migration-claim.service"

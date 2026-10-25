@@ -74,6 +74,13 @@
       }
     }
 
+    /// The checked export's receipt and open bundle, unless either changed.
+    public func openForStaging(_ export: TryOmarchyExport) throws -> (
+      bundle: FileHandle, receipt: Data
+    ) {
+      try discovery.openForStaging(export)
+    }
+
     /// The export with this id, once a check passed.
     public func verifiedExport(id: String) -> TryOmarchyExport? {
       lock.withLock { exports[id].flatMap { $0.verified ? $0 : nil } }
