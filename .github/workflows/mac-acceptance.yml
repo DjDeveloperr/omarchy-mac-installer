@@ -99,9 +99,9 @@ permissions: {}
 
 env:
   HARNESS_REPOSITORY: omacom/omarchy-mac-pkgs
-  # omarchy-mac-pkgs main, 2026-10-14 (Merge pull request #34). Bump by hand
+  # omarchy-mac-pkgs main, 2026-10-25 (the commit of pull request #62). Bump by hand
   # after the harness changes; the evidence record names it.
-  HARNESS_COMMIT: d846557b2405f9dc0bc774bef03656f3a1dcd0a6
+  HARNESS_COMMIT: 15afa20e73ea5192cdfc1533157e7dbc15d4cf25
 
 defaults:
   run:
