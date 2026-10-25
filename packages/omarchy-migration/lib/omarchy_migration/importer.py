@@ -126,15 +126,19 @@ def run_review(operation, secret, arguments, migration):
         return None, "review_operation_failed"
 
 
-def summary_lines(summary):
-    """The plan's summary for a person: what comes, what replaces a default, what stays, what's left out."""
+def plan_totals(summary):
     totals = dict.fromkeys(("create", "replace", "present", "conflict", "inert"), 0)
-    created = []
     for group in summary["categories"]:
         for key in totals:
             totals[key] += group[key]
-        if group["create"]:
-            created.append(f"{NAMES.get(group['id'], group['id'])} {group['create']}")
+    return totals
+
+
+def summary_lines(summary):
+    """The plan's summary for a person: what comes, what replaces a default, what stays, what's left out."""
+    totals = plan_totals(summary)
+    created = [f"{NAMES.get(group['id'], group['id'])} {group['create']}"
+               for group in summary["categories"] if group["create"]]
     lines = [f"Comes across: {totals['create']} files" + (f" ({', '.join(created)})" if created else "")]
     replaced = summary["replaces_default"]
     lines.append(f"Replaces untouched Omarchy defaults: {len(replaced)} files, each with a backup")
@@ -215,9 +219,11 @@ def import_export(ui, home, work, export_id, *, migration, defaults=SKEL):
              "categories": report["categories"]})
     _remove_tree(folder)
     _remove_tree(scratch)
-    restored = sum(item["restored"] for item in report["categories"])
+    replaced = len(summary["replaces_default"])
     conflicts = sum(item["conflicts"] for item in report["categories"])
-    ui.say(f"Imported {restored} entries." + (f" {conflicts} stayed as they were here." if conflicts else ""))
+    ui.say(f"Imported {plan_totals(summary)['create']} files"
+           + (f" and replaced {replaced} untouched defaults" if replaced else "") + "."
+           + (f" {conflicts} stayed as they were here." if conflicts else ""))
     if summary["replaces_default"]:
         ui.say(f"Backups of the replaced defaults are in {job}.")
     return "imported"

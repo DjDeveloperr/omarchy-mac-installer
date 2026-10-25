@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import tempfile
 import unittest
@@ -125,6 +126,8 @@ class ImportTests(unittest.TestCase):
         self.assertIn("That passphrase doesn't open this export. Try again.", text)
         self.assertIn("Replaces untouched Omarchy defaults: 1 files, each with a backup", text)
         self.assertIn(f"    {THEME}", text)
+        created = re.search(r"^Comes across: (\d+) files", text, re.M).group(1)
+        self.assertIn(f"Imported {created} files and replaced 1 untouched defaults.", text)
         self.assertIn("Log out and back in", text)
         self.assertEqual((self.home / THEME).read_bytes(), self.files[THEME])
         self.assertEqual((self.home / "Projects/demo/untracked.txt").read_bytes(), self.files["Projects/demo/untracked.txt"])
