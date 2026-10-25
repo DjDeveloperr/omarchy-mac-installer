@@ -44,6 +44,17 @@ The release is `dryrun-<image>-<run id>-<attempt>`. The job runs every step abov
 
 `mac-upload-dry-run.yml` runs this end to end with a small fake image (`scripts/tests/make-mac-upload-fixture.py`) and a fixture evidence record.
 
-## Switching to R2 (ticket 13)
+## Hosts
 
-A destination implements `Destination` in `scripts/mac-upload.py`: `part_bytes` (largest file, or `None`), `listing()` (name to size and, if known, sha256; writes nothing), `put(name, path)` (never replaces a file), `fetch(name, sink)` and `discard()` (dry-run scratch only). An R2 destination would map a release to `v1/releases/<image>/` in the `omarchy-mac` bucket, set `part_bytes = None` (single file), write with `If-None-Match: *`, fetch through `https://mac.omarchy.org`, and take its token from the `publish` environment. The job's staging, refusal and verification logic doesn't change.
+`host` picks the destination. The release pipeline defaults to `r2`, so edge publishes land on mac.omarchy.org; `mac-upload.yml` called or dispatched on its own, and `mac-upload-dry-run.yml`, default to `github-release`, which works from any branch.
+
+| `host` | Where | Image | Public |
+|---|---|---|---|
+| `github-release` | a draft prerelease on omacom/omarchy-mac-installer named after the image | `.partNN` files under 2 GiB | once `make-public` publishes the draft |
+| `r2` | `v1/releases/<image>/` in the `omarchy-mac` bucket (`vars.R2_BUCKET` overrides the name) | whole, one PUT of at most 5 GiB | as soon as it is written, at `https://mac.omarchy.org/v1/releases/<image>/` |
+
+On R2 every file is written with `If-None-Match: *`, so R2 itself refuses to replace one, and with `Cache-Control: public, max-age=31536000, immutable`. Files are read back through the S3 API, and `SHA256SUMS` must also come back byte for byte from `mac.omarchy.org`, or the upload fails: that is the URL the catalog pins. `make-public` does nothing on R2. `catalog-inputs` gives `mac.omarchy.org` URLs.
+
+The R2 credentials are the `publish` environment's `R2_ENDPOINT` (the account's S3 endpoint, `https://<account>.r2.cloudflarestorage.com`), `R2_ACCESS_KEY_ID` and `R2_SECRET_ACCESS_KEY`. Callers pass them by name. Because they live in `publish`, an R2 dry run runs in that environment too, so only from `main`. An R2 dry run writes to `dryrun/<release>/` in the bucket, outside the intended `v1/releases/` lock, with `Cache-Control: no-store` so the edge keeps nothing once it is deleted afterwards; only a `dryrun-` release under `dryrun/` is ever deleted. A real R2 upload is public as soon as it is written, and is meant to sit under a bucket lock on `v1/releases/` (the catalogs beside it, `v1/catalog-<channel>.signed.json`, are replaced in place and must stay outside any lock); the first real `host: r2` run was the switch.
+
+Dispatch `mac-upload-dry-run.yml` with `host: r2` from `main` to check the credentials, the bucket and the public domain end to end with a small fake image.
