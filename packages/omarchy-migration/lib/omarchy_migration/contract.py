@@ -323,7 +323,8 @@ def _plan(document):
     packages = _object(document["packages"], "$.packages", ("reinstall", "manual"))
     for name, value in packages.items():
         _integer(value, f"$.packages.{name}", 0, MAX_ENTRIES)
-    _integer(document["required_bytes"], "$.required_bytes", 0, MAX_EXPANDED)
+    # The content, a private copy of each replaced original, and block overhead.
+    _integer(document["required_bytes"], "$.required_bytes", 0, 4 * MAX_EXPANDED)
 
 
 def _report(document):

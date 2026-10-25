@@ -7,6 +7,7 @@ home, and compares every entry with the live home. The home is only read.
 
 import argparse
 from collections import Counter
+import filecmp
 import json
 import os
 from pathlib import Path
@@ -41,7 +42,7 @@ def _same_file(source, destination, entry):
         restored = destination.lstat()
     except FileNotFoundError:
         return False
-    return (stat.S_ISREG(restored.st_mode) and destination.read_bytes() == source.read_bytes()
+    return (stat.S_ISREG(restored.st_mode) and filecmp.cmp(source, destination, shallow=False)
             and stat.S_IMODE(restored.st_mode) == entry["mode"] and restored.st_mtime_ns == entry["mtime_ns"])
 
 
@@ -107,7 +108,7 @@ def run_trial(home, workdir, *, age, policy_document, categories=None, emit=lamb
     for directory in (target, job):
         directory.mkdir(mode=0o700)
     emit("restoring")
-    with restore.verified_bundle(age, secret, workdir / "export/bundle.age") as bundle:
+    with restore.verified_bundle(age, secret, workdir / "export/bundle.age", scratch=workdir) as bundle:
         with restore.Restorer(bundle, target, job) as importer:
             actions = importer.plan()
             plan = review.plan_document(bundle, actions, receipt, os.getuid(), importer._binding,
