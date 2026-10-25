@@ -1,9 +1,11 @@
 name: Mac image upload
 
-# Uploads one image build's artifact (mac-image.yml) to the release host:
-# for now a draft prerelease on this repository named after the image, with
-# the zip in parts under 2 GiB; later R2 (ticket 13), behind the same
-# scripts/mac-upload.py destination interface. A published path is never
+# Uploads one image build's artifact (mac-image.yml) to the release host,
+# chosen by `host`: `github-release` (the default for now), a draft prerelease
+# on this repository named after the image with the zip in parts under 2 GiB,
+# or `r2`, the whole zip under v1/releases/<image>/ in the R2 bucket served at
+# mac.omarchy.org. Both sit behind the scripts/mac-upload.py destination
+# interface. A published path is never
 # overwritten (identical re-uploads are a no-op) and every file is downloaded
 # back and checked after upload. See docs/mac-upload.md.
 #
@@ -11,14 +13,19 @@ name: Mac image upload
 # without a passing acceptance evidence record for the image's sha256
 # (docs/mac-acceptance-evidence.md) attested by mac-acceptance.yml on main,
 # and without the image's build attestation from mac-image.yml on main. A dry run (the default) writes only to a
-# `dryrun-` scratch draft release that it deletes afterwards.
+# `dryrun-` scratch draft release (on R2, dryrun/<release>/) that it deletes
+# afterwards. The R2 credentials live in the publish environment, so an R2
+# dry run runs there too, which means from main only.
 #
 # With make-public, a real upload then publishes the draft as a prerelease
 # (never latest) so the catalog can pin its download URLs, and outputs the
 # catalog's payload and installer-data inputs and the evidence it checked.
 #
-# Callers grant contents: write, actions: read and attestations: read. Never
-# call this from a pull_request workflow; the job refuses to run for one.
+# Callers grant contents: write, actions: read and attestations: read, and
+# pass R2_ENDPOINT, R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY by name: GitHub
+# delivers the publish environment's secrets to a called workflow only when
+# its callers pass them. Never call this from a pull_request workflow; the
+# job refuses to run for one.
 
 on:
   workflow_call:
@@ -61,6 +68,18 @@ on:
         type: boolean
         required: false
         default: false
+      host:
+        description: Where the image goes, github-release or r2
+        type: string
+        required: false
+        default: github-release
+    secrets:
+      R2_ENDPOINT:
+        required: false
+      R2_ACCESS_KEY_ID:
+        required: false
+      R2_SECRET_ACCESS_KEY:
+        required: false
     outputs:
       release:
         description: The release the image was uploaded to (deleted again after a dry run)
@@ -108,6 +127,11 @@ on:
         description: After a real upload, publish the draft as a prerelease (never latest)
         type: boolean
         default: false
+      host:
+        description: Where the image goes
+        type: choice
+        options: [github-release, r2]
+        default: github-release
 
 permissions: {}
 
@@ -125,9 +149,10 @@ jobs:
     # On Namespace, which holds the image in its artifact storage.
     runs-on: namespace-profile-linux-amd64-16x32
     timeout-minutes: 180
-    # The publish environment only deploys from main. A dry run needs no
-    # environment: it touches nothing real.
-    environment: ${{ !inputs.dry-run && 'publish' || '' }}
+    # The publish environment only deploys from main. A GitHub dry run needs
+    # no environment: it touches nothing real. An R2 dry run needs the
+    # environment's credentials.
+    environment: ${{ (!inputs.dry-run || inputs.host == 'r2') && 'publish' || '' }}
     concurrency:
       group: mac-upload-${{ inputs.image-artifact }}${{ inputs.dry-run && format('-dryrun-{0}', github.run_id) || '' }}
       cancel-in-progress: false
@@ -148,6 +173,8 @@ jobs:
       EVIDENCE_RUN_ID: ${{ inputs.evidence-run-id }}
       PART_BYTES: ${{ inputs.part-bytes }}
       DRY_RUN: ${{ inputs.dry-run }}
+      HOST: ${{ inputs.host }}
+      R2_BUCKET: ${{ vars.R2_BUCKET || 'omarchy-mac' }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -170,6 +197,19 @@ jobs:
             echo "::error::refusing to upload: a real upload runs only from main, not $GITHUB_REF"
             exit 1
           fi
+          case $HOST in
+            github-release) destination="github-release:$GITHUB_REPOSITORY" ;;
+            r2) destination="r2:$R2_BUCKET" ;;
+            *) echo "::error::unknown host $HOST; use github-release or r2"; exit 1 ;;
+          esac
+          if [[ $HOST == r2 && $GITHUB_REF != "refs/heads/main" ]]; then
+            echo "::error::refusing to upload: R2 uploads, dry runs included, run only from main, not $GITHUB_REF"
+            exit 1
+          fi
+          if [[ $HOST == r2 && -n $PART_BYTES ]]; then
+            echo "::error::R2 takes the image whole; part-bytes is for the github-release host"
+            exit 1
+          fi
           if [[ $DRY_RUN != "true" && -z $EVIDENCE_ARTIFACT ]]; then
             echo "::error::refusing to upload: no acceptance evidence for this image"
             exit 1
@@ -180,6 +220,7 @@ jobs:
             release=$IMAGE
           fi
           echo "release=$release" >>"$GITHUB_OUTPUT"
+          echo "DESTINATION=$destination" >>"$GITHUB_ENV"
           echo "WORK=$RUNNER_TEMP/mac-upload" >>"$GITHUB_ENV"
 
       - name: Check the runs are main's
@@ -261,10 +302,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE: ${{ steps.inputs.outputs.release }}
+          R2_ENDPOINT: ${{ inputs.host == 'r2' && secrets.R2_ENDPOINT || '' }}
+          R2_ACCESS_KEY_ID: ${{ inputs.host == 'r2' && secrets.R2_ACCESS_KEY_ID || '' }}
+          R2_SECRET_ACCESS_KEY: ${{ inputs.host == 'r2' && secrets.R2_SECRET_ACCESS_KEY || '' }}
         run: |
           set -euo pipefail
           args=(publish --artifact "$WORK/image" --image "$IMAGE" --sha256 "$IMAGE_SHA256"
-            --destination "github-release:$GITHUB_REPOSITORY" --release "$RELEASE" --target "$GITHUB_SHA"
+            --destination "$DESTINATION" --release "$RELEASE" --target "$GITHUB_SHA"
             --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --report "$WORK/report.json")
           [[ $DRY_RUN == "true" ]] && args+=(--dry-run)
           [[ -n $PART_BYTES ]] && args+=(--part-bytes "$PART_BYTES")
@@ -281,12 +325,16 @@ jobs:
             echo '```'
           } >>"$GITHUB_STEP_SUMMARY"
 
+      # R2 serves files as they land, so there make-public only checks the name.
       - name: Publish the draft as a prerelease
         if: inputs.dry-run == false && inputs.make-public
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE: ${{ steps.inputs.outputs.release }}
-        run: python3 -I scripts/mac-upload.py make-public --destination "github-release:$GITHUB_REPOSITORY" --release "$RELEASE"
+          R2_ENDPOINT: ${{ inputs.host == 'r2' && secrets.R2_ENDPOINT || '' }}
+          R2_ACCESS_KEY_ID: ${{ inputs.host == 'r2' && secrets.R2_ACCESS_KEY_ID || '' }}
+          R2_SECRET_ACCESS_KEY: ${{ inputs.host == 'r2' && secrets.R2_SECRET_ACCESS_KEY || '' }}
+        run: python3 -I scripts/mac-upload.py make-public --destination "$DESTINATION" --release "$RELEASE"
 
       # The catalog's inputs, from what this job uploaded and verified, and the
       # evidence record it checked. Only meaningful once the files are public.
@@ -296,10 +344,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE: ${{ steps.inputs.outputs.release }}
+          R2_ENDPOINT: ${{ inputs.host == 'r2' && secrets.R2_ENDPOINT || '' }}
+          R2_ACCESS_KEY_ID: ${{ inputs.host == 'r2' && secrets.R2_ACCESS_KEY_ID || '' }}
+          R2_SECRET_ACCESS_KEY: ${{ inputs.host == 'r2' && secrets.R2_SECRET_ACCESS_KEY || '' }}
         run: |
           set -euo pipefail
           python3 -I scripts/mac-upload.py catalog-inputs --report "$WORK/report.json" \
-            --destination "github-release:$GITHUB_REPOSITORY" --release "$RELEASE" | tee -a "$GITHUB_OUTPUT"
+            --destination "$DESTINATION" --release "$RELEASE" | tee -a "$GITHUB_OUTPUT"
           echo "evidence=$(jq -c . "$WORK/evidence/acceptance-evidence.json")" | tee -a "$GITHUB_OUTPUT"
 
       - name: Delete the scratch release
@@ -307,4 +358,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE: ${{ steps.inputs.outputs.release }}
-        run: python3 -I scripts/mac-upload.py discard --destination "github-release:$GITHUB_REPOSITORY" --release "$RELEASE"
+          R2_ENDPOINT: ${{ inputs.host == 'r2' && secrets.R2_ENDPOINT || '' }}
+          R2_ACCESS_KEY_ID: ${{ inputs.host == 'r2' && secrets.R2_ACCESS_KEY_ID || '' }}
+          R2_SECRET_ACCESS_KEY: ${{ inputs.host == 'r2' && secrets.R2_SECRET_ACCESS_KEY || '' }}
+        run: python3 -I scripts/mac-upload.py discard --destination "$DESTINATION" --release "$RELEASE"

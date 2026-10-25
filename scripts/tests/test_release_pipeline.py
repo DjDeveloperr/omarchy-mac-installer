@@ -115,6 +115,7 @@ class Triggers(unittest.TestCase):
         "mac-upload.yml": {"workflow_call", "workflow_dispatch"},
         "mac-catalog.yml": {"workflow_call", "workflow_dispatch"},
         "edge-dispatch.yml": {"repository_dispatch"},
+        "mac-mirror.yml": {"workflow_dispatch"},
     }
 
     def test_no_pipeline_workflow_runs_for_pull_requests_pushes_or_other_runs(self):
@@ -130,6 +131,11 @@ class Triggers(unittest.TestCase):
 
     def test_a_manual_run_is_a_dry_run_unless_asked(self):
         self.assertRegex(text(PIPELINE), r"dry-run:\n        description: [^\n]*\n        type: boolean\n        default: true")
+
+    def test_edge_publishes_land_on_r2(self):
+        self.assertRegex(text(PIPELINE), r"host:\n        description: [^\n]*\n        type: choice\n"
+                                         r"        options: \[r2, github-release\]\n        default: r2")
+        self.assertNotIn("-f host=", text(WORKFLOWS / "edge-dispatch.yml"))
 
 
 class Ordering(unittest.TestCase):
@@ -197,13 +203,73 @@ class Secrets(unittest.TestCase):
                     with self.subTest(f"{workflow.name} {job}"):
                         self.assertEqual(field(body, "uses"), "./.github/workflows/mac-catalog-sign.yml")
 
-    def test_the_pipeline_passes_only_the_catalog_key_and_only_to_the_catalog(self):
+    R2_SECRETS = ("R2_ENDPOINT", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY")
+
+    def test_the_pipeline_passes_the_catalog_key_to_the_catalog_and_r2_to_upload_and_catalog(self):
         pipeline_jobs = jobs(PIPELINE)
+        r2 = [f"{name}: ${{{{ secrets.{name} }}}}" for name in self.R2_SECRETS]
         for job, body in pipeline_jobs.items():
             with self.subTest(job):
-                expected = ["CATALOG_SIGNING_KEY: ${{ secrets.CATALOG_SIGNING_KEY }}"] if job == "catalog" else []
+                expected = {
+                    "catalog": ["CATALOG_SIGNING_KEY: ${{ secrets.CATALOG_SIGNING_KEY }}", *r2],
+                    "upload": r2,
+                }.get(job, [])
                 self.assertEqual([line.strip() for line in body.splitlines() if "secrets." in line], expected)
                 self.assertNotIn("environment:", body)
+
+    # Who reads the R2 key: the image upload and the catalog publish, each in
+    # publish and only when its host is r2. Every other job only passes it on.
+    R2_READERS = {
+        "mac-upload.yml upload": "inputs.host == 'r2' && secrets.R2_",
+        "mac-catalog-sign.yml publish": "contains(inputs.catalog-hosts, 'r2') && secrets.R2_",
+        "mac-mirror.yml mirror": "${{ secrets.R2_",
+    }
+    R2_PASSERS = ("./.github/workflows/mac-upload.yml", "./.github/workflows/mac-catalog.yml")
+
+    def test_r2_credentials_are_read_only_by_the_upload_and_catalog_publish_in_publish(self):
+        readers = []
+        for workflow in sorted(WORKFLOWS.glob("*.yml")):
+            for job, body in jobs(workflow).items():
+                if not any(f"secrets.{name}" in body for name in self.R2_SECRETS):
+                    continue
+                name = f"{workflow.name} {job}"
+                with self.subTest(name):
+                    if field(body, "uses").startswith("./.github/workflows/"):
+                        self.assertIn(field(body, "uses"), self.R2_PASSERS)
+                        for secret in self.R2_SECRETS:
+                            self.assertRegex(body, rf"(?m)^      {secret}: \$\{{\{{ secrets\.{secret} \}}\}}$")
+                    else:
+                        readers.append(name)
+                        self.assertIn(field(body, "environment").strip("'"),
+                                      ("publish", "${{ (!inputs.dry-run || inputs.host == 'r2') && 'publish' || '' }}",
+                                       "${{ contains(inputs.catalog-hosts, 'r2') && 'publish' || '' }}"))
+                        for line in body.splitlines():
+                            if "secrets.R2_" in line:
+                                self.assertIn(self.R2_READERS.get(name, "unexpected reader"), line)
+        self.assertEqual(sorted(readers), sorted(self.R2_READERS))
+
+    def test_the_mirror_runs_by_hand_from_main_only(self):
+        mirror = text(WORKFLOWS / "mac-mirror.yml")
+        self.assertEqual(triggers(WORKFLOWS / "mac-mirror.yml"), {"workflow_dispatch"})
+        job = jobs(WORKFLOWS / "mac-mirror.yml")["mirror"]
+        self.assertEqual(field(job, "if"), "github.repository == 'omacom/omarchy-mac-installer' && github.ref == 'refs/heads/main'")
+        self.assertEqual(field(job, "environment"), "publish")
+        self.assertEqual(field(job, "runs-on"), "ubuntu-24.04")
+        self.assertIn("\npermissions: {}\n", mirror)
+        self.assertRegex(job, r"\n    permissions:\n      contents: read # [^\n]*\n    concurrency:")
+        self.assertNotIn("pull_request", mirror)
+
+    def test_catalogs_stay_on_github_until_r2_is_chosen(self):
+        for workflow in ("mac-catalog.yml", "mac-catalog-sign.yml"):
+            with self.subTest(workflow):
+                self.assertRegex(text(WORKFLOWS / workflow),
+                                 r"catalog-hosts:\n        description: [^\n]*\n        type: string\n        default: github-release")
+        self.assertNotIn("catalog-hosts", text(WORKFLOWS / "mac-promote.yml"))
+        self.assertNotIn("catalog-hosts", text(PIPELINE))
+        catalog = text(WORKFLOWS / "mac-catalog.yml")
+        self.assertRegex(catalog, r"catalog-hosts:\n        description: [^\n]*\n        type: choice\n"
+                                  r"        options: \[github-release, 'r2,github-release'\]\n        default: github-release")
+        self.assertIn("catalog-hosts: ${{ inputs.catalog-hosts }}", jobs(WORKFLOWS / "mac-catalog.yml")["release"])
 
     def test_the_key_is_read_only_in_the_catalog_release_environment(self):
         # Wherever the signing job lives, only a job in catalog-release reads
@@ -226,14 +292,14 @@ class Secrets(unittest.TestCase):
             with self.subTest(workflow):
                 self.assertNotIn("secrets.", text(WORKFLOWS / workflow))
 
-    def test_a_real_upload_runs_in_the_publish_environment(self):
+    def test_a_real_upload_and_an_r2_dry_run_run_in_the_publish_environment(self):
         self.assertEqual(field(jobs(WORKFLOWS / "mac-upload.yml")["upload"], "environment"),
-                         "${{ !inputs.dry-run && 'publish' || '' }}")
+                         "${{ (!inputs.dry-run || inputs.host == 'r2') && 'publish' || '' }}")
 
 
 class Hardening(unittest.TestCase):
     PIPELINE_FILES = ("mac-release-pipeline.yml", "mac-acceptance.yml", "mac-image.yml", "recovery-app.yml",
-                      "mac-upload.yml", "mac-catalog.yml", "edge-dispatch.yml")
+                      "mac-upload.yml", "mac-catalog.yml", "edge-dispatch.yml", "mac-mirror.yml")
 
     def test_every_action_is_pinned_to_a_commit(self):
         for workflow in sorted(WORKFLOWS.glob("*.yml")):
@@ -817,8 +883,11 @@ class Config(unittest.TestCase):
         self.assertEqual((lock["validation_artifact"]["filename"], lock["validation_artifact"]["size_bytes"],
                           lock["validation_artifact"]["sha256"], lock["downstream_overlay"]["version"]),
                          (engine["fileName"], engine["sizeBytes"], engine["sha256"], engine["version"]))
-        self.assertEqual(engine["url"], f"https://github.com/{catalog.stopgap_repo()}/releases/download/"
-                                        f"engine-{engine['version']}/{engine['fileName']}")
+        # Served from the catalog base, where mac-mirror.yml copies the engine
+        # from its published engine-<version> release.
+        self.assertEqual(engine["url"], f"{catalog.identity()['INSTALLER_CATALOG_BASE']}/engine/"
+                                        f"{engine['version']}/{engine['fileName']}")
+        self.assertTrue(engine["url"].startswith(tuple(catalog.artifact_bases())))
         template = json.loads((SCRIPTS / "release-inputs.template.json").read_text())
         self.assertEqual(engine["downstreamRevision"], template["downstream_revision"])
 
