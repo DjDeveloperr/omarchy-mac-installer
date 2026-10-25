@@ -124,6 +124,7 @@ class PackageBuildTests(unittest.TestCase):
         self.assertEqual(self.text.count("http"), 2)
         self.assertEqual(self.field("depends"), "(python sudo)")
         self.assertEqual(self.field("arch"), "(aarch64)")
+        self.assertEqual(self.field("options"), "(!strip !debug)")
         self.assertIn('install -m 0755 "$age" "$pkgdir/usr/lib/omarchy-migration/age"', self.text)
         self.assertIn('bash "$startdir/install" "$pkgdir"', self.text)
 
