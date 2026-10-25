@@ -20,6 +20,18 @@ for script in "$here/install" "$here"/bin/* "$here/test/all" "$here/test/claim-i
   bash -n "$script"
 done
 
+# The unit cases restore as an unprivileged owner. As root, only the first
+# boot's claim runs, against a real loop disk, LUKS2 and Btrfs.
+if [[ $(id -u) == 0 ]]; then
+  if [[ -e /dev/loop-control ]] && command -v cryptsetup mkfs.btrfs sfdisk partx >/dev/null; then
+    bash "$here/test/claim-integration.sh"
+  else
+    echo "omarchy-migration: claim integration needs loop devices, cryptsetup, btrfs-progs and util-linux; skipped"
+  fi
+  echo "omarchy-migration: unit cases need an unprivileged user; skipped as root"
+  exit 0
+fi
+
 python3 -W error::ResourceWarning -m unittest discover -s "$here/test" -t "$here/test" -p 'test_*.py'
 
 # The staged command must run from the staged root alone.
@@ -29,10 +41,4 @@ trap 'rm -rf "$staging"' EXIT
 env -u PYTHONPATH "$staging/root/usr/bin/omarchy-migration" validate \
   "$staging/root/usr/lib/omarchy-migration/omarchy_migration/policies/"*.json >/dev/null
 echo "omarchy-migration: staged command passed"
-
-# The first boot's claim against a real loop disk, LUKS and Btrfs needs root.
-if [[ $(id -u) == 0 && -e /dev/loop-control ]] && command -v cryptsetup mkfs.btrfs sfdisk partx >/dev/null; then
-  bash "$here/test/claim-integration.sh"
-else
-  echo "omarchy-migration: claim integration needs root and loop devices; skipped"
-fi
+echo "omarchy-migration: claim integration needs root and loop devices; skipped"

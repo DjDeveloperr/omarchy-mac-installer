@@ -37,7 +37,7 @@ From this directory, run `bin/omarchy-migration`. Documents follow the versioned
 
 - `install DESTDIR` stages into an absolute root: the commands in `/usr/bin`, the library and `handoff` in `/usr/lib/omarchy-migration/`, the claim unit and the offer user unit with their vendor `.wants` links, the sudo rule (0440), docs and license. It starts nothing.
 - `PKGBUILD` builds the native pacman package from this folder with `makepkg`. Its only download is `age` 1.3.2 for arm64, pinned by tarball and binary digest and installed as `/usr/lib/omarchy-migration/age` with `age.sha256`.
-- `test/all` runs the package's own tests from a copy of this directory alone, then runs the staged command. As root with loop devices, it also runs `test/claim-integration.sh`, which stages a real bundle on a loop disk, encrypts and grows Root as the native first boot does, and claims and imports it.
+- `test/all` runs the package's own tests from a copy of this directory alone, then runs the staged command. As root, it runs only `test/claim-integration.sh`, when loop devices are available: it stages a real bundle on a sparse 40 GiB loop disk, encrypts and grows Root as the native first boot does, then claims, hands off and imports it, for an encrypted and an unencrypted root.
 - Runtime dependencies: Python 3.11 or newer, `sudo`, and `age` 1.3. Collection, survey and restore use Linux descriptor mount identities.
 
 Tests that need encryption read `OMARCHY_TEST_AGE` and `OMARCHY_TEST_AGE_SHA256` for an independently verified age binary and skip without them; see [docs/PROBE.md](docs/PROBE.md).
