@@ -194,7 +194,7 @@
       "reason": "mac_shared_folder"
     }
   ],
-  "revision": "try-omarchy/4b948a8/1",
+  "revision": "try-omarchy/be96aee/1",
   "rules": [
     {
       "action": "exclude",
@@ -211,7 +211,7 @@
       "action": "transform",
       "evidence": {
         "path": "guest/package/try-omarchy/files/usr/lib/try-omarchy/menu-entries",
-        "sha256": "77ae1b749821387de16cdd74de16cb882ccd575e1d5ccf6b2e26134c4a3a0b1a"
+        "sha256": "1522d8ce6d0bcf42c5befef5d4b502cdf778c2c07925c9636c4d4346c90d0cd3"
       },
       "id": "try-menu-entries",
       "match": "exact",
@@ -507,7 +507,7 @@
     }
   ],
   "source": {
-    "commit": "4b948a8a44f5289863dd7a258378cef0ad46028f",
+    "commit": "be96aee187f6ec87c28f62c32e7e2b081b53ac33",
     "provider": "try-omarchy",
     "repository": "https://github.com/omacom/try-omarchy"
   }

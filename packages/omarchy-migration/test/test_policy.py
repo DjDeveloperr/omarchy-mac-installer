@@ -137,7 +137,7 @@ class MatchTests(unittest.TestCase):
         self.assertEqual(json.loads(self.policy.transform(rule("try-menu-entries"), current).data), {})
 
     def test_every_menu_row_the_shell_build_writes_is_removed(self):
-        # Try's menu-entries ROWS at 4b948a8, the native-install-export row, and the battery row
+        # Try's menu-entries ROWS, with the Move to Native Install row, and the battery row
         # v1.0.0 to v1.1.0 wrote, which later packages leave behind.
         try_keys = ["setup.try-omarchy", "setup.security.touch-id", "setup.security.onepassword-touch-id",
                     "setup.import-previous-vm", "setup.move-to-native-install", "update.timezone",
