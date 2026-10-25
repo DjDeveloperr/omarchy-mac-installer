@@ -101,6 +101,13 @@ An image that claims exports declares it in its `installer_data.json`: the Omarc
 
 The installer's image builder builds `omarchy-migration` from `packages/omarchy-migration` and installs it into the native image, with the pinned `age` it needs, so the claim and the import work offline. `packages/omarchy-migration/PKGBUILD` builds that pacman package from the local tree and pins `age` 1.3.2 for arm64 by the tarball's and the binary's digests; the package records the binary's digest in `age.sha256`, and `plan` and `apply` check it before use. The package enables the claim unit and the user unit with vendor `.wants` links, and ships the sudo rule in `/etc/sudoers.d/omarchy-migration`. Try Omarchy vendors the same package as its exporter. There the claim unit needs a marker and the offer needs a claimed export, so neither does anything.
 
+## Testing
+
+- `packages/omarchy-migration/test/all` tests the claim, the handoff, the offer and `--defaults` on Linux, and CI runs `test/claim-integration.sh` as root: a staged export on a loop disk, through the first boot's LUKS2 conversion and Btrfs growth, claimed and imported.
+- The Swift tests cover the region, the Root locator, the marker and the writer against fakes. `TryExportStagingDiskImageTests` stages through diskutil and the raw device on an attached disk image (`Development/try-export-staging-disk.sh`).
+- `Development/try-export-staging-chain.sh AGE` runs the whole path on one disk image: diskutil's layout, a Btrfs root and a real export from Linux, the helper's staging on macOS, then the first boot's encryption, the claim and the import in Linux.
+- A real install on a Mac is not automated.
+
 ## Not covered
 
 - An install that fails after staging leaves ciphertext in the free space of a partition the next install replaces.
