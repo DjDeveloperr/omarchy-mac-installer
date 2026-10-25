@@ -7,7 +7,7 @@ Status: the contract for bringing a Try Omarchy export onto a native install. Th
 1. In the installer, **Migrate to Native** chooses an export, and the plan review names it. The install needs room for the export twice, once staged and once claimed, and for its files twice: once imported, and once decrypted while the import runs. A release whose image can't claim an export says so in the plan review, and installs without it.
 2. When the install finishes in macOS, the installer stages the export onto the new Root partition. The result screen says whether it did. A failure never stops the install: the export stays in Exports.
 3. The first boot of the native system claims the staged export, before owner setup.
-4. At the owner's first login, a notification offers **Bring your files from Try Omarchy**. It opens a terminal that asks for the transfer passphrase, shows what the import brings and what it leaves, and imports after a confirmation. **Not now** leaves the offer for the next login. **Don't offer again** ends it.
+4. At the owner's first login, a notification offers **Bring your files from Try Omarchy**. It opens a terminal that asks for the transfer passphrase, shows what the import brings and what it leaves, and imports after a confirmation. **Not now** leaves the offer for the next login. **Don't offer again** ends it, and deletes the copy on the native disk. The export stays in Exports on the Mac.
 5. Settings that Omarchy shipped and the owner never changed are replaced by the Try home's versions, with a backup. A file the owner changed on the native system stays, and the summary lists it.
 
 ## Staging

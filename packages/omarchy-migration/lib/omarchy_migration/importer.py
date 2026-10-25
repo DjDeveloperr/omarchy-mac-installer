@@ -208,6 +208,8 @@ def import_export(ui, home, work, export_id, *, migration, defaults=SKEL):
     choice = ui.choose("Import these files now?", ["Import", "Not now", "Don't offer again"])
     if choice == "Don't offer again":
         _record(user_state(home) / "dismissed" / export_id, {"export_id": export_id})
+        _remove_tree(folder)
+        _remove_tree(scratch)
         return "dismissed"
     if choice != "Import":
         return "later"
@@ -268,6 +270,8 @@ def run(ui, home, *, handoff=HANDOFF, migration=None, defaults=SKEL):
         ui.say("Log out and back in so every app picks up your settings.")
     elif "later" in outcomes:
         ui.say("Nothing was imported. The offer comes back at your next login.")
+    elif "dismissed" in outcomes:
+        ui.say("Nothing was imported. The export is still in Try Omarchy's Exports on the Mac.")
     return 0
 
 

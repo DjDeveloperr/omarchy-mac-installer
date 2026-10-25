@@ -161,6 +161,9 @@ class ImportTests(unittest.TestCase):
         self.assertEqual(self.run_import(terminal), 0)
         self.assertTrue((self.home / ".local/state/omarchy-migration/dismissed" / self.export_id).exists())
         self.assertFalse((self.home / "Projects").exists())
+        self.assertFalse(self.folder.exists())
+        self.assertFalse((self.work / "scratch").exists())
+        self.assertIn("The export is still in Try Omarchy's Exports on the Mac.", terminal.text())
         self.assertEqual(importer.waiting_exports(self.home), [])
 
     def test_a_failed_handoff_is_explained(self):
