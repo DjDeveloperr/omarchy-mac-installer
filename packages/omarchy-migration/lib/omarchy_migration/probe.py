@@ -364,8 +364,14 @@ def validate_manifest(manifest):
         _provenance_matches_entries(manifest["provenance"], entries)
 
 
+PROMPT_SECONDS = 60
+
+
 class AgeProcess:
-    """Keep payload pipes separate from a bounded, non-echoing prompt channel."""
+    """Keep payload pipes separate from a bounded, non-echoing prompt channel.
+
+    The deadline bounds only the prompts: once the last one is answered, age
+    runs as long as the transfer takes."""
 
     def __init__(self, age, arguments, secret, stdin, stdout):
         if not secret or any(char in secret for char in (b"\n", b"\r", b"\0")):
@@ -390,14 +396,15 @@ class AgeProcess:
         def respond():
             pending = b""
             responses = 0
-            deadline = time.monotonic() + 60
+            deadline = time.monotonic() + PROMPT_SECONDS
             prompts = (
                 b"Enter passphrase (leave empty to autogenerate a secure one):",
                 b"Confirm passphrase:", b"Enter passphrase:",
             )
+            last_prompts = prompts[1:]
             try:
                 while self.process.poll() is None:
-                    if time.monotonic() > deadline:
+                    if deadline is not None and time.monotonic() > deadline:
                         raise Rejected("prompt deadline")
                     if not select.select([self.master], [], [], 0.05)[0]:
                         continue
@@ -418,6 +425,7 @@ class AgeProcess:
                             # ECHO is disabled before starting the process as well.
                             os.write(self.master, secret + b"\n")
                             pending = pending.split(prompt, 1)[1]
+                            deadline = None if prompt in last_prompts else time.monotonic() + PROMPT_SECONDS
                             break
             except Exception as error:
                 self.prompt_error = error

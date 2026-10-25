@@ -191,6 +191,11 @@ def prepare_work(home, uid, gid, *, trusted=0):
         os.close(shared)
     try:
         metadata = os.fstat(work)
+        # Only root creates entries here: a root-owned empty folder is this
+        # handoff's own mkdir, interrupted before its chown.
+        if metadata.st_uid == trusted and stat.S_ISDIR(metadata.st_mode) and not os.listdir(work):
+            os.fchown(work, uid, gid)
+            metadata = os.fstat(work)
         home_metadata = os.stat(home, follow_symlinks=False)
         if metadata.st_uid != uid or metadata.st_dev != home_metadata.st_dev or not stat.S_ISDIR(home_metadata.st_mode):
             raise HandoffError("work_unavailable")

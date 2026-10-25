@@ -373,6 +373,60 @@ with restore.verified_bundle(sys.argv[1], b'synthetic-only-otter-maple-window-co
         self.assertEqual(self.saved()["state"], "applied")
         self.assertEqual(self.file.read_bytes(), NEW)
 
+    def test_real_sigkill_after_a_swap_over_an_edit_puts_the_edit_back(self):
+        script = """
+import os, signal, sys
+from unittest.mock import patch
+from omarchy_migration import restore
+exchange = restore._exchange
+def edit_then_kill(*arguments):
+    with open(sys.argv[5], 'wb') as destination:
+        destination.write(b'autosave just before the swap')
+    if not exchange(*arguments):
+        sys.exit(3)
+    os.kill(os.getpid(), signal.SIGKILL)
+with restore.verified_bundle(sys.argv[1], b'synthetic-only-otter-maple-window-cobalt', sys.argv[2]) as bundle:
+    with restore.Restorer(bundle, sys.argv[3], sys.argv[4], replace=('.config/demo/settings',)) as importer:
+        with patch.object(restore, '_exchange', side_effect=edit_then_kill):
+            importer.apply(importer.plan())
+"""
+        scratch = self.root / "child-scratch"
+        scratch.mkdir(mode=0o700)
+        result = subprocess.run([sys.executable, "-c", script, str(self.age), str(self.ciphertext),
+                                 str(self.target), str(self.job), str(self.file)], capture_output=True,
+                                timeout=20, env={**os.environ, "TMPDIR": str(scratch)})
+        if result.returncode == 3:
+            self.skipTest("this filesystem cannot swap names atomically")
+        self.assertEqual(result.returncode, -signal.SIGKILL, result.stderr.decode())
+        self.assertEqual(self.file.read_bytes(), NEW)
+        with self.verified() as bundle:
+            retry = self.run_restore(bundle)[FILE]
+        self.assertEqual(retry.status, "conflict")
+        self.assertEqual(retry.reason, "destination changed during publication")
+        self.assertEqual(self.file.read_bytes(), b"autosave just before the swap")
+        self.assert_backup(self.saved())
+        with self.verified() as bundle:
+            self.assertEqual(self.run_restore(bundle)[FILE].status, "conflict")
+        self.assertEqual(self.file.read_bytes(), b"autosave just before the swap")
+
+    def test_a_link_swapped_out_is_put_back(self):
+        exchange = restore._exchange
+        calls = []
+
+        def link_first(*arguments):
+            if not calls:
+                self.file.unlink()
+                self.file.symlink_to(self.root / "elsewhere")
+            calls.append(arguments)
+            return exchange(*arguments)
+
+        with self.verified() as bundle, patch.object(restore, "_exchange", link_first):
+            report = self.run_restore(bundle)
+        if len(calls) < 2:
+            self.skipTest("this filesystem cannot swap names atomically")
+        self.assertEqual(report[FILE].status, "conflict")
+        self.assertTrue(self.file.is_symlink())
+
     def test_completion_journal_failure_recovers_new_inode_and_original_backup(self):
         save = restore.Restorer._save
 

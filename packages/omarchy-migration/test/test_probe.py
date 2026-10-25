@@ -1,5 +1,6 @@
 """Behavioral experiments using fake data and the verified real age executable."""
 
+import contextlib
 import copy
 import hashlib
 import io
@@ -7,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import tarfile
 import tempfile
 import tracemalloc
@@ -54,6 +56,27 @@ class BundleProbe(unittest.TestCase):
             AGE, SECRET, cls.bundle,
             lambda stream: probe.write_archive(stream, cls.manifest, cls.files),
         )
+
+    def test_the_deadline_bounds_only_the_prompts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fake = Path(directory) / "age"
+            fake.write_text("#!/bin/sh\nprintf 'Enter passphrase: ' >/dev/tty\nread -r secret </dev/tty\n"
+                            "sleep 1.5\nprintf ok\n")
+            fake.chmod(0o700)
+            silent = Path(directory) / "silent"
+            silent.write_text("#!/bin/sh\nsleep 3\n")
+            silent.chmod(0o700)
+            with patch.object(probe, "PROMPT_SECONDS", 0.5):
+                with contextlib.closing(probe.AgeProcess(fake, ["--decrypt"], b"secret", subprocess.DEVNULL,
+                                                         subprocess.PIPE)) as child:
+                    output = child.process.stdout.read()
+                    child.finish()
+                self.assertEqual(output, b"ok")
+                with contextlib.closing(probe.AgeProcess(silent, ["--decrypt"], b"secret", subprocess.DEVNULL,
+                                                         subprocess.PIPE)) as child:
+                    child.process.stdout.read()
+                    with self.assertRaises(probe.Rejected):
+                        child.finish()
 
     def test_roundtrip_validates_all_bytes_and_metadata(self):
         decoded = probe.decode(AGE, SECRET, self.bundle)

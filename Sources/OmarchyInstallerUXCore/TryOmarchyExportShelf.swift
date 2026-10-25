@@ -33,7 +33,9 @@
       case .success(let found):
         lock.withLock {
           exports = Dictionary(
-            uniqueKeysWithValues: found.exports.map { ($0.receipt.exportID, $0) }
+            uniqueKeysWithValues: found.exports.map {
+              ($0.receipt.exportID, $0.keepingVerification(of: exports[$0.receipt.exportID]))
+            }
           )
         }
         return .found(

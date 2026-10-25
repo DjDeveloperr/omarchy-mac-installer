@@ -165,9 +165,17 @@ def _exchange(old_dir, old_name, new_dir, new_name):
 
 
 def _fingerprint_at(directory, name):
-    fd = os.open(name, FILE_FLAGS, dir_fd=directory)
+    """The regular file at NAME; None when it is gone, "unknown" for anything else."""
+    try:
+        fd = os.open(name, FILE_FLAGS, dir_fd=directory)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return "unknown"
     try:
         return _fingerprint(fd)
+    except (OSError, probe.Rejected):
+        return "unknown"
     finally:
         os.close(fd)
 
@@ -396,6 +404,10 @@ class Restorer:
                 if (kind != "file" or allowed[identity]["path"] not in self._replace
                         or entry.get("state") == "retained"):
                     raise probe.Rejected("unapproved replacement journal entry")
+                if "exchanging" in entry:
+                    keys.add("exchanging")
+                    if not isinstance(entry["exchanging"], bool):
+                        raise probe.Rejected("restore journal entry")
             if (not isinstance(entry, dict) or set(entry) != keys
                     or entry["state"] not in states):
                 raise probe.Rejected("restore journal entry")
@@ -718,6 +730,40 @@ class Restorer:
             os.unlink(temporary, dir_fd=self._job_fd)
             raise
 
+    def _swap(self, entry, saved, parent, name):
+        """Exchange the replacement into place, journaled first, so a retry
+        settles a swap whose check never ran."""
+        saved["exchanging"] = True
+        self._save(entry["object"])
+        if _exchange(self._job_fd, saved["temporary"], parent, name):
+            return True
+        saved["exchanging"] = False
+        self._save(entry["object"])
+        return False
+
+    def _settle_exchange(self, entry, saved, parent=None):
+        """The swap is atomic, so the file it moved out under the temporary
+        name is the one the destination held. Unless it is still the planned
+        original, an application wrote it since: it goes back, and the
+        replacement leaves. True when the replacement stays."""
+        displaced = _fingerprint_at(self._job_fd, saved["temporary"])
+        if displaced is not None and displaced != saved["backup"]["original"]:
+            with contextlib.ExitStack() as stack:
+                if parent is None:
+                    parent = stack.enter_context(self._parent(entry["path"]))
+                    if parent is None:
+                        raise probe.Rejected("destination parent disappeared")
+                _exchange(self._job_fd, saved["temporary"], parent, entry["path"].split("/")[-1])
+                os.fsync(parent)
+            saved["exchanging"] = False
+            self._save(entry["object"])
+            return False
+        if displaced is not None:
+            os.unlink(saved["temporary"], dir_fd=self._job_fd)
+            os.fsync(self._job_fd)
+        saved["exchanging"] = False
+        return True
+
     def _cleanup(self, saved):
         # A pending object may be hardlinked to a now user-edited destination.
         # Never mutate its bytes or permissions, and only unlink our own inode.
@@ -914,6 +960,9 @@ class Restorer:
                 if not self._backup_valid(previous):
                     report[index] = self._action(entry, "conflict", "original backup changed or disappeared")
                     continue
+                if previous.get("exchanging") and not self._settle_exchange(entry, previous):
+                    report[index] = self._action(entry, "conflict", "destination changed during publication")
+                    continue
                 # Re-establish directory durability if the earlier process
                 # stopped between link publication and its directory fsync.
                 with self._parent(entry["path"]) as parent:
@@ -953,18 +1002,10 @@ class Restorer:
                     raise probe.Rejected("destination parent disappeared")
                 try:
                     name = entry["path"].split("/")[-1]
-                    if backup is not None and _exchange(self._job_fd, saved["temporary"], parent, name):
-                        # The swap is atomic, so the file it moved out is the
-                        # one the destination held: unless it is still the
-                        # planned one, an application wrote it since, and it
-                        # goes back.
-                        if _fingerprint_at(self._job_fd, saved["temporary"]) != observed:
-                            _exchange(self._job_fd, saved["temporary"], parent, name)
-                            os.fsync(parent)
+                    if backup is not None and self._swap(entry, saved, parent, name):
+                        if not self._settle_exchange(entry, saved, parent):
                             report[index] = self._action(entry, "conflict", "destination changed during publication")
                             continue
-                        os.unlink(saved["temporary"], dir_fd=self._job_fd)
-                        os.fsync(self._job_fd)
                     elif backup is not None:
                         # Without an atomic swap the caller keeps leaves as
                         # well as directories quiescent: replace() is not an

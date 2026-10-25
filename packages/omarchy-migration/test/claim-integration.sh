@@ -213,6 +213,9 @@ check_import() {
   chown -R "$USER_NAME" "$home"
   chmod -R go-w "$home"
 
+  # An earlier handoff stopped between its mkdir and its chown.
+  install -d -m 0711 "$mnt/home/.omarchy-migration"
+  install -d -m 0700 "$mnt/home/.omarchy-migration/$USER_ID"
   result=$(env -i PATH=/usr/bin:/bin SUDO_UID="$USER_ID" SUDO_USER="$USER_NAME" \
     "$work/root/usr/lib/omarchy-migration/handoff" --state "$mnt/var/lib/omarchy-migration")
   [[ $(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["exports"])' "$result") == "['$export_id']" ]] ||

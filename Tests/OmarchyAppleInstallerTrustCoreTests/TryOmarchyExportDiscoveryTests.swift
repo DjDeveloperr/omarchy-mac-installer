@@ -245,6 +245,24 @@ struct TryOmarchyExportDiscoveryTests {
     }
   }
 
+  @Test func anotherLookKeepsTheCheckOnlyForUnchangedFiles() throws {
+    let folder = try Folder()
+    let directory = try folder.publish()
+    let verified = try folder.discovery.verify(try #require(try folder.found().exports.first))
+    let again = try #require(try folder.found().exports.first)
+    #expect(!again.verified)
+    #expect(again.keepingVerification(of: verified).verified)
+    #expect(!again.keepingVerification(of: nil).verified)
+
+    let bundle = directory.appendingPathComponent("bundle.age")
+    var bytes = try Data(contentsOf: bundle)
+    bytes[bytes.count - 1] ^= 0xFF
+    try bytes.write(to: bundle)
+    chmod(bundle.path, 0o600)
+    let changed = try #require(try folder.found().exports.first)
+    #expect(!changed.keepingVerification(of: verified).verified)
+  }
+
   @Test func stagingOpensOnlyTheExportThatWasChecked() throws {
     let folder = try Folder()
     let directory = try folder.publish()

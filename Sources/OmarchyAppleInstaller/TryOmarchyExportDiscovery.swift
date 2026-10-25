@@ -19,6 +19,16 @@ public struct TryOmarchyExport: Equatable, Sendable {
   public var receiptURL: URL {
     directory.appendingPathComponent(TryOmarchyExportDiscovery.receiptName)
   }
+
+  /// This export, still verified when an earlier check passed on the same
+  /// files: a look found them unchanged since.
+  public func keepingVerification(of earlier: TryOmarchyExport?) -> TryOmarchyExport {
+    guard let earlier, earlier.verified, !verified, earlier.directory == directory,
+      earlier.receipt == receipt, earlier.publishedAt == publishedAt,
+      earlier.bundleIdentity == bundleIdentity
+    else { return self }
+    return earlier
+  }
 }
 
 struct TryOmarchyExportFileIdentity: Equatable, Sendable {
@@ -293,7 +303,9 @@ public struct TryOmarchyExportDiscovery: Sendable {
       return .failure(.receipt(.oversizedDocument))
     }
     let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
-    guard let data = try? handle.readToEnd() ?? Data(),
+    guard
+      let data = try? handle.read(upToCount: TryOmarchyExportReceipt.maximumDocumentBytes + 1)
+        ?? Data(),
       data.count <= TryOmarchyExportReceipt.maximumDocumentBytes
     else {
       return .failure(.unreadable)
