@@ -17,6 +17,9 @@ Every document is a UTF-8 JSON object whose `schema` names exactly one document 
 | `omarchy-migration/report/1` | public | native module → app | Per-category outcome with reason codes |
 | `omarchy-migration/policy/2` | trusted input | shipped with the module | Credential stores, mounts and provider rules for one source build |
 | `omarchy-migration/bundle/2` | private | inside the ciphertext | Manifest with authenticated provenance, and TAR objects |
+| `omarchy-migration/staging/1` | public | installer → native first boot | The ESP marker for a staged export, with its receipt ([native import](../../../docs/native-import.md#the-marker)) |
+| `omarchy-migration/claim-failed/1` | public | native claim → offer | Why the first boot couldn't claim a staged export |
+| `omarchy-migration/import-summary/1` | private | `plan --summary` → the owner's terminal | Per-path review of a plan ([REVIEW](REVIEW.md#run)) |
 
 Private documents never cross an app boundary in plaintext: the bundle manifest, restore journal, collection report and per-file results stay inside the ciphertext or the owner's 0700 job directory.
 

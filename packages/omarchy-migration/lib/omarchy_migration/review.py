@@ -1,8 +1,9 @@
 """Reviewable import plans and reports in the omarchy-migration contract.
 
 `plan` summarizes what a restore job would do as a plan/1 document; `apply`
-runs that exact plan and returns a report/1 document. The command restores
-only into a caller-owned disposable target, like the restorer it wraps.
+runs that exact plan and returns a report/1 document. With `--defaults`, a
+destination file that still holds the shipped default is replaced, with a
+private backup.
 """
 
 import argparse
@@ -11,18 +12,22 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 import sys
 import uuid
 
 from . import contract
 from . import probe, restore
 from .categories import category
-from .dependency import configured_age
+from .dependency import admit_age, configured_age, packaged_age
 
 PLAN_NAMESPACE = uuid.UUID("b6a0f7d2-31c4-4e65-8f0e-6d9a2c41e8b3")
 MAX_PASSPHRASE = 1024
 # Headroom for the journal, job copies and filesystem overhead.
 SPACE_MARGIN = 64 * 1024 * 1024
+SUMMARY_SCHEMA = "omarchy-migration/import-summary/1"
+MAX_DEFAULT = 64 * 1024 * 1024
+LEFT_OUT = ("held-out", "excluded", "unsupported")
 
 # Stable codes for the restorer's reasons. The test suite fails if the
 # restorer gains a reason without a code here.
@@ -37,6 +42,7 @@ REASONS = {
     "unreadable source mode is unsupported by this probe": "unreadable_source_mode",
     "destination changed or publication outcome is uncertain": "destination_changed",
     "existing file or unsafe path preserved": "destination_exists",
+    "existing file differs from its default": "native_file_changed",
     "directory or link dependency is unavailable": "dependency_unavailable",
     "directory dependency is unavailable": "dependency_unavailable",
     "link target or traversal directory is unavailable": "dependency_unavailable",
@@ -168,6 +174,79 @@ def report_document(plan, results, job_id, bundle):
     return document
 
 
+def _default_digest(root, path):
+    """The digest of DIR/path when it is a regular file reached without following links."""
+    fd = os.dup(root)
+    try:
+        for part in path.split("/")[:-1]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        leaf = os.open(path.split("/")[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    with os.fdopen(leaf, "rb") as source:
+        metadata = os.fstat(leaf)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_DEFAULT:
+            return None
+        checksum = hashlib.sha256()
+        while piece := source.read(probe.CHUNK):
+            checksum.update(piece)
+        return checksum.hexdigest()
+
+
+def default_digests(bundle, directory):
+    """Each bundle file that has a shipped default under `directory`, with that default's digest."""
+    root = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        digests = {}
+        for entry in bundle._manifest["entries"]:
+            if probe.entry_kind(entry) == "file":
+                digest = _default_digest(root, entry["path"])
+                if digest is not None:
+                    digests[entry["path"]] = digest
+        return digests
+    finally:
+        os.close(root)
+
+
+def summary_document(bundle, actions, plan):
+    """A private, per-path summary for the owner's own review of a plan."""
+    entries = _entries(bundle)
+    groups = {}
+    replaced, kept = [], []
+    for action in actions:
+        if action.status == "conflict":
+            kept.append({"path": action.path, "reason": reason_code(action)})
+        if probe.entry_kind(entries[action.path]) == "directory":
+            continue
+        if action.status == "replace":
+            replaced.append(action.path)
+        group = groups.setdefault(category(action.path), dict.fromkeys(("create", "replace", "present", "conflict", "inert"), 0))
+        group[PLAN_COUNTS[action.status]] += 1
+    counts = (bundle._manifest.get("provenance") or {}).get("collection", {}).get("counts", {})
+    return {
+        "schema": SUMMARY_SCHEMA, "plan_id": plan["plan_id"], "export_id": plan["export_id"],
+        "categories": [{"id": name, **groups[name]} for name in sorted(groups)],
+        "replaces_default": sorted(replaced), "kept": sorted(kept, key=lambda item: item["path"]),
+        "left_out": {outcome: counts.get(outcome, 0) for outcome in LEFT_OUT},
+    }
+
+
+def write_private(path, value):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w") as output:
+        output.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
+
+
+def select_age(path, sha256):
+    if path is not None:
+        return admit_age(path, sha256)
+    return configured_age() or packaged_age()
+
+
 def available_bytes(target):
     status = os.statvfs(target)
     return status.f_bavail * status.f_frsize
@@ -214,21 +293,34 @@ def main(argv=None):
     parser.add_argument("--passphrase-fd", type=int, required=True,
                         help="read the transfer passphrase from this file descriptor")
     parser.add_argument("--plan-id", help="apply only if the current plan has this id")
+    parser.add_argument("--defaults", type=Path, default=None,
+                        help="replace a destination file that is byte-identical to the file at its path here")
+    parser.add_argument("--summary", type=Path, default=None, help="also write a private per-path summary here (new file)")
+    parser.add_argument("--scratch", type=Path, default=None, help="private parent for decrypted scratch (default: system temp)")
+    parser.add_argument("--age", default=None, help="age executable (default: the packaged age)")
+    parser.add_argument("--age-sha256", default=None, help="require this digest of the age executable")
     arguments = parser.parse_args(argv)
     if (arguments.operation == "apply") != bool(arguments.plan_id):
         parser.error("--plan-id is required for apply and not accepted for plan")
     try:
-        age = configured_age()
+        try:
+            age = select_age(arguments.age, arguments.age_sha256)
+        except (RuntimeError, OSError, ValueError) as error:
+            print(f"omarchy-migration: {error}", file=sys.stderr)
+            raise ReviewError("age_dependency_unavailable") from None
         if age is None:
             raise ReviewError("age_dependency_unconfigured")
         secret = read_passphrase(arguments.passphrase_fd)
         receipt = contract.parse(arguments.receipt.read_bytes())
         account_uid = os.getuid()
-        with restore.verified_bundle(age, secret, arguments.bundle) as bundle:
-            with restore.Restorer(bundle, arguments.target, arguments.job) as importer:
+        with restore.verified_bundle(age, secret, arguments.bundle, arguments.scratch) as bundle:
+            defaults = default_digests(bundle, arguments.defaults) if arguments.defaults else None
+            with restore.Restorer(bundle, arguments.target, arguments.job, replace_matching=defaults) as importer:
                 actions = importer.plan()
                 plan = plan_document(bundle, actions, receipt, account_uid, importer._binding)
                 shortfall = space_shortfall(plan, arguments.target)
+                if arguments.summary:
+                    write_private(arguments.summary, summary_document(bundle, actions, plan))
                 if arguments.operation == "plan":
                     print(json.dumps(plan, indent=2, sort_keys=True))
                     if shortfall:

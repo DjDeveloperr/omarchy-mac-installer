@@ -1,6 +1,6 @@
 # Approved regular-file replacement experiment
 
-This extends [authenticated restoration](RESTORE.md) with explicitly approved replacement of regular files in a caller-owned disposable destination. It remains a synthetic library experiment, with no home-directory CLI or product approval UI. The default importer still preserves differing destination files as conflicts.
+This extends [authenticated restoration](RESTORE.md) with explicitly approved replacement of regular files in a caller-owned destination. The only approval the commands give is `--defaults`, which replaces files that still hold their shipped default (below). Without it, the importer preserves differing destination files as conflicts.
 
 ## Approval and interface
 
@@ -17,6 +17,12 @@ with verified_bundle(age, synthetic_secret, ciphertext) as bundle:
 Planning changes no destination files. An approved differing file becomes `replace` only if it is an owned, readable regular file with safe parents and no earlier journal entry. A matching existing file is retained, and an absent entry is created normally. Approval never permits overwriting a later edit or recreating a later deletion from a previous attempt. Unsafe leaves or parents remain conflicts.
 
 The caller reviews the plan and keeps destination directories and file contents quiescent throughout application. `os.replace` does not provide an inode compare-and-swap: another writer in the final check/rename interval can be overwritten. This experiment is unprivileged and does not claim protection against hostile or concurrent same-user writers. Production integration must coordinate application/session preparation before using replacement.
+
+## Replacing untouched defaults
+
+`Restorer(..., replace_matching={path: sha256})` approves each named regular file only while its destination's bytes have that digest. `omarchy-migration plan --defaults DIR` builds the mapping from the files under `DIR` (for the native import, `/etc/skel`), reached without following links. A destination that matches plans as `replace`. A destination that differs plans as a conflict, "existing file differs from its default", with the code `native_file_changed`, and stays as it is. An absent or matching destination behaves as in any job.
+
+The mapping is part of the job binding (`replacement_originals`) beside the approved paths, so the plan and its `plan_id` change with any default, and a retry must bring the same defaults. A replacement that already completed is reconciled from the journal, like any other, so a retry works after the destination stops matching its default.
 
 ## Backup and publication
 

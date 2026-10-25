@@ -49,3 +49,16 @@ def admit_age(path=None, sha256=None):
     if not version.startswith("1.3."):
         raise RuntimeError(f"age 1.3 is required, found {version or 'an unknown version'}")
     return age
+
+
+PACKAGED_AGE = Path(__file__).resolve().parent.parent / "age"
+
+
+def packaged_age(path=PACKAGED_AGE):
+    """The age the native package ships beside its library, checked against its recorded digest."""
+    if not path.exists():
+        return None
+    digest = path.with_name(path.name + ".sha256").read_text().split()
+    if not digest or len(digest[0]) != 64 or any(char not in "0123456789abcdef" for char in digest[0]):
+        raise RuntimeError("the packaged age has no valid recorded digest")
+    return admit_age(str(path), digest[0])

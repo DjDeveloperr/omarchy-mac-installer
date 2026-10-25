@@ -38,11 +38,13 @@
       return start
     }
 
-    /// What a native install needs beyond Omarchy's own size to stage,
-    /// claim and import an export.
+    /// What a native install needs beyond Omarchy's own size, whose Root
+    /// holds a 32 GiB image: the export staged and claimed, and its files
+    /// imported and decrypted while the import runs.
     public static func additionalInstallBytes(bundleBytes: UInt64, expandedBytes: UInt64) -> UInt64
     {
-      2 * writtenBytes(bundleBytes) + expandedBytes + copyMargin + tail
+      (floor - 32 * gibibyte) + copyMargin + tail + 2 * writtenBytes(bundleBytes) + 2
+        * expandedBytes
     }
 
     private static func alignedDown(_ value: UInt64) -> UInt64 {
