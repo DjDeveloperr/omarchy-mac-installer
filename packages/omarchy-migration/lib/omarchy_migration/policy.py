@@ -13,7 +13,7 @@ import re
 from . import contract
 
 # The one provider policy this package ships: Try Omarchy's shell build.
-SHIPPED = Path(__file__).resolve().parent / "policies/try-omarchy-be96aee.json"
+SHIPPED = Path(__file__).resolve().parent / "policies/try-omarchy-90c8210.json"
 
 # Transforms read whole files; policy targets are small configuration files.
 MAX_TRANSFORM_INPUT = 1024 * 1024

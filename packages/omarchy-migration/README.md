@@ -26,7 +26,7 @@ omarchy-migration evidence P C  # check a policy's evidence against a provider c
 omarchy-migration fixture ... # synthetic exporter: capabilities, inventory, export
 ```
 
-From this directory, run `bin/omarchy-migration`. Documents follow the versioned [migration contract](docs/CONTRACT.md); the [survey](docs/SURVEY.md), [collection](docs/COLLECTION.md), [restore](docs/RESTORE.md) and [review](docs/REVIEW.md) documents describe each part. Policies ship in `lib/omarchy_migration/policies/`, one per provider build, for example `try-omarchy-be96aee.json`.
+From this directory, run `bin/omarchy-migration`. Documents follow the versioned [migration contract](docs/CONTRACT.md); the [survey](docs/SURVEY.md), [collection](docs/COLLECTION.md), [restore](docs/RESTORE.md) and [review](docs/REVIEW.md) documents describe each part. Policies ship in `lib/omarchy_migration/policies/`, one per provider build, for example `try-omarchy-90c8210.json`.
 
 ## When it is installed and run
 
