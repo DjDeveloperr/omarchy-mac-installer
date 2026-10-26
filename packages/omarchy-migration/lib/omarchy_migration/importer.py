@@ -19,7 +19,7 @@ from . import contract
 from .display import shown
 from .categories import CATEGORIES
 from .handoff import INCOMING
-from .offer import user_state
+from .offer import FALLBACK_PATH, user_state
 
 LIB = Path(__file__).resolve().parent.parent
 BOOT = "import sys; sys.path.insert(0, sys.argv.pop(1)); from omarchy_migration.__main__ import main; sys.exit(main())"
@@ -79,9 +79,51 @@ class Terminal:
             return None
         return options[int(answer) - 1] if answer.isdigit() and 1 <= int(answer) <= len(options) else None
 
+    def confirm(self, prompt):
+        """Yes unless the person says no or closes the prompt; Enter means yes."""
+        if self.gum:
+            return subprocess.run([self.gum, "confirm", "--affirmative", "Yes", "--negative", "No", prompt],
+                                  check=False).returncode == 0
+        try:
+            answer = input(f"{prompt} [Y/n] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return False
+        return answer in ("", "y", "yes")
+
     def pause(self):
         with contextlib.suppress(EOFError, KeyboardInterrupt):
             input("Press Enter to close.")
+
+
+def omarchy_command(name):
+    """An Omarchy command on this session's PATH, or where Omarchy installs them."""
+    search = [*os.environ.get("PATH", "").split(os.pathsep)]
+    if os.environ.get("OMARCHY_PATH"):
+        search.append(os.path.join(os.environ["OMARCHY_PATH"], "bin"))
+    search.extend(FALLBACK_PATH)
+    return shutil.which(name, path=os.pathsep.join(search))
+
+
+def current_theme(home):
+    with contextlib.suppress(OSError, UnicodeDecodeError):
+        return Path(home, ".local/state/omarchy/current/theme.name").read_text().strip()
+    return None
+
+
+def apply_omarchy(ui, home, choices):
+    """Applies the Try home's theme and background with Omarchy's own commands."""
+    theme, background = choices.get("theme"), choices.get("background")
+    if theme and theme != current_theme(home):
+        command = omarchy_command("omarchy-theme-set")
+        if command and subprocess.run([command, theme], stdout=subprocess.DEVNULL, check=False).returncode == 0:
+            ui.say(f"Theme: {theme}.")
+        else:
+            ui.say(f"The theme {theme} couldn't be applied. Choose it from the Omarchy menu.")
+    if background:
+        path = Path(home, background)
+        command = omarchy_command("omarchy-theme-bg-set")
+        if command and path.is_file():
+            subprocess.run([command, str(path)], stdout=subprocess.DEVNULL, check=False)
 
 
 def _private(path):
@@ -204,6 +246,9 @@ def import_export(ui, home, work, export_id, *, migration, defaults=SKEL):
     ui.heading("What the import does")
     for line in summary_lines(summary):
         ui.say(line)
+    theme = (summary.get("omarchy") or {}).get("theme")
+    if theme and theme != current_theme(home):
+        ui.say(f"Theme: {theme}, applied after the import")
     ui.say()
     choice = ui.choose("Import these files now?", ["Import", "Not now", "Don't offer again"])
     if choice == "Don't offer again":
@@ -228,6 +273,7 @@ def import_export(ui, home, work, export_id, *, migration, defaults=SKEL):
            + (f" {conflicts} stayed as they were here." if conflicts else ""))
     if summary["replaces_default"]:
         ui.say(f"Backups of the replaced defaults are in {job}.")
+    apply_omarchy(ui, home, summary.get("omarchy") or {})
     return "imported"
 
 
@@ -251,7 +297,13 @@ def _handoff(command):
     return json.loads(result.stdout)
 
 
-def run(ui, home, *, handoff=HANDOFF, migration=None, defaults=SKEL):
+def reboot_system():
+    """Reboots the way Omarchy's menu does, closing apps first; False if it didn't start."""
+    command = omarchy_command("omarchy-system")
+    return subprocess.run([command, "reboot"] if command else ["systemctl", "reboot"], check=False).returncode == 0
+
+
+def run(ui, home, *, handoff=HANDOFF, migration=None, defaults=SKEL, reboot=reboot_system):
     migration = migration or [sys.executable, "-I", "-c", BOOT, str(LIB)]
     ui.heading("Bring your files from Try Omarchy")
     try:
@@ -267,7 +319,13 @@ def run(ui, home, *, handoff=HANDOFF, migration=None, defaults=SKEL):
         ui.say("Your export is still here; the offer comes back at your next login.")
         return 1
     if "imported" in outcomes:
-        ui.say("Log out and back in so every app picks up your settings.")
+        if ui.confirm("Reboot now so every app picks up your settings?"):
+            if reboot():
+                ui.rebooting = True
+                return 0
+            ui.say("The reboot didn't start. Reboot from the Omarchy menu.")
+        else:
+            ui.say("Reboot when you're ready, so every app picks up your settings.")
     elif "later" in outcomes:
         ui.say("Nothing was imported. The offer comes back at your next login.")
     elif "dismissed" in outcomes:
@@ -281,7 +339,8 @@ def main(argv=None):
     arguments = parser.parse_args(argv)
     ui = Terminal(shutil.which("gum"))
     status = run(ui, Path.home(), defaults=arguments.defaults)
-    ui.pause()
+    if not getattr(ui, "rebooting", False):
+        ui.pause()
     return status
 
 

@@ -64,13 +64,19 @@ def examples(policy):
         ".config/omarchy/shell.json": b'{\n  "version": 1,\n  "idle": {\n    "screensaver": 0,\n    "lock": 0\n  }\n}\n',
         ".config/hypr/monitors.lua": b"monitor = Virtual-1, preferred, auto, 2\n",
         ".local/state/omarchy/toggles/hypr/zz-try-omarchy.lua": b'pcall(dofile, "/usr/share/try-omarchy/hyprland.lua")\n',
+        ".local/state/omarchy/current/theme.name": b"solitude\n",
+        ".local/state/omarchy/current/theme/colors.toml": b'accent = "#SYNTHETIC"\n',
+        ".local/state/omarchy/current/theme/backgrounds/1-on-pole.webp": b"SYNTHETIC background",
         ".config/omarchy/extensions/omarchy-menu.jsonc": (
             b'{\n  "setup.try-omarchy": {"label": "Try Omarchy Settings", "action": "omarchy-native-settings"},\n'
             b'  "launch.notes": {"label": "Notes", "action": "obsidian"}\n}\n'),
         ".ssh/id_example": b"FAKE-SSH-SECRET-NOT-A-PRIVATE-KEY\n",
         ".config/BraveSoftware/Brave-Origin/Default/example": b"FAKE-BROWSER-TOKEN\n",
     }
-    links = {"Work": "/mnt/mac"}
+    links = {"Work": "/mnt/mac",
+             # Omarchy links the background by the home's absolute path.
+             ".local/state/omarchy/current/background":
+                 "/home/try/.local/state/omarchy/current/theme/backgrounds/1-on-pole.webp"}
     return files, links
 
 
@@ -108,7 +114,7 @@ def inventory_id(policy, files, links):
 
 
 def roots(files, links, categories):
-    names = {name.split("/")[0] for name in files} | set(links)
+    names = {name.split("/")[0] for name in [*files, *links]}
     return [{"source": name, "archive": name} for name in sorted(names) if category(name) in categories]
 
 

@@ -24,6 +24,8 @@ EXPORTED_FILES = {
     "Projects/demo/changed.txt", "Projects/demo/untracked.txt",
     ".config/example-theme/selected", ".config/unfamiliar-example/settings",
     ".config/omarchy/shell.json", ".config/omarchy/extensions/omarchy-menu.jsonc",
+    ".local/state/omarchy/current/theme.name", ".local/state/omarchy/current/theme/colors.toml",
+    ".local/state/omarchy/current/theme/backgrounds/1-on-pole.webp",
 }
 
 
@@ -73,7 +75,7 @@ class RequestTests(unittest.TestCase):
         available = {adapter["id"] for adapter in capabilities["adapters"] if adapter["available"]}
         self.assertEqual(available, set(fixture.SUPPORTED_ADAPTERS))
         categories = {item["id"]: item for item in inventory["categories"]}
-        self.assertEqual((categories["configuration"]["files"], categories["files-and-projects"]["files"]), (4, 2))
+        self.assertEqual((categories["configuration"]["files"], categories["files-and-projects"]["files"]), (7, 2))
         self.assertEqual((categories["caches"]["files"], categories["caches"]["default_selected"]), (0, False))
         share = inventory["mounts"][0]
         self.assertEqual((share["id"], share["linked"], share["measured"], share["files"]), ("mac-share", True, True, 2))

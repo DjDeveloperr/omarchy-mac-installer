@@ -21,7 +21,7 @@ bin/omarchy-migration apply --plan-id <plan_id from the plan> \
 Options shared by both operations:
 
 - `--defaults DIR` lets the plan replace a regular file whose destination is byte-identical to `DIR/<same relative path>`. Each replacement keeps a private backup in the job ([REPLACEMENT](REPLACEMENT.md#replacing-untouched-defaults)). Any other existing file stays a conflict.
-- `--summary FILE` also writes a private per-path summary (`omarchy-migration/import-summary/1`, a new 0600 file) for the owner's own review: counts per category, the paths that replace a default, the paths that stay with their reason code, and what the export's policy left out. It never leaves the owner's machine.
+- `--summary FILE` also writes a private per-path summary (`omarchy-migration/import-summary/1`, a new 0600 file) for the owner's own review: counts per category, the paths that replace a default, the paths that stay with their reason code, what the export's policy left out, and the Try home's Omarchy theme and background (`omarchy`), which the import applies with Omarchy's commands. Omarchy's current theme state, `.local/state/omarchy/current`, is never written: Omarchy regenerates it, so its entries are omitted as `regenerated_by_omarchy`. It never leaves the owner's machine.
 - `--scratch DIR` puts the decrypted scratch in a private folder under `DIR` instead of the system temp folder, which is often memory-backed.
 - `--age PATH` and `--age-sha256 DIGEST` name the age executable. Without them, the verified test dependency (`OMARCHY_TEST_AGE`, [PROBE](PROBE.md#run-checks)) is used when set, then the packaged `age` beside the library, checked against the digest in `age.sha256`.
 

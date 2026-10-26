@@ -1,6 +1,6 @@
 # Runnable synthetic exporter for integration development
 
-This command supplies the first executable fixture of the migration. It speaks the [migration contract](CONTRACT.md): `capabilities/1`, `inventory/2`, `export-request/2`, `progress/1` and `receipt/1`. It builds a fixed synthetic Try home (projects, settings, Try's own `zz-try-omarchy.lua` toggle, idle settings in `shell.json`, `monitors.lua` and menu file, fake SSH and Brave secrets, and a `Work` link to `/mnt/mac`), collects it through the [Try policy](../lib/omarchy_migration/policies/try-omarchy-90c8210.json) with the [disposable collector](COLLECTION.md), and encrypts a `bundle/2` archive. It has no source-home argument, does not discover a real account, and is not the production migration API.
+This command supplies the first executable fixture of the migration. It speaks the [migration contract](CONTRACT.md): `capabilities/1`, `inventory/2`, `export-request/2`, `progress/1` and `receipt/1`. It builds a fixed synthetic Try home (projects, settings, Try's own `zz-try-omarchy.lua` toggle, idle settings in `shell.json`, `monitors.lua` and menu file, Omarchy's current theme state with its background link, fake SSH and Brave secrets, and a `Work` link to `/mnt/mac`), collects it through the [Try policy](../lib/omarchy_migration/policies/try-omarchy-90c8210.json) with the [disposable collector](COLLECTION.md), and encrypts a `bundle/2` archive. It has no source-home argument, does not discover a real account, and is not the production migration API.
 
 ## Run
 

@@ -13,7 +13,7 @@ import unittest
 from unittest.mock import patch
 import uuid
 
-from omarchy_migration import fixture, probe, restore, review
+from omarchy_migration import fixture, omarchy_state, probe, restore, review
 from omarchy_migration.dependency import configured_age
 from omarchy_migration import contract
 
@@ -196,7 +196,8 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(plan["policy_revision"], self.receipt["policy_revision"])
         self.assertEqual(sum(plan["actions"].values()), self.receipt["estimates"]["entries"])
         self.assertEqual(plan["actions"]["conflict"], 0)
-        self.assertEqual(plan["actions"]["inert"], 1)  # the Work link into /mnt/mac
+        # The Work link into /mnt/mac, and Omarchy's background link by the home's absolute path.
+        self.assertEqual(plan["actions"]["inert"], 2)
         # Whole blocks per file and one per new entry: at least the content itself.
         self.assertGreaterEqual(plan["required_bytes"], self.receipt["estimates"]["expanded_bytes"])
         self.assertEqual(plan["required_bytes"] % 4096, 0)
@@ -265,8 +266,13 @@ class ReviewTests(unittest.TestCase):
         outcomes = {item["id"]: (item["outcome"], item["restored"], item["conflicts"]) for item in report["categories"]}
         decoded = probe.decode(self.age, fixture.SECRET, self.export / "bundle.age")
         # Files and the directories that hold them both count as restored.
-        configuration = [entry for entry in decoded["entries"] if entry["path"].startswith(".")]
+        # Omarchy regenerates its current theme state, so the import leaves it out.
+        generated = [entry for entry in decoded["entries"] if entry["path"].startswith(omarchy_state.GENERATED[0])]
+        configuration = [entry for entry in decoded["entries"]
+                         if entry["path"].startswith(".") and entry not in generated]
         self.assertEqual(outcomes["configuration"], ("restored", len(configuration), 0))  # includes original copies
+        settings = next(item for item in report["categories"] if item["id"] == "configuration")
+        self.assertEqual((settings["omitted"], settings["reasons"]), (len(generated), ["regenerated_by_omarchy"]))
         user_files = [entry for entry in configuration
                       if probe.entry_kind(entry) == "file" and not entry["path"].startswith(fixture.collection.ORIGINALS_ROOT + "/")]
         self.assertEqual(len(user_files), 4)
@@ -283,7 +289,7 @@ class ReviewTests(unittest.TestCase):
         report = contract.parse(self.command("apply", "--plan-id", plan["plan_id"]).stdout.encode())
         configuration = next(item for item in report["categories"] if item["id"] == "configuration")
         self.assertEqual((configuration["outcome"], configuration["conflicts"], configuration["reasons"]),
-                         ("partial", 1, ["destination_exists"]))
+                         ("partial", 1, ["destination_exists", "regenerated_by_omarchy"]))
         self.assertEqual((self.target / ".config/unfamiliar-example/settings").read_bytes(), b"native-choice\n")
         again = contract.parse(self.command("plan").stdout.encode())
         retried = contract.parse(self.command("apply", "--plan-id", again["plan_id"]).stdout.encode())

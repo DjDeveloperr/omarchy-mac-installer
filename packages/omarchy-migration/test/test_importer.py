@@ -7,6 +7,7 @@ import re
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 import uuid
 
 from omarchy_migration import contract, fixture, importer
@@ -16,10 +17,11 @@ THEME = ".config/example-theme/selected"
 
 
 class ScriptedTerminal(importer.Terminal):
-    def __init__(self, secrets, choice):
+    def __init__(self, secrets, choice, confirm=False):
         super().__init__(None)
         self.secrets = list(secrets)
         self.choice = choice
+        self.answer = confirm
         self.lines = []
         self.prompts = []
 
@@ -37,6 +39,10 @@ class ScriptedTerminal(importer.Terminal):
         self.lines.append(prompt)
         assert self.choice is None or self.choice in options
         return self.choice
+
+    def confirm(self, prompt):
+        self.lines.append(prompt)
+        return self.answer
 
     def text(self):
         return "\n".join(self.lines)
@@ -114,9 +120,30 @@ class ImportTests(unittest.TestCase):
         (self.home / ".config/example-theme").mkdir(parents=True, mode=0o700)
         (self.home / THEME).write_bytes(b"tokyo-night\n")
         self.handoff = [sys.executable, "-c", f"import json; print(json.dumps({{'work': {str(self.work)!r}}}))"]
+        self.commands = self.root / "bin"
+        self.commands.mkdir()
+        self.calls = self.root / "calls"
+        # Omarchy's theme command makes the theme's backgrounds, as the real one does.
+        self.command("omarchy-theme-set", 'mkdir -p "$HOME_UNDER_TEST/.local/state/omarchy/current/theme/backgrounds"\n'
+                     'touch "$HOME_UNDER_TEST/.local/state/omarchy/current/theme/backgrounds/1-on-pole.webp"\n')
+        self.command("omarchy-theme-bg-set", "")
+        environment = patch.dict(os.environ, {"PATH": f"{self.commands}{os.pathsep}{os.environ.get('PATH', '')}",
+                                              "HOME_UNDER_TEST": str(self.home)})
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.reboots = []
+
+    def command(self, name, body, status=0):
+        script = self.commands / name
+        script.write_text(f'#!/bin/sh\necho "{name} $*" >>"{self.calls}"\n{body}exit {status}\n')
+        script.chmod(0o755)
+
+    def called(self):
+        return self.calls.read_text().splitlines() if self.calls.exists() else []
 
     def run_import(self, terminal, handoff=None):
-        return importer.run(terminal, self.home, handoff=handoff or self.handoff, defaults=self.skel)
+        return importer.run(terminal, self.home, handoff=handoff or self.handoff, defaults=self.skel,
+                            reboot=lambda: self.reboots.append(True) or True)
 
     def test_asks_again_after_a_wrong_passphrase_and_imports_after_confirmation(self):
         terminal = ScriptedTerminal([b"not-the-passphrase", fixture.SECRET], "Import")
@@ -128,7 +155,12 @@ class ImportTests(unittest.TestCase):
         self.assertIn(f"    {THEME}", text)
         created = re.search(r"^Comes across: (\d+) files", text, re.M).group(1)
         self.assertIn(f"Imported {created} files and replaced 1 untouched defaults.", text)
-        self.assertIn("Log out and back in", text)
+        self.assertIn("Theme: solitude, applied after the import", text)
+        self.assertIn("Theme: solitude.", text)
+        background = self.home / ".local/state/omarchy/current/theme/backgrounds/1-on-pole.webp"
+        self.assertEqual(self.called(), ["omarchy-theme-set solitude", f"omarchy-theme-bg-set {background}"])
+        self.assertIn("Reboot when you're ready", text)
+        self.assertEqual(self.reboots, [])
         self.assertEqual((self.home / THEME).read_bytes(), self.files[THEME])
         self.assertEqual((self.home / "Projects/demo/untracked.txt").read_bytes(), self.files["Projects/demo/untracked.txt"])
         record = json.loads((self.home / ".local/state/omarchy-migration/imported" / f"{self.export_id}.json").read_text())
@@ -141,6 +173,28 @@ class ImportTests(unittest.TestCase):
         again = ScriptedTerminal([], None)
         self.assertEqual(self.run_import(again), 0)
         self.assertIn("No export from Try Omarchy is waiting.", again.text())
+
+    def test_yes_reboots_and_skips_the_closing_prompt(self):
+        terminal = ScriptedTerminal([fixture.SECRET], "Import", confirm=True)
+        self.assertEqual(self.run_import(terminal), 0)
+        self.assertIn("Reboot now so every app picks up your settings?", terminal.text())
+        self.assertEqual(self.reboots, [True])
+        self.assertTrue(terminal.rebooting)
+
+    def test_a_theme_omarchy_lacks_is_explained_and_the_import_still_finishes(self):
+        self.command("omarchy-theme-set", "", status=1)
+        terminal = ScriptedTerminal([fixture.SECRET], "Import")
+        self.assertEqual(self.run_import(terminal), 0)
+        self.assertIn("The theme solitude couldn't be applied. Choose it from the Omarchy menu.", terminal.text())
+        self.assertEqual(self.called(), ["omarchy-theme-set solitude"])
+
+    def test_the_current_theme_is_not_set_again(self):
+        (self.home / ".local/state/omarchy/current").mkdir(parents=True)
+        (self.home / ".local/state/omarchy/current/theme.name").write_text("solitude\n")
+        terminal = ScriptedTerminal([fixture.SECRET], "Import")
+        self.assertEqual(self.run_import(terminal), 0)
+        self.assertNotIn("Theme: solitude", terminal.text())
+        self.assertNotIn("omarchy-theme-set solitude", self.called())
 
     def test_not_now_leaves_everything_for_the_next_login(self):
         terminal = ScriptedTerminal([fixture.SECRET], "Not now")

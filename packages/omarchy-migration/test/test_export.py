@@ -226,7 +226,8 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(outcomes["transformed"], 2)
         # Two cleaned files' originals, plus the directories that hold them.
         self.assertGreater(outcomes["original-copy"], 2)
-        self.assertEqual(outcomes["inert"], 1)  # the Work link into the shared folder
+        # The Work link into the shared folder, and Omarchy's background link by the home's absolute path.
+        self.assertEqual(outcomes["inert"], 2)
         self.assertEqual(json.loads((workdir / "trial-report.json").read_text())["comparison"], summary["comparison"])
         details = {(item["source"], item["outcome"]) for item in summary["exception_details"]}
         self.assertIn((".config/hypr/monitors.lua", "excluded"), details)

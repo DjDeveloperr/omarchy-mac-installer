@@ -17,6 +17,8 @@ UNTOUCHED = ".config/example-theme/selected"
 CHANGED = ".config/unfamiliar-example/settings"
 PERSONAL = "Projects/demo/changed.txt"
 DEFAULT = b"tokyo-night\n"
+THEME_NAME = ".local/state/omarchy/current/theme.name"
+THEME_FILE = ".local/state/omarchy/current/theme/colors.toml"
 
 
 class DefaultsTests(unittest.TestCase):
@@ -48,6 +50,9 @@ class DefaultsTests(unittest.TestCase):
         self.write(self.target, UNTOUCHED, DEFAULT)
         self.write(self.target, CHANGED, b"changed on this Mac\n")
         self.write(self.target, PERSONAL, b"native edit\n")
+        # The native system's own theme state, which Omarchy wrote at its first login.
+        self.write(self.target, THEME_NAME, b"tokyo-night\n")
+        self.write(self.target, THEME_FILE, b'accent = "#native"\n')
 
     def write(self, root, path, data):
         (root / path).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -92,6 +97,22 @@ class DefaultsTests(unittest.TestCase):
         self.assertEqual((without["actions"]["replace"], without["actions"]["conflict"]), (0, 3))
         self.assertNotEqual(without["plan_id"], plan["plan_id"])
         self.assertEqual(self.command("plan", summary=summary_path).returncode, 1)
+
+    def test_omarchy_theme_state_is_left_to_omarchy_and_its_choice_is_reported(self):
+        summary_path = self.root / "summary.json"
+        plan = self.plan(summary=summary_path)
+        summary = json.loads(summary_path.read_text())
+        self.assertEqual(summary["omarchy"], {
+            "theme": "solitude", "background": ".local/state/omarchy/current/theme/backgrounds/1-on-pole.webp"})
+        self.assertFalse(any(item["path"].startswith(".local/state/omarchy/current") for item in summary["kept"]))
+        applied = self.command("apply", "--plan-id", plan["plan_id"])
+        self.assertEqual(applied.returncode, 0, applied.stderr)
+        self.assertEqual((self.target / THEME_NAME).read_bytes(), b"tokyo-night\n")
+        self.assertEqual((self.target / THEME_FILE).read_bytes(), b'accent = "#native"\n')
+        self.assertFalse((self.target / ".local/state/omarchy/current/background").exists())
+        configuration = next(item for item in contract.parse(applied.stdout.encode())["categories"]
+                             if item["id"] == "configuration")
+        self.assertIn("regenerated_by_omarchy", configuration["reasons"])
 
     def test_space_counts_the_backup_of_a_large_default(self):
         large = b"x" * (4 * 1024 * 1024)

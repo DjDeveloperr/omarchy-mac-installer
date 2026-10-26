@@ -9,6 +9,7 @@ Status: the contract for bringing a Try Omarchy export onto a native install. Th
 3. The first boot of the native system claims the staged export, before owner setup.
 4. At the owner's first login, a notification offers **Bring your files from Try Omarchy**. It opens a terminal that asks for the transfer passphrase, shows what the import brings and what it leaves, and imports after a confirmation. **Not now** leaves the offer for the next login. **Don't offer again** ends it, and deletes the copy on the native disk. The export stays in Exports on the Mac.
 5. Settings that Omarchy shipped and the owner never changed are replaced by the Try home's versions, with a backup. A file the owner changed on the native system stays, and the summary lists it.
+6. The Try home's theme and background are applied with Omarchy's own commands. The import then offers to reboot, so every app picks up the settings.
 
 ## Staging
 
@@ -89,7 +90,9 @@ Reason codes: `marker_unsafe`, `marker_oversized`, `marker_invalid`, `receipt_in
 2. Asks for the transfer passphrase, and asks again after a wrong one.
 3. Runs `omarchy-migration plan` with `--defaults /etc/skel`, and shows the summary by category: what comes across, what replaces an untouched Omarchy default, and what stays because the native file differs.
 4. Runs `omarchy-migration apply` for exactly that plan after the owner confirms.
-5. Records the import in `~/.local/state/omarchy-migration/imported/`, deletes the incoming folder and the scratch, and asks the owner to log out and back in. The job stays, with its backups.
+5. Records the import in `~/.local/state/omarchy-migration/imported/`, and deletes the incoming folder and the scratch. The job stays, with its backups.
+6. Applies the Try home's theme with `omarchy-theme-set` and its background with `omarchy-theme-bg-set`, when the theme isn't already the current one. Omarchy keeps the current theme in `~/.local/state/omarchy/current`: its name, a folder it generates from the theme, and a background link that names the home's own path. Copies of those would be stale, so the import leaves that folder to Omarchy (`regenerated_by_omarchy`) and the summary carries the choice instead. A theme Omarchy can't set is named, and the import still finishes.
+7. Asks whether to reboot now, and reboots with `omarchy-system reboot` on yes.
 
 `--defaults DIR` lets a plan replace a regular file whose destination is byte-identical to the file at the same relative path under `DIR`. Each replacement keeps a private backup, as approved replacements do ([REPLACEMENT](../packages/omarchy-migration/docs/REPLACEMENT.md)). Any other existing file stays a conflict. The plan counts these replacements as `replace`, its `plan_id` binds every default it compared against, and `apply` refuses with `plan_changed` when a destination changed since the review ([REVIEW](../packages/omarchy-migration/docs/REVIEW.md)).
 
