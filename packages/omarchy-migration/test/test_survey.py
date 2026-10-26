@@ -21,6 +21,9 @@ class SurveyTests(unittest.TestCase):
     def setUp(self):
         if os.geteuid() == 0:
             self.skipTest("unprivileged survey")
+        machine = patch("platform.machine", return_value="aarch64")
+        machine.start()
+        self.addCleanup(machine.stop)
         scratch = tempfile.TemporaryDirectory(prefix="migration-survey-test-")
         self.addCleanup(scratch.cleanup)
         self.root = Path(scratch.name)

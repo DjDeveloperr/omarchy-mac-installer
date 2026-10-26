@@ -528,6 +528,11 @@ with restore.verified_bundle(sys.argv[1], b'synthetic-only-otter-maple-window-co
                 if change == "edit":
                     self.file.write_bytes(b"user edits after import")
                 else:
+                    if change == "replace":
+                        # Holding the old inode keeps ext4 from handing its number to the new file.
+                        held = self.root / "held"
+                        held.unlink(missing_ok=True)
+                        os.link(self.file, held)
                     self.file.unlink()
                     if change == "replace":
                         self.file.write_bytes(NEW)
