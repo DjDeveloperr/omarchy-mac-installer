@@ -9,7 +9,9 @@
   /// device, as the helper does. Run with
   /// `OMARCHY_TRY_EXPORT_STAGING_DISK=diskN` naming an attached image laid out
   /// as Development/try-export-staging-disk.sh makes it, and
-  /// `OMARCHY_TRY_EXPORT_STAGING_BUNDLE` and `_RECEIPT` naming an export.
+  /// `OMARCHY_TRY_EXPORT_STAGING_BUNDLE` and `_RECEIPT` naming an export. The
+  /// install's extent starts at the APFS stub, or at the first partition of a
+  /// disk without one, such as a VM's laid out as an install.
   struct TryExportStagingDiskImageTests {
     static let environment = ProcessInfo.processInfo.environment
     static let disk = environment["OMARCHY_TRY_EXPORT_STAGING_DISK"]
@@ -23,7 +25,9 @@
           fileURLWithPath: try #require(Self.environment["OMARCHY_TRY_EXPORT_STAGING_RECEIPT"])))
       let disks = DiskutilTryExportStagingOperator()
       let partitions = try disks.stagingPartitions(on: disk)
-      let first = try #require(partitions.first { $0.type == "Apple_APFS" })
+      let first = try #require(
+        partitions.first { $0.type == "Apple_APFS" }
+          ?? partitions.min { $0.offsetBytes < $1.offsetBytes })
       let end = try #require(partitions.map { $0.offsetBytes + $0.lengthBytes }.max())
       let work = FileManager.default.temporaryDirectory
         .appendingPathComponent("try-export-disk-\(UUID().uuidString)", isDirectory: true)
