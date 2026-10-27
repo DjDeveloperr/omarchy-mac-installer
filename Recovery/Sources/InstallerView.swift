@@ -518,7 +518,7 @@ final class InstallerView: NSViewController, NSTextFieldDelegate {
 
   private func closePanel() { sheets.close() }
 
-  private func showAuthorization(repair: Bool) {
+  private func showAuthorization(repair: Bool, rejection: String? = nil) {
     guard view.window != nil else {
       LaunchTrace.mark("ui.authorization.noWindow")
       return
@@ -528,7 +528,9 @@ final class InstallerView: NSViewController, NSTextFieldDelegate {
     let owner =
       RecoveryActions.inRecovery
       ? (model.authorizationOwner?.username ?? "the volume owner") : NSUserName()
-    var explanation = "Enter password for " + owner + "."
+    var explanation =
+      rejection.map { $0 + " Enter it again, or Cancel and open Show details." }
+      ?? "Enter password for " + owner + "."
     if !repair {
       explanation +=
         model.authorizationUsesSourceOwner
@@ -583,12 +585,14 @@ final class InstallerView: NSViewController, NSTextFieldDelegate {
     authorizationField?.stringValue = ""
     closePanel()
     if authorizationRepair {
-      model.repairRecoveryBoot(password: credential) { [weak self] in
-        self?.showAuthorization(repair: true)
+      model.repairRecoveryBoot(password: credential) { [weak self] rejection in
+        self?.showAuthorization(repair: true, rejection: rejection)
       }
     } else {
       model.password = credential
-      model.startDemo()
+      model.startDemo { [weak self] rejection in
+        self?.showAuthorization(repair: false, rejection: rejection)
+      }
     }
   }
 
@@ -670,7 +674,9 @@ final class InstallerView: NSViewController, NSTextFieldDelegate {
     model.failure = nil
     closePanel()
     if repair {
-      model.repairRecoveryBoot { [weak self] in self?.showAuthorization(repair: true) }
+      model.repairRecoveryBoot { [weak self] rejection in
+        self?.showAuthorization(repair: true, rejection: rejection)
+      }
     } else {
       detailsPressed()
     }

@@ -47,6 +47,12 @@ const char *aurora_authorization_failure(int result)
     }
 }
 
+/* A command that asks for the password again after receiving it rejected it. */
+int aurora_authorization_password_rejected(int result)
+{
+    return result==REPEATED_PASSWORD;
+}
+
 static int send_line(int fd, const char *line)
 {
     size_t size=strlen(line), offset=0;

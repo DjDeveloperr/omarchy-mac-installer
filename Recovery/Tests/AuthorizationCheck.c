@@ -124,6 +124,9 @@ int main(int argc, char **argv)
     assert(authorization_run(argv[0],child,"fixture-user","fixture-password",true) == REPEATED_CONFIRMATION);
     child[1] = "--retry";
     assert(authorization_run(argv[0],child,"fixture-user","fixture-password",false) == REPEATED_PASSWORD);
+    assert(aurora_authorization_password_rejected(REPEATED_PASSWORD));
+    for(int result=CHILD_SIGNAL;result<=1;result++)
+        assert(result==REPEATED_PASSWORD || !aurora_authorization_password_rejected(result));
     assert(aurora_authorized_command(argv[0],child,"fixture-user","fixture-password") == -1);
     child[1] = "--failure-output";
     assert(authorization_run_logged(argv[0],child,"fixture-user","fixture-password",false,capture,NULL) == 42);
@@ -152,6 +155,6 @@ int main(int argc, char **argv)
     assert(kill((pid_t)helper,0)<0 && errno==ESRCH);
 #endif
 
-    puts("PASS exact native kmutil prompt / newline / byte-split / repeated prompt; final output / exact exit status / fragmented credential redaction;  split confirmation/username/password prompts; bputil authorized-user prompt; exact one-shot confirmation; unauthorized/repeated confirmation rejection; repeated password rejection; command allowlist");
+    puts("PASS exact native kmutil prompt / newline / byte-split / repeated prompt; final output / exact exit status / fragmented credential redaction;  split confirmation/username/password prompts; bputil authorized-user prompt; exact one-shot confirmation; unauthorized/repeated confirmation rejection; repeated password rejection and its classification; command allowlist");
     return 0;
 }

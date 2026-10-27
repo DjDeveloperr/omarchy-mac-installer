@@ -309,6 +309,12 @@ enum RecoveryActions {
     let reason =
       result < 0 ? String(cString: aurora_authorization_failure(result)) : "exit status \(result)"
     InstallerLog.shared.append("\(name): \(result == 0 ? "completed" : reason)")
+    if RecoveryPasswordRejected.matches(
+      status: result, output: log.text,
+      repeatedPrompt: aurora_authorization_password_rejected(result) != 0)
+    {
+      throw RecoveryPasswordRejected(username: owner.username)
+    }
     try check(result == 0, "\(name) failed: \(reason). Open Show details for the command output.")
   }
   static func install(
