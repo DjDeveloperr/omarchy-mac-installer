@@ -10,7 +10,7 @@ The Linux source checks are `bash test/all`. They compile Python, check shell sy
 
 ## Continuous integration
 
-[Installer checks](../.github/workflows/checks.yml) runs for every pull request to `main`, every push to `main` and manual dispatch. There are no path filters, so documentation changes also receive the checks expected by branch protection. New commits cancel superseded runs for the same pull request. Pushes to `main` and manual runs have unique concurrency groups, preserving each run and its evidence even when several are queued.
+[Installer checks](../.github/workflows/checks.yml) runs for every pull request to `main` or an `integrate/` branch, every push to those branches and manual dispatch. An `integrate/` branch collects a stack of pull requests that later merges to `main` as one; cut it from a `main` that has this trigger, or pull requests into it get no checks. There are no path filters, so documentation changes also receive the checks expected by branch protection. New commits cancel superseded runs for the same pull request. Pushes and manual runs have unique concurrency groups, preserving each run and its evidence even when several are queued.
 
 - **Portable checks** runs `bash test/all` on Ubuntu 24.04 with Python 3.12, including shell syntax, Python compilation, engine/catalog tests and packaging/publication fixtures.
 - **macOS checks** runs strict Swift formatting and debug/release Swift tests on an Apple Silicon macOS 15 runner using Xcode 26.2 and the same checksum-pinned XcodeBuildMCP 2.7.0 used for the initial Mac validation.
@@ -19,7 +19,7 @@ The read-only live physical-Mac inspection test explicitly skips `VirtualMac` ho
 
 Both jobs record the checked-out commit and tool versions and retain logs as Actions artifacts for 14 days, including failures. Pull requests test GitHub's proposed merge revision. GitHub Actions are pinned to commit hashes; tool updates should change the pin and its version comment together. Explicit Bash execution enables `errexit` and `pipefail`, so collecting logs through `tee` does not hide test failures.
 
-These checks use hosted runners, read-only repository access and no release secrets. The release secrets live only in the `macos-release` environment, which only the app release workflow's sign job uses after a second maintainer approves (see `Packaging/README.md`, Release workflow). It performs source checks and fixture tests; app assembly with an authenticated engine, production signing, visual review and physical installation remain separate validation steps. Require both named checks along with the existing independent review before merging to `main`.
+These checks use hosted runners, read-only repository access and no release secrets. The release secrets live only in the `macos-release` environment, which only the app release workflow's sign job uses after a second maintainer approves (see `Packaging/README.md`, Release workflow). It performs source checks and fixture tests; app assembly with an authenticated engine, production signing, visual review and physical installation remain separate validation steps. Require both named checks along with the existing independent review before merging to `main`, and before merging into an `integrate/` branch.
 
 ## Local evidence
 
