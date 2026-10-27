@@ -90,6 +90,20 @@
     public var canOpenRemoval: Bool {
       canInspect && !isEditingSize && credentialSheet.context == nil
     }
+    /// Recovery finished this installation; only the optional recovery
+    /// account was skipped, so it is installed rather than waiting.
+    public var recoveryAccountDeferred: Bool { recoveryAccount?.accountDeferred == true }
+    /// The person chose Installation → Set Up Recovery Password….
+    public private(set) var showsRecoveryAccountSetup = false
+    public var canSetUpRecoveryAccount: Bool {
+      guard case .existingInstallRefused = phase else { return false }
+      return recoveryAccountDeferred && !showsRecoveryAccountSetup && canOpenRemoval
+    }
+    public func setUpRecoveryAccount() {
+      guard canSetUpRecoveryAccount else { return }
+      showsRecoveryAccountSetup = true
+    }
+    public func cancelRecoveryAccountSetup() { showsRecoveryAccountSetup = false }
     public var canEditPlan: Bool {
       guard case .awaitingInstall = phase else { return false }
       return canInspect && credentialSheet.context == nil
@@ -952,6 +966,7 @@
     private func resetForInspection() {
       environment.discardApproval()
       isEditingSize = false
+      showsRecoveryAccountSetup = false
       shutdownMessage = nil
       allocationNotice = nil
       stagingProgress = [:]

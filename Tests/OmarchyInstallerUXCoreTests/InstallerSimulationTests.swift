@@ -147,8 +147,9 @@
           }
           XCTAssertFalse(session.canStartInstallation)
           continue
-        case .existingInstall:
+        case .existingInstall, .skippedRecoveryAccount:
           guard case .existingInstallRefused = session.phase else { return XCTFail(scenario.title) }
+          XCTAssertEqual(session.canSetUpRecoveryAccount, scenario == .skippedRecoveryAccount)
           continue
         default: break
         }

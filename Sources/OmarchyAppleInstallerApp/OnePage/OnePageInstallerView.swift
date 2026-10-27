@@ -303,6 +303,15 @@ struct OnePageInstallerView: View {
 
     case .existingInstallRefused:
       if pendingRecoveryHandoff != nil {
+        if session.recoveryAccountDeferred {
+          Button(PlainLanguage.cancel) {
+            shutdownFailure = nil
+            session.cancelRecoveryAccountSetup()
+          }
+          .omarchySecondaryButton()
+          .disabled(preparingShutdown)
+          .keyboardShortcut(.cancelAction)
+        }
         shutDownButton
       } else {
         Button(PlainLanguage.closeInstaller) { NSApplication.shared.terminate(nil) }
@@ -453,6 +462,12 @@ struct OnePageInstallerView: View {
       .font(OmarchyTheme.body)
       .foregroundStyle(OmarchyTheme.secondaryText)
       .fixedSize(horizontal: false, vertical: true)
+      if session.recoveryAccountDeferred {
+        Label(PlainLanguage.recoveryAccountDeferredNote, systemImage: "info.circle")
+          .omarchyHelpText()
+          .fixedSize(horizontal: false, vertical: true)
+          .padding(.top, 4)
+      }
     }
   }
 
@@ -531,10 +546,25 @@ struct OnePageInstallerView: View {
   }
 
   /// The Recovery steps for an installation that finished but has not been
-  /// through Recovery yet, found when the installer is opened again.
+  /// through Recovery yet, found when the installer is opened again. One that
+  /// skipped only the optional recovery account is installed, so it shows its
+  /// steps only when the person asks to set that account up.
   private var pendingRecoveryHandoff: HandoffDisplay? {
     guard let target = session.recoveryAccount?.target else { return nil }
     let guide = session.powerButtonGuide
+    if session.recoveryAccountDeferred {
+      guard session.showsRecoveryAccountSetup else { return nil }
+      return HandoffDisplay(
+        headline: PlainLanguage.recoveryAccountSetupHeadline,
+        steps: [
+          RecoveryStep(number: 1, title: "Shut down completely."),
+          RecoveryStep(number: 2, title: guide.holdInstruction),
+          RecoveryStep(number: 3, title: "Choose “\(target.volumeName)” → Finish Installation."),
+          RecoveryStep(
+            number: 4, title: "Create the recovery account: choose a username and password."),
+        ],
+        warning: nil)
+    }
     return HandoffDisplay(
       headline: "Finish the installation in Recovery",
       steps: [

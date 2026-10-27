@@ -89,6 +89,43 @@
       XCTAssertEqual(environment.prepareCount, 0)
       XCTAssertEqual(environment.prefetchStartCount, 0)
     }
+    func testSkippedRecoveryAccountIsInstalledAndOffersTheAccountOnRequest() async {
+      let environment = MockInstallerEnvironment()
+      environment.host = HostDisplay(
+        chipAndSpace: "Apple A18 Pro", supported: true,
+        existingInstalls: [
+          ExistingInstallDisplay(sourceIdentifier: "disk0s3", sizeDescription: "89 GB")
+        ])
+      let target = RecoveryAccountTarget(
+        volumeName: "Omarchy",
+        systemUUID: "11111111-1111-4111-8111-111111111111",
+        dataUUID: "22222222-2222-4222-8222-222222222222",
+        groupUUID: "33333333-3333-4333-8333-333333333333",
+        prebootUUID: "44444444-4444-4444-8444-444444444444")
+      for deferred in [false, true] {
+        environment.accountReply = RecoveryAccountReply(
+          ticket: "bound-ticket", target: target, accountDeferred: deferred)
+        let session = InstallerSession(environment: environment)
+        await session.inspect()
+        guard case .existingInstallRefused = session.phase else {
+          return XCTFail("An existing installation must stay refused")
+        }
+        XCTAssertEqual(session.recoveryAccountDeferred, deferred)
+        XCTAssertEqual(session.canSetUpRecoveryAccount, deferred)
+        XCTAssertFalse(session.showsRecoveryAccountSetup)
+        session.setUpRecoveryAccount()
+        XCTAssertEqual(session.showsRecoveryAccountSetup, deferred)
+        XCTAssertFalse(session.canSetUpRecoveryAccount)
+        session.cancelRecoveryAccountSetup()
+        XCTAssertFalse(session.showsRecoveryAccountSetup)
+        session.setUpRecoveryAccount()
+        // Inspecting again starts from the installed page.
+        await session.inspect()
+        XCTAssertFalse(session.showsRecoveryAccountSetup)
+        XCTAssertEqual(environment.executeCount, 0)
+      }
+    }
+
     func testChannelAvailabilityKeepsTheLatestCheck() async {
       let environment = MockInstallerEnvironment()
       let slow = OperationGate()
