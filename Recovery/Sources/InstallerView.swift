@@ -518,10 +518,24 @@ final class InstallerView: NSViewController, NSTextFieldDelegate {
 
   private func closePanel() { sheets.close() }
 
-  private func showAuthorization(repair: Bool, rejection: String? = nil) {
+  /// Asks for the password again. A sheet such as Show details may be open
+  /// when the command refuses it; the request then waits for that sheet to
+  /// close. If the sheet still can't open, the refusal is shown as a failure.
+  private func authorizeAgain(repair: Bool, rejection: String?) {
+    sheets.whenFree { [weak self] in
+      guard let self else { return }
+      if !self.showAuthorization(repair: repair, rejection: rejection), let rejection {
+        self.model.failure = rejection
+      }
+    }
+  }
+
+  @discardableResult private func showAuthorization(repair: Bool, rejection: String? = nil)
+    -> Bool
+  {
     guard view.window != nil else {
       LaunchTrace.mark("ui.authorization.noWindow")
-      return
+      return false
     }
     LaunchTrace.mark("ui.authorization.open")
     authorizationRepair = repair
@@ -573,7 +587,7 @@ final class InstallerView: NSViewController, NSTextFieldDelegate {
       title: repair ? "Authorize startup disk" : "Authorize installation",
       message: explanation, width: 430,
       body: body, bodyHeight: showBootArgumentNote ? 72 : 32, buttons: [cancel, proceed])
-    present(panel, focus: field)
+    return present(panel, focus: field)
   }
 
   @objc private func authorizePanelPressed() {
@@ -586,12 +600,12 @@ final class InstallerView: NSViewController, NSTextFieldDelegate {
     closePanel()
     if authorizationRepair {
       model.repairRecoveryBoot(password: credential) { [weak self] rejection in
-        self?.showAuthorization(repair: true, rejection: rejection)
+        self?.authorizeAgain(repair: true, rejection: rejection)
       }
     } else {
       model.password = credential
       model.startDemo { [weak self] rejection in
-        self?.showAuthorization(repair: false, rejection: rejection)
+        self?.authorizeAgain(repair: false, rejection: rejection)
       }
     }
   }
@@ -675,7 +689,7 @@ final class InstallerView: NSViewController, NSTextFieldDelegate {
     closePanel()
     if repair {
       model.repairRecoveryBoot { [weak self] rejection in
-        self?.showAuthorization(repair: true, rejection: rejection)
+        self?.authorizeAgain(repair: true, rejection: rejection)
       }
     } else {
       detailsPressed()

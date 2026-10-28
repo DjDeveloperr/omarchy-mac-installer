@@ -124,8 +124,6 @@ final class InstallerLog {
 final class CommandLog {
   private let log: InstallerLog
   private var previous = ""
-  /// The command's latest output, with the credential already redacted.
-  var text: String { previous }
   init(_ heading: String, log: InstallerLog = .shared) {
     self.log = log
     log.append(heading)
