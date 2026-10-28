@@ -203,32 +203,60 @@ class ChannelSetTest(unittest.TestCase):
 
     def test_only_the_policys_lanes_are_built(self):
         database, sha256 = self.snapshot()
-        for lane in ("rc", "stable"):
-            with self.subTest(lane=lane):
-                self.refused(f"lane {lane} is not enabled", database, sha256, lane)
-                self.assertFalse((self.work / "set").exists(), "a refused lane freezes nothing")
-                with self.assertRaisesRegex(ValueError, f"lane {lane} is not enabled"):
-                    channel_set.files(database, lane, self.trust)
+        self.refused("lane stable is not enabled", database, sha256, "stable")
+        self.assertFalse((self.work / "set").exists(), "a refused lane freezes nothing")
+        with self.assertRaisesRegex(ValueError, "lane stable is not enabled"):
+            channel_set.files(database, "stable", self.trust)
+
+    def rc_snapshot(self, **options) -> tuple[Path, str]:
+        return fixtures.make_channel(self.work / "rc", self.channel, lane="rc", **options)
+
+    def freeze_rc(self, database: Path, sha256: str, tag: str | None = fixtures.RC_RELEASE) -> dict:
+        return channel_set.snapshot(database, sha256, "rc", self.work / "rc/packages", self.work / "set", self.trust,
+                                    release_tag=tag)
+
+    def test_the_rc_lane_takes_the_clean_runtime_of_its_release(self):
+        # The rc database also lists an old -dev pair, as the real one does; it is never chosen.
+        database, sha256 = self.rc_snapshot(extra=[("omarchy-dev", "4.0.0.r7195.g3ac4365-1"),
+                                                   ("omarchy-settings-dev", "4.0.0.r7195.g3ac4365-1")])
+        summary = self.freeze_rc(database, sha256)
+        self.assertEqual(summary["set"], f"omarchy-rc-{sha256[:12]}")
+        self.assertEqual(summary["channel"], "rc")
+        runtime = {p["role"]: (p["name"], p["version"]) for p in summary["packages"] if p["group"] == "runtime"}
+        self.assertEqual(runtime["omarchy"], ("omarchy", "4.5.0rc2-1"))
+        self.assertEqual(runtime["omarchy-settings"], ("omarchy-settings", "4.5.0rc2-1"))
+        self.assertFalse({p["name"] for p in summary["packages"]} & {"omarchy-dev", "omarchy-settings-dev"})
+        self.assertEqual(set(channel_set.files(database, "rc", self.trust)), {p["filename"] for p in summary["packages"]})
+
+    def test_the_rc_lane_refuses_edges_runtime(self):
+        database, sha256 = self.snapshot()
+        with self.assertRaisesRegex(ValueError, "the channel database does not list omarchy$"):
+            channel_set.snapshot(database, sha256, "rc", self.work / "edge/packages", self.work / "set", self.trust,
+                                 release_tag=fixtures.RC_RELEASE)
+
+    def test_the_rc_runtime_must_be_its_tags_release(self):
+        database, sha256 = self.rc_snapshot()
+        with self.assertRaisesRegex(ValueError, "omarchy 4.5.0rc2-1 is not the release v4.5.0-rc3"):
+            self.freeze_rc(database, sha256, "v4.5.0-rc3")
+        self.assertFalse((self.work / "set/import.json").exists(), "nothing is frozen for another release")
+
+    def test_a_release_tag_goes_with_its_lane_alone(self):
+        database, sha256 = self.rc_snapshot()
+        with self.assertRaisesRegex(ValueError, "the rc lane needs a release tag"):
+            self.freeze_rc(database, sha256, None)
+        edge, edge_sha256 = self.snapshot()
+        with self.assertRaisesRegex(ValueError, "the edge lane takes no release tag"):
+            channel_set.snapshot(edge, edge_sha256, "edge", self.work / "edge/packages", self.work / "set",
+                                 self.trust, release_tag=fixtures.RC_RELEASE)
 
     def test_a_lane_outside_edge_rc_and_stable_is_refused(self):
         database, sha256 = self.snapshot()
         self.refused("unknown lane beta", database, sha256, "beta")
 
     def test_each_lane_takes_its_runtime_from_its_own_policy_entry(self):
-        # A policy with a second lane serving the clean runtime: the edge database's -dev packages fill
-        # only edge's roles, and the other lane refuses them.
-        policy = json.loads((self.trust / "policy.json").read_text())
-        clean = {role: role for role in policy["channel"]["lanes"]["edge"]["runtime_packages"]}
-        policy["channel"]["lanes"]["rc"] = {"runtime_packages": clean}
-        trust = self.work / "two-lanes"
-        shutil.copytree(self.trust, trust)
-        (trust / "policy.json").write_text(json.dumps(policy))
-        database, sha256 = self.snapshot()
-        with self.assertRaisesRegex(ValueError, "the channel database does not list omarchy$"):
-            channel_set.snapshot(database, sha256, "rc", self.work / "edge/packages", self.work / "set", trust)
-        summary = channel_set.snapshot(database, sha256, "edge", self.work / "edge/packages", self.work / "edge-set",
-                                       trust)
-        names = {p["role"]: p["name"] for p in summary["packages"] if "role" in p}
+        # The edge database also lists the clean pair: edge still takes only its -dev one.
+        database, sha256 = self.snapshot(extra=[("omarchy", "4.5.0rc2-1"), ("omarchy-settings", "4.5.0rc2-1")])
+        names = {p["role"]: p["name"] for p in self.freeze(database, sha256)["packages"] if "role" in p}
         self.assertEqual(names["omarchy"], "omarchy-dev")
         self.assertEqual(names["omarchy-settings"], "omarchy-settings-dev")
 
@@ -289,9 +317,10 @@ class ChannelTrustTest(unittest.TestCase):
         self.assertEqual(channel["runtime_packages"], EDGE_RUNTIME)
         self.assertEqual(channel["lane"], "edge", "edge is the default lane")
 
-    def test_the_policy_enables_edge_alone_with_the_dev_runtime(self):
+    def test_the_policy_enables_edge_with_the_dev_runtime_and_rc_with_the_clean_one(self):
         lanes = json.loads((ROOT / "builder/candidate-trust/policy.json").read_text())["channel"]["lanes"]
-        self.assertEqual(lanes, {"edge": {"runtime_packages": EDGE_RUNTIME}})
+        self.assertEqual(lanes, {"edge": {"runtime_packages": EDGE_RUNTIME},
+                                 "rc": {"runtime_packages": {role: role for role in EDGE_RUNTIME}}})
 
     def test_a_lane_names_its_install_contract_inputs(self):
         self.assertEqual(channel_set.lane_inputs("edge"), {
@@ -305,16 +334,40 @@ class ChannelTrustTest(unittest.TestCase):
         self.assertEqual(result.stdout, "OMARCHY_MIRROR=edge\nOMARCHY_RUNTIME_PACKAGE=omarchy-dev\n"
                                         "OMARCHY_SETTINGS_PACKAGE=omarchy-settings-dev\nOMARCHY_IMAGE_REF=edge\n")
 
-    def test_rc_and_stable_are_refused_until_enabled(self):
-        for lane in ("rc", "stable"):
-            with self.subTest(lane=lane):
-                with self.assertRaisesRegex(ValueError, f"^lane {lane} is not enabled$"):
-                    channel_set.lane_inputs(lane)
-                result = self.lane(lane)
-                self.assertEqual(result.returncode, 1)
-                self.assertEqual(result.stdout, "")
-                self.assertEqual(result.stderr, f"channel_set: lane {lane} is not enabled\n")
+    def test_stable_is_refused_until_enabled(self):
+        with self.assertRaisesRegex(ValueError, "^lane stable is not enabled$"):
+            channel_set.lane_inputs("stable", "v4.5.0")
+        result = self.lane("stable")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr, "channel_set: lane stable is not enabled\n")
         self.assertIn("unknown lane beta", self.lane("beta").stderr)
+
+    def test_the_rc_lane_bakes_its_release_tag_as_the_image_ref(self):
+        self.assertEqual(channel_set.lane_inputs("rc", "v4.5.0-rc2"), {
+            "OMARCHY_MIRROR": "rc",
+            "OMARCHY_RUNTIME_PACKAGE": "omarchy",
+            "OMARCHY_SETTINGS_PACKAGE": "omarchy-settings",
+            "OMARCHY_IMAGE_REF": "v4.5.0-rc2",
+        })
+        result = self.lane("rc", "--release-tag", "v4.5.0-rc2")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "OMARCHY_MIRROR=rc\nOMARCHY_RUNTIME_PACKAGE=omarchy\n"
+                                        "OMARCHY_SETTINGS_PACKAGE=omarchy-settings\nOMARCHY_IMAGE_REF=v4.5.0-rc2\n")
+
+    def test_release_tags_are_checked_against_their_lane(self):
+        for lane, tag, message in (("rc", None, "the rc lane needs a release tag"),
+                                   ("edge", "v4.5.0-rc2", "the edge lane takes no release tag"),
+                                   ("rc", "v4.5.0", "v4.5.0 is not an rc release tag"),
+                                   ("rc", "4.5.0-rc2", "is not an rc release tag"),
+                                   ("rc", "v4.5-rc2", "is not an rc release tag"),
+                                   ("rc", "v4.5.0-rc0", "is not an rc release tag"),
+                                   ("rc", "v04.5.0-rc1", "is not an rc release tag"),
+                                   ("rc", "v4.5.0-rc2\n", "is not an rc release tag")):
+            with self.subTest(lane=lane, tag=tag):
+                with self.assertRaisesRegex(ValueError, message):
+                    channel_set.lane_inputs(lane, tag)
+        self.assertEqual(self.lane("rc").stderr, "channel_set: the rc lane needs a release tag\n")
 
     def test_a_malformed_lane_table_is_refused(self):
         policy = json.loads((ROOT / "builder/candidate-trust/policy.json").read_text())
@@ -332,8 +385,8 @@ class ChannelTrustTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     channel_set.load_policy(trust)
 
-    def lane(self, lane: str) -> subprocess.CompletedProcess:
-        return subprocess.run([sys.executable, str(ROOT / "builder/channel_set.py"), "lane", "--lane", lane],
+    def lane(self, lane: str, *extra: str) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, str(ROOT / "builder/channel_set.py"), "lane", "--lane", lane, *extra],
                               capture_output=True, text=True)
 
 

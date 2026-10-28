@@ -68,6 +68,8 @@ PAYLOAD = b"".join(PAYLOAD_PARTS)
 IMAGE = f"omarchy-mac-edge-2026.10.14-0123456789ab-{sha(PAYLOAD)[:12]}"
 # An image named before image ids were added: its release and the catalog pinning it are live.
 LEGACY_IMAGE = "omarchy-mac-edge-2026.10.14-0123456789ab"
+# An rc-lane image (mac-image-check name rc): its release tag, Mac revision, date and package set id.
+RC_IMAGE = "omarchy-mac-4.5.0-rc2-r1-2026.10.28-0123456789ab"
 ENGINE = b"engine-tarball" * 30
 METADATA = b'{"os_list": []}\n'
 ZIP = f"{IMAGE}.zip"
@@ -292,11 +294,11 @@ class CatalogReleaseTests(ReleaseTestCase):
                               "--evidence", str(self.write("e.json", evidence_document("e" * 64))))
         self.assert_refused(other, "not " + sha(PAYLOAD))
         self.assert_refused(self.run_tool("check-evidence", "--catalog", str(catalog)), "no VM evidence")
-        renamed = self.directory / "catalog-rc.json"
+        renamed = self.directory / "catalog-stable.json"
         shutil.copyfile(catalog, renamed)
         self.assert_refused(self.run_tool("check-evidence", "--catalog", str(renamed),
                                           "--evidence", str(self.write("e.json", evidence_document()))),
-                            "rc and stable come from promotion")
+                            "stable comes from promotion")
 
     # ── inputs ───────────────────────────────────────────────────────────────
 
@@ -322,7 +324,7 @@ class CatalogReleaseTests(ReleaseTestCase):
     def test_refuses_another_channel_or_image_name(self) -> None:
         result = self.run_tool("prepare", "--channel", "stable", "--image", IMAGE, "--payload", "x",
                                "--engine", "x", "--installer-data", "x", "--installer", "x", "--out", str(self.directory / "o"))
-        self.assert_refused(result, "rc and stable come from promotion")
+        self.assert_refused(result, "stable comes from promotion")
         with self.assertRaisesRegex(release.Refusal, "image must be"):
             release.check_image_name("omarchy-mac-edge-latest", "edge")
 
@@ -335,8 +337,34 @@ class CatalogReleaseTests(ReleaseTestCase):
                      f"{LEGACY_IMAGE}-", "omarchy-mac-edge-2026.10.14", f" {IMAGE}", 7):
             with self.subTest(name), self.assertRaisesRegex(release.Refusal, "image must be"):
                 release.check_image_name(name, "edge")
-        with self.assertRaisesRegex(release.Refusal, "not built for the rc channel"):
+        with self.assertRaisesRegex(release.Refusal, "not built for the rc lane"):
             release.check_image_name(IMAGE, "rc")
+
+    def test_rc_takes_an_rc_lane_image_named_from_its_tag(self) -> None:
+        self.assertEqual(release.check_image_name(RC_IMAGE, "rc", sha(PAYLOAD)), RC_IMAGE)
+        with self.assertRaisesRegex(release.Refusal, "not built for the rc lane"):
+            release.check_image_name(IMAGE, "rc", sha(PAYLOAD))
+        with self.assertRaisesRegex(release.Refusal, "image must be"):
+            release.check_image_name(RC_IMAGE, "edge", sha(PAYLOAD))
+        for name in ("omarchy-mac-4.5.0-r1-2026.10.28-0123456789ab", "omarchy-mac-4.5.0-rc2-r0-2026.10.28-0123456789ab",
+                     "omarchy-mac-v4.5.0-rc2-r1-2026.10.28-0123456789ab", f"{RC_IMAGE}-0123456789ab"):
+            with self.subTest(name), self.assertRaisesRegex(release.Refusal, "not built for the rc lane"):
+                release.check_image_name(name, "rc")
+
+    def test_a_catalog_rc_entry_needs_its_images_passing_vm_evidence(self) -> None:
+        now = datetime.datetime(2026, 10, 28, tzinfo=datetime.timezone.utc)
+        payload = artifact(RC_IMAGE, ZIP, PAYLOAD)
+        metadata = artifact(RC_IMAGE, "installer_data.json", METADATA)
+        catalog = release.build_catalog("rc", RC_IMAGE, payload, engine_document(), metadata, evidence_document(),
+                                        installer_document(), now)
+        self.assertEqual({model["evidenceRevision"] for model in catalog["models"]}, {RC_IMAGE})
+        self.assertEqual({model["payloadDigest"] for model in catalog["models"]}, {f"sha256:{sha(PAYLOAD)}"})
+        for evidence, message in ((None, "no VM evidence record"),
+                                  (evidence_document("e" * 64), "not " + sha(PAYLOAD)),
+                                  (dict(evidence_document(), result="fail"), "did not pass")):
+            with self.subTest(message), self.assertRaisesRegex(release.Refusal, message):
+                release.build_catalog("rc", RC_IMAGE, payload, engine_document(), metadata, evidence,
+                                      installer_document(), now)
 
     def test_a_catalog_names_its_image_and_still_takes_an_older_name(self) -> None:
         now = datetime.datetime(2026, 10, 14, tzinfo=datetime.timezone.utc)
@@ -713,7 +741,8 @@ else:
         self.assertIn("github.ref == 'refs/heads/main'", sign_job)
         # Each gate runs only for its own channels, before the key is read.
         gate_step = sign_job.split("Check the catalog")[1].split("- name: Sign")[0]
-        self.assertIn("evidence:edge)", gate_step)
+        self.assertIn("evidence:edge | evidence:rc)", gate_step)
+        self.assertNotIn("evidence:stable", gate_step)
         self.assertIn("promotion:rc | promotion:stable)", gate_step)
         publish_job = text.split("\n  publish:\n")[1]
         self.assertIn("needs.sign.result == 'success' && !inputs.dry-run", publish_job)

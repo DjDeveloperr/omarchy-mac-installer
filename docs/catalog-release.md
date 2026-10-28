@@ -1,6 +1,6 @@
 # Mac catalog release
 
-`.github/workflows/mac-catalog.yml` signs and publishes a channel catalog that pins one uploaded image, its engine and its `installer_data.json` by digest. It is a reusable workflow (`workflow_call`) for the edge publish trigger and can be run by hand (`workflow_dispatch`). It writes only `edge`; rc and stable catalogs come from `.github/workflows/mac-promote.yml` (see [Promotion](#promotion-parked), parked). Both sign through `.github/workflows/mac-catalog-sign.yml`, the only workflow that reads the catalog key.
+`.github/workflows/mac-catalog.yml` signs and publishes a channel catalog that pins one uploaded image, its engine and its `installer_data.json` by digest. It is a reusable workflow (`workflow_call`) for the edge publish trigger and can be run by hand (`workflow_dispatch`). It writes `edge` from an edge image and `rc` from an rc-lane image (built from the RC channel for a release tag and named from it, `omarchy-mac-4.5.0-rc2-r1-<date>-<package set id>`); both need passing VM evidence for the payload's sha256. Stable catalogs come only from `.github/workflows/mac-promote.yml` (see [Promotion](#promotion-parked), parked), which can also re-sign rc. Both sign through `.github/workflows/mac-catalog-sign.yml`, the only workflow that reads the catalog key.
 
 ## The Omacom catalog key
 
