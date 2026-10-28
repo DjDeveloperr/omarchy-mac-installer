@@ -116,6 +116,7 @@ class Triggers(unittest.TestCase):
         "mac-catalog.yml": {"workflow_call", "workflow_dispatch"},
         "edge-dispatch.yml": {"repository_dispatch"},
         "mac-mirror.yml": {"workflow_dispatch"},
+        "mac-pipeline-pins.yml": {"release", "workflow_dispatch"},
     }
 
     def test_no_pipeline_workflow_runs_for_pull_requests_pushes_or_other_runs(self):
