@@ -47,6 +47,7 @@ import base64
 import binascii
 import datetime
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -595,17 +596,35 @@ def open_url(url: str, timeout: float = 60, headers: dict[str, str] | None = Non
     return opener.open(request, timeout=timeout)
 
 
+REMOTE_READ_ATTEMPTS = 8
+
+
 def remote_digest(url: str, expected_size: int, whole=None) -> tuple[str, int]:
+    # A multi-gigabyte read through the CDN can stall; resume from the bytes
+    # already hashed instead of failing the whole catalog on one stall.
     digest = hashlib.sha256()
     size = 0
-    with open_url(url) as response:
-        while block := response.read(8 * 1024 * 1024):
-            size += len(block)
-            if size > expected_size:
-                raise Refusal(f"{url} serves more than its pinned {expected_size} bytes")
-            digest.update(block)
-            if whole is not None:
-                whole.update(block)
+    for attempt in range(REMOTE_READ_ATTEMPTS):
+        if size and size == expected_size:
+            break
+        headers = {"Range": f"bytes={size}-"} if size else None
+        try:
+            with (open_url(url, headers=headers) if headers else open_url(url)) as response:
+                if size and response.status != 206:
+                    raise Refusal(f"{url} ignored a resume request (HTTP {response.status})")
+                while block := response.read(8 * 1024 * 1024):
+                    size += len(block)
+                    if size > expected_size:
+                        raise Refusal(f"{url} serves more than its pinned {expected_size} bytes")
+                    digest.update(block)
+                    if whole is not None:
+                        whole.update(block)
+            return digest.hexdigest(), size
+        except (TimeoutError, ConnectionError, http.client.IncompleteRead, urllib.error.URLError) as error:
+            if isinstance(error, urllib.error.HTTPError) or attempt + 1 == REMOTE_READ_ATTEMPTS:
+                raise
+            print(f"{url}: read stopped at {size} bytes ({error}); resuming", file=sys.stderr)
+            time.sleep(5)
     return digest.hexdigest(), size
 
 

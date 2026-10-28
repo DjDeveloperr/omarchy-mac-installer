@@ -658,6 +658,44 @@ else:
         finally:
             release.open_url = saved
 
+    def test_remote_digest_resumes_a_stalled_read(self) -> None:
+        data = bytes(range(256)) * 64
+        requests = []
+
+        class Stalling(io.BytesIO):
+            status = 200
+
+            def read(self, size=-1):
+                if self.tell() >= 4096:
+                    raise TimeoutError("stalled")
+                return super().read(min(size, 1024))
+
+        def serve(url, timeout=60, headers=None):
+            requests.append(headers)
+            if headers is None:
+                return contextlib.closing(Stalling(data))
+            body = io.BytesIO(data[int(headers["Range"][6:-1]):])
+            body.status = 206
+            return contextlib.closing(body)
+
+        saved, sleep = release.open_url, release.time.sleep
+        release.open_url, release.time.sleep = serve, lambda seconds: None
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                digest, size = release.remote_digest("https://example.test/p", len(data))
+            self.assertEqual((digest, size), (hashlib.sha256(data).hexdigest(), len(data)))
+            self.assertEqual(requests, [None, {"Range": "bytes=4096-"}])
+
+            def ignore_range(url, timeout=60, headers=None):
+                return contextlib.closing(Stalling(data))
+
+            release.open_url = ignore_range
+            with contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaisesRegex(release.Refusal, "ignored a resume request"):
+                    release.remote_digest("https://example.test/p", len(data))
+        finally:
+            release.open_url, release.time.sleep = saved, sleep
+
     def test_remote_verification_reads_the_app_against_its_sidecar(self) -> None:
         base = release.identity()["INSTALLER_CATALOG_BASE"]
         url = f"{base}/installer/2.4.0/App-2.4.0.dmg"
