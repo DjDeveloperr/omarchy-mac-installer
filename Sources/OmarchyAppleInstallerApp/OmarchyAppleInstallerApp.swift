@@ -203,8 +203,12 @@ struct OmarchyAppleInstallerApp: App {
         Button("Remove Omarchy…") { showsRemoval = true }
           .disabled(removalNeedsReview || showsRemoval || liveSession?.canOpenRemoval != true)
         if liveSession?.recoveryAccountDeferred == true {
-          Button(PlainLanguage.setUpRecoveryAccount) { liveSession?.setUpRecoveryAccount() }
-            .disabled(showsRemoval || liveSession?.canSetUpRecoveryAccount != true)
+          Button(
+            liveSession?.recoveryAccountStarted == true
+              ? PlainLanguage.finishRecoveryAccount : PlainLanguage.setUpRecoveryAccount
+          ) { liveSession?.setUpRecoveryAccount() }
+          .disabled(
+            removalNeedsReview || showsRemoval || liveSession?.canSetUpRecoveryAccount != true)
         }
       }
       if InstallerBuildProfile.current.showsReleaseChannels {

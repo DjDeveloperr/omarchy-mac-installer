@@ -11,7 +11,7 @@
     case allocationClamped, allocationAligned, approvalChanged, credentialsRejected, connectionLost
     case emptyReply, helperFailure, degradedProgress, recoveryRetry, manualRecovery
     case shutdownFailure, completed, installationMedia, spaceChanged, preparedResumeMismatch
-    case skippedRecoveryAccount
+    case skippedRecoveryAccount, startedRecoveryAccount
 
     public var id: String { rawValue }
     public var title: String {
@@ -22,6 +22,7 @@
       case .engineUnavailable: "Engine unavailable"
       case .existingInstall: "Existing installation"
       case .skippedRecoveryAccount: "Existing installation · recovery account skipped"
+      case .startedRecoveryAccount: "Existing installation · recovery account unfinished"
       case .missingHelper: "Installation service missing"
       case .downloadFailure: "Download interrupted"
       case .invalidDownload: "Download verification failed"
@@ -81,7 +82,9 @@
       case .modelNotOnChannel:
         "The test channel's signed catalog lists other Macs only. Its channel label says Not available for this Mac, and Continue names this Mac and the models the channel supports."
       case .skippedRecoveryAccount:
-        "Recovery finished but the optional recovery account was skipped. The page says Omarchy is already installed with an Optional note. Installation → Set Up Recovery Password… shows the Recovery steps with Shut down, and Cancel returns."
+        "Recovery finished but the optional recovery account was skipped. The page says Omarchy is already installed with an Optional note. Installation → Set Up Recovery Password… shows the Recovery steps with Shut down, which shows the simulated shutdown message, and Cancel returns."
+      case .startedRecoveryAccount:
+        "Recovery finished and a recovery account was started but never authorized. The page says Omarchy is already installed with an Optional note about finishing it. Installation → Finish Recovery Password… shows the resume and authorize steps with Shut down, and Cancel returns."
       case .channelUnreachable:
         "The test channel's catalog address returns 404. Its channel label says Couldn’t load, and Continue reports a server problem, never a missing Mac release."
       default:
@@ -126,14 +129,21 @@
     public func cancel() { lock.withLock { cancelled = true } }
 
     public func inspectRecoveryAccount() async throws -> RecoveryAccountReply? {
-      guard scenario == .skippedRecoveryAccount else { return nil }
+      guard [.skippedRecoveryAccount, .startedRecoveryAccount].contains(scenario) else {
+        return nil
+      }
+      let target = RecoveryAccountTarget(
+        volumeName: "Omarchy", systemUUID: "11111111-1111-4111-8111-111111111111",
+        dataUUID: "22222222-2222-4222-8222-222222222222",
+        groupUUID: "33333333-3333-4333-8333-333333333333",
+        prebootUUID: "44444444-4444-4444-8444-444444444444")
       return RecoveryAccountReply(
-        ticket: "simulated",
-        target: RecoveryAccountTarget(
-          volumeName: "Omarchy", systemUUID: "11111111-1111-4111-8111-111111111111",
-          dataUUID: "22222222-2222-4222-8222-222222222222",
-          groupUUID: "33333333-3333-4333-8333-333333333333",
-          prebootUUID: "44444444-4444-4444-8444-444444444444"),
+        ticket: "simulated", target: target,
+        record: scenario == .startedRecoveryAccount
+          ? RecoveryAccountRecord(
+            target: target, username: "omarchy-owner",
+            generatedUID: "55555555-5555-4555-8555-555555555555", phase: "awaiting-ownership")
+          : nil,
         accountDeferred: true)
     }
 
@@ -149,7 +159,8 @@
       return HostDisplay(
         chipAndSpace: "Simulated Mac · 464 GB free", supported: engineSupported,
         blockingReason: scenario == .engineUnavailable ? PlainLanguage.engineUnavailable : nil,
-        existingInstalls: [.existingInstall, .skippedRecoveryAccount].contains(scenario)
+        existingInstalls: [.existingInstall, .skippedRecoveryAccount, .startedRecoveryAccount]
+          .contains(scenario)
           ? [ExistingInstallDisplay(sourceIdentifier: "Simulated disk", sizeDescription: "137 GB")]
           : [],
         unsupportedModel: scenario == .unsupported

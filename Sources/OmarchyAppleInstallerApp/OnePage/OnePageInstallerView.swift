@@ -116,7 +116,10 @@ struct OnePageInstallerView: View {
     .sheet(isPresented: $showsShutdownConfirmation) {
       ConfirmationSheet(
         title: PlainLanguage.shutdownConfirmationTitle,
-        message: PlainLanguage.shutdownConfirmationBody,
+        message: session.showsRecoveryAccountSetup
+          ? PlainLanguage.recoveryAccountShutdownConfirmationBody(
+            resuming: session.recoveryAccountStarted)
+          : PlainLanguage.shutdownConfirmationBody,
         action: PlainLanguage.shutdownConfirmationAction,
         onConfirm: {
           showsShutdownConfirmation = false
@@ -463,10 +466,14 @@ struct OnePageInstallerView: View {
       .foregroundStyle(OmarchyTheme.secondaryText)
       .fixedSize(horizontal: false, vertical: true)
       if session.recoveryAccountDeferred {
-        Label(PlainLanguage.recoveryAccountDeferredNote, systemImage: "info.circle")
-          .omarchyHelpText()
-          .fixedSize(horizontal: false, vertical: true)
-          .padding(.top, 4)
+        Label(
+          session.recoveryAccountStarted
+            ? PlainLanguage.recoveryAccountStartedNote : PlainLanguage.recoveryAccountDeferredNote,
+          systemImage: "info.circle"
+        )
+        .omarchyHelpText()
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.top, 4)
       }
     }
   }
@@ -554,15 +561,14 @@ struct OnePageInstallerView: View {
     let guide = session.powerButtonGuide
     if session.recoveryAccountDeferred {
       guard session.showsRecoveryAccountSetup else { return nil }
+      let resuming = session.recoveryAccountStarted
       return HandoffDisplay(
-        headline: PlainLanguage.recoveryAccountSetupHeadline,
-        steps: [
-          RecoveryStep(number: 1, title: "Shut down completely."),
-          RecoveryStep(number: 2, title: guide.holdInstruction),
-          RecoveryStep(number: 3, title: "Choose “\(target.volumeName)” → Finish Installation."),
-          RecoveryStep(
-            number: 4, title: "Create the recovery account: choose a username and password."),
-        ],
+        headline: resuming
+          ? PlainLanguage.recoveryAccountFinishHeadline
+          : PlainLanguage.recoveryAccountSetupHeadline,
+        steps: PlainLanguage.recoveryAccountSteps(
+          volumeName: target.volumeName, holdInstruction: guide.holdInstruction,
+          resuming: resuming),
         warning: nil)
     }
     return HandoffDisplay(
