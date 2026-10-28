@@ -104,6 +104,25 @@ fi
 grep -Fq "not an https server URL: http://mirror.invalid" "$work/out" || fail "resolve refuses an http server by name"
 pass "resolve refuses an http server"
 
+# Edge is the only enabled lane: rc and stable are refused by name, before any download, in either mode.
+for lane in rc stable; do
+  for mode in "--candidates $work" "--channel-set --recovery-app $work"; do
+    # shellcheck disable=SC2086
+    if "$BASH" "$inputs" resolve "$work/new" $mode --channel "$lane" --omarchy-server https://pkgs.invalid/x >"$work/out" 2>&1; then
+      fail "resolve accepts the $lane lane"
+    fi
+    grep -Fxq "channel_set: lane $lane is not enabled" "$work/out" || fail "resolve says the $lane lane is not enabled"
+    ! grep -Fq "could not download" "$work/out" || fail "a refused lane downloads nothing"
+    [[ ! -e $work/new ]] || fail "a refused lane writes no record"
+  done
+  sed "s/^omarchy_channel=.*/omarchy_channel=$lane/" "$work/inputs" >"$work/record"
+  if "$BASH" "$inputs" check "$work/record" >"$work/out" 2>&1; then
+    fail "check accepts a $lane record"
+  fi
+  grep -Fxq "channel_set: lane $lane is not enabled" "$work/out" || fail "check says the $lane lane is not enabled"
+done
+pass "resolve and check refuse the rc and stable lanes until they are enabled"
+
 # ── channel records ────────────────────────────────────────────────────────
 # A fixture edge snapshot: a real repository database naming the channel set,
 # its archives and stand-in signatures in the cache (nothing here verifies them).
