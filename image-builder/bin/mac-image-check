@@ -147,7 +147,7 @@ def expected_metadata(package: str, native_recovery: bool = False) -> dict:
                 "boot_object": "m1n1.bin",
                 "default_os_name": "Omarchy",
                 "icon": ICON,
-                "name": "Omarchy MX Mac",
+                "name": "Omarchy",
                 "next_object": "m1n1/boot.bin",
                 "omarchy_target": "apple-silicon-full-os",
                 "package": package,
