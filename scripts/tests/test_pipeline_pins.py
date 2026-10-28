@@ -280,6 +280,10 @@ class Workflow(unittest.TestCase):
         self.assertTrue(scripts)
         self.assertNotIn("${{", "\n".join(scripts))
 
+    def test_no_release_waits_behind_another(self):
+        self.assertIn("  group: mac-pipeline-pins-${{ inputs.tag || github.event.release.tag_name }}\n"
+                      "  cancel-in-progress: false", self.text)
+
     def test_the_pull_request_gets_its_required_checks(self):
         self.assertIn('gh workflow run checks.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"', self.text)
         self.assertIn("workflow_dispatch:", (ROOT / ".github" / "workflows" / "checks.yml").read_text())

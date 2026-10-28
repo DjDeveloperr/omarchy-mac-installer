@@ -29,8 +29,9 @@ on:
 permissions: {}
 
 concurrency:
-  # Bumps land one at a time, each on main as the one before left it.
-  group: mac-pipeline-pins
+  # One group per release: a single group keeps only one waiting run, so a
+  # third release would drop a queued one. Each release has its own branch.
+  group: mac-pipeline-pins-${{ inputs.tag || github.event.release.tag_name }}
   cancel-in-progress: false
 
 defaults:
