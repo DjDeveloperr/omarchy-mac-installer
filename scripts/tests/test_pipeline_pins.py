@@ -133,7 +133,7 @@ class Bump(unittest.TestCase):
         old = {**config(), "extra": {"minimumAppVersion": "2.3.0"}}
         new = pins.bump(old, pins.app_pin(app_release()))
         self.assertEqual(new["installer"]["latestVersion"], "2.3.9")
-        self.assertTrue(new["installer"]["downloadURL"].endswith("/installer/2.3.9/Omarchy-Mac-Installer-2.3.9.dmg"))
+        self.assertTrue(new["installer"]["downloadURL"].endswith(f"/installer/2.3.9/{NAMES['INSTALLER_FILE_STEM']}-2.3.9.dmg"))
         self.assertEqual(new["installer"]["minimumVersion"], old["installer"]["minimumVersion"])
         self.assertEqual(new["engine"], old["engine"])
         self.assertEqual(new["extra"], old["extra"])
