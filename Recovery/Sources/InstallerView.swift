@@ -551,7 +551,10 @@ final class InstallerView: NSViewController, NSTextFieldDelegate, NSMenuItemVali
     var explanation =
       rejection.map { $0 + " Enter it again, or Cancel and choose Utilities → Show Details." }
       ?? "Enter password for " + owner + "."
-    if !repair && model.authorizationUsesSourceOwner {
+    // Outside Recovery the preview asks for the current macOS user, like the
+    // original-owner bootstrap does. A target owner such as the recovery
+    // account is not a macOS owner, so it gets only the first sentence.
+    if !repair && (!RecoveryActions.inRecovery || model.authorizationUsesSourceOwner) {
       explanation += " Use your existing macOS owner’s password to set up Omarchy."
     }
     let field = NSSecureTextField()
