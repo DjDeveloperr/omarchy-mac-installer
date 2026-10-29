@@ -520,16 +520,6 @@ struct OnePageInstallerView: View {
       ForEach(handoff.steps) { step in
         RecoveryStepRow(step: step)
       }
-      Button("Copy setup steps") {
-        let steps = handoff.steps.map { step in
-          "\(step.number). \(step.title)" + (step.detail.map { "\n\($0)" } ?? "")
-        }
-        let text = ([handoff.headline] + [handoff.warning].compactMap { $0 } + steps)
-          .joined(separator: "\n\n")
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-      }
-      .omarchySecondaryButton()
       if let message = shutdownFailure ?? session.shutdownMessage {
         Text(message).font(OmarchyTheme.body).foregroundStyle(OmarchyTheme.caution)
       }

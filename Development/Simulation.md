@@ -53,7 +53,7 @@ For ambiguous outcomes, expand **Last verified activity**. Lack of a checkpoint 
 3. Ambiguous helper outcomes no longer claim that nothing changed. Verified activity stays visible and resubmission stays locked.
 4. Cancelling authorization permits returning to disk review and discards approval.
 5. Progress shows step count, actual phase, elapsed time, and expandable verified activity. Byte-based download progress remains measurable.
-6. Shutdown dispatch success or failure stays visible; the app does not quit before macOS decides whether shutdown can proceed. Recovery steps can be copied for another device.
+6. Shutdown dispatch success or failure stays visible; the app does not quit before macOS decides whether shutdown can proceed.
 7. Disk resizing has a text field with green Apply and red Cancel controls, plus an assistive adjustment action. Keyboard focus is retained. Long content scrolls, and technical errors expand on demand.
 8. The credential sheet explains the macOS account and authorization purpose. Wording consistently uses macOS, SSD, and Shut down.
 
