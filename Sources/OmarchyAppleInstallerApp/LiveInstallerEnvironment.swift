@@ -365,9 +365,7 @@ final class LiveInstallerEnvironment: InstallerEnvironment, @unchecked Sendable 
     return .plan(
       Self.planDisplay(
         review: prepared.review, host: freshHost, recommendation: recommendation,
-        reservedBytes: planningReserve,
-        release:
-          "\(channel.rawValue.capitalized) · \(release.assets.payload.fileURL.lastPathComponent)"
+        reservedBytes: planningReserve
       ))
   }
 
@@ -692,8 +690,7 @@ final class LiveInstallerEnvironment: InstallerEnvironment, @unchecked Sendable 
     review: InstallerPlanReview,
     host: AppleSiliconHostInspection,
     recommendation: InstallerAllocationRecommendation,
-    reservedBytes: UInt64 = 0,
-    release: String
+    reservedBytes: UInt64 = 0
   ) -> PlanDisplay {
     let length = review.plan.lengthBytes
     let total =
@@ -708,9 +705,6 @@ final class LiveInstallerEnvironment: InstallerEnvironment, @unchecked Sendable 
       isResizable: review.plan.candidateKind != "replace",
       minimumBytes: recommendation.minimumBytes,
       maximumBytes: recommendation.maximumBytes,
-      releaseDescription: release,
-      targetDescription:
-        "Internal storage · \(review.plan.candidateKind == "free" ? "Use free space" : "Resize macOS")",
       fixedMacOSBytes: review.plan.candidateKind == "free" ? host.storage.containerSizeBytes : nil,
       macOSFreeBeforeAllocationBytes:
         review.plan.candidateKind == "resize"

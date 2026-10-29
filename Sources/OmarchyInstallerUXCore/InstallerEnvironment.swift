@@ -115,8 +115,6 @@
     public let bindingDigest: String
     public let minimumBytes: UInt64
     public let maximumBytes: UInt64
-    public let releaseDescription: String
-    public let targetDescription: String
     public let fixedMacOSBytes: UInt64?
     /// Fresh APFS free space after reserving remaining staging and handoff copies.
     public let macOSFreeBeforeAllocationBytes: UInt64?
@@ -134,8 +132,6 @@
       isResizable: Bool = true,
       minimumBytes: UInt64? = nil,
       maximumBytes: UInt64? = nil,
-      releaseDescription: String = "Verified release",
-      targetDescription: String = "Internal storage",
       fixedMacOSBytes: UInt64? = nil,
       macOSFreeBeforeAllocationBytes: UInt64? = nil,
       recommendedOmarchyBytes: UInt64? = nil
@@ -145,8 +141,6 @@
       self.bindingDigest = bindingDigest
       self.minimumBytes = minimumBytes ?? omarchyBytes
       self.maximumBytes = maximumBytes ?? omarchyBytes
-      self.releaseDescription = releaseDescription
-      self.targetDescription = targetDescription
       self.fixedMacOSBytes = fixedMacOSBytes
       self.macOSFreeBeforeAllocationBytes = macOSFreeBeforeAllocationBytes
       self.recommendedOmarchyBytes = recommendedOmarchyBytes
