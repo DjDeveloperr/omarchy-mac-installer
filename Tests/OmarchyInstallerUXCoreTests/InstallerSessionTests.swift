@@ -203,7 +203,8 @@
       let create = PlainLanguage.recoveryAccountSteps(
         volumeName: "Omarchy", holdInstruction: "Hold it.", resuming: false)
       XCTAssertEqual(create.map(\.number), [1, 2, 3, 4])
-      XCTAssertTrue(create[3].title.contains("Create a recovery account"), create[3].title)
+      XCTAssertTrue(
+        create[3].title.contains("Utilities → Create Recovery Account…"), create[3].title)
       let resume = PlainLanguage.recoveryAccountSteps(
         volumeName: "Omarchy", holdInstruction: "Hold it.", resuming: true)
       XCTAssertEqual(resume.map(\.number), [1, 2, 3, 4, 5])
@@ -211,7 +212,7 @@
       XCTAssertTrue(resume[4].title.contains("authorize"), resume[4].title)
       XCTAssertTrue(
         PlainLanguage.recoveryAccountShutdownConfirmationBody(resuming: false)
-          .contains("Create a recovery account"))
+          .contains("Utilities → Create Recovery Account…"))
       XCTAssertTrue(
         PlainLanguage.recoveryAccountShutdownConfirmationBody(resuming: true)
           .contains("Resume recovery setup"))

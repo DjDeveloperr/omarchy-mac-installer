@@ -34,8 +34,8 @@
       "Optional: you started setting up a recovery password but didn’t finish. To finish it, select Installation → Finish Recovery Password… from the menu bar."
     public static let recoveryAccountFinishHeadline = "Finish setting up your recovery password"
 
-    /// What Recovery shows for a skipped account: "Recovery complete" with a
-    /// Create a recovery account link, or, once the account was started,
+    /// What Recovery offers for a skipped account: Utilities → Create Recovery
+    /// Account… on its completion screen, or, once the account was started,
     /// "Resume recovery setup" and then its authorization steps.
     public static func recoveryAccountSteps(
       volumeName: String, holdInstruction: String, resuming: Bool
@@ -58,7 +58,8 @@
         steps.append(
           RecoveryStep(
             number: 4,
-            title: "Choose Create a recovery account, then choose a username and password."))
+            title:
+              "Choose Utilities → Create Recovery Account…, then choose a username and password."))
       }
       return steps
     }
@@ -67,7 +68,7 @@
       "Save your work first. When this Mac is off, press and hold the power button until “Loading startup options” appears. Choose Omarchy → Finish Installation and sign in with your macOS account if asked, then "
         + (resuming
           ? "enter the recovery password at Resume recovery setup and follow the steps to authorize it."
-          : "choose Create a recovery account.")
+          : "choose Utilities → Create Recovery Account… from the menu bar.")
     }
     public static let closeInstaller = "Close"
 
