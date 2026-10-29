@@ -521,11 +521,8 @@ final class InstallerView: NSViewController, NSTextFieldDelegate {
     var explanation =
       rejection.map { $0 + " Enter it again, or Cancel and open Show details." }
       ?? "Enter password for " + owner + "."
-    if !repair {
-      explanation +=
-        model.authorizationUsesSourceOwner
-        ? " Use your existing macOS owner’s password to set up Omarchy. Your macOS security settings are unaffected."
-        : " Use your Omarchy installation’s credentials to adjust its security settings. The security of your macOS installations is unaffected."
+    if !repair && model.authorizationUsesSourceOwner {
+      explanation += " Use your existing macOS owner’s password to set up Omarchy."
     }
     let field = NSSecureTextField()
     field.placeholderString = "Password"
@@ -543,15 +540,6 @@ final class InstallerView: NSViewController, NSTextFieldDelegate {
     body.alignment = .leading
     body.spacing = 8
     body.addArrangedSubview(field)
-    let showBootArgumentNote = !repair && RecoveryActions.allowsCustomBootArguments
-    if showBootArgumentNote {
-      let note = label(
-        "Omarchy will allow custom Aura boot arguments, including USB proxy mode.", size: 11,
-        alignment: .left)
-      note.preferredMaxLayoutWidth = 374
-      note.widthAnchor.constraint(equalToConstant: 374).isActive = true
-      body.addArrangedSubview(note)
-    }
     let cancel = RecoverySecondaryButton(
       title: "Cancel", target: self, action: #selector(cancelPanelPressed))
     cancel.keyEquivalent = "\u{1b}"
@@ -562,7 +550,7 @@ final class InstallerView: NSViewController, NSTextFieldDelegate {
     let panel = RecoverySheet(
       title: repair ? "Authorize startup disk" : "Authorize installation",
       message: explanation, width: 430,
-      body: body, bodyHeight: showBootArgumentNote ? 72 : 32, buttons: [cancel, proceed])
+      body: body, bodyHeight: 32, buttons: [cancel, proceed])
     return present(panel, focus: field)
   }
 
