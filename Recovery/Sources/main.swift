@@ -557,6 +557,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       withTitle: "Terminal", action: #selector(openTerminal(_:)), keyEquivalent: "t")
     terminal.keyEquivalentModifierMask = [.command, .option]
     terminal.target = self
+    utilities.addItem(.separator())
+    let details = utilities.addItem(
+      withTitle: "Show Details", action: #selector(InstallerView.showDetails(_:)),
+      keyEquivalent: "")
+    details.target = controller
 
     let windows = submenu("Window")
     windows.addItem(

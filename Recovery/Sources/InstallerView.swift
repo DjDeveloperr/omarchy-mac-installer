@@ -2,7 +2,7 @@ import AppKit
 
 /// The complete Recovery interface uses only AppKit. The model owns installation
 /// work; this controller renders its state and keeps credentials in native fields.
-final class InstallerView: NSViewController, NSTextFieldDelegate {
+final class InstallerView: NSViewController, NSTextFieldDelegate, NSMenuItemValidation {
   private let model: InstallerModel
   private let log = InstallerLog.shared
   private let titleLabel = NSTextField(labelWithString: "")
@@ -22,7 +22,6 @@ final class InstallerView: NSViewController, NSTextFieldDelegate {
   private var accountButton: NSButton?
   private var skipButton: NSButton?
   private var offerAccountButton: NSButton?
-  private var detailsButton: NSButton?
   private var issueShowing = false
   private var issueRepair = false
   private var authorizationRepair = false
@@ -120,7 +119,6 @@ final class InstallerView: NSViewController, NSTextFieldDelegate {
       !model.checkingEnvironment && !model.restartingCompletedSetup
       && !model.restartingWithoutAccount
     offerAccountButton?.isEnabled = !model.restartingWithoutAccount
-    detailsButton?.isHidden = model.stage == .welcome && log.text.isEmpty
     debugButton?.title = model.debugEnabled ? "Disable Debug" : "Enable Debug"
     proxyButton?.title = model.proxyEnabled ? "Disable Proxy" : "Enable Proxy"
     accountButton?.title =
@@ -193,7 +191,6 @@ final class InstallerView: NSViewController, NSTextFieldDelegate {
     accountButton = nil
     skipButton = nil
     offerAccountButton = nil
-    detailsButton = nil
 
     switch model.stage {
     case .welcome: buildWelcome()
@@ -355,14 +352,6 @@ final class InstallerView: NSViewController, NSTextFieldDelegate {
       center.centerXAnchor.constraint(equalTo: footer.centerXAnchor),
       center.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
     ])
-    let details = RecoveryTextButton(
-      title: "Show details", target: self, action: #selector(detailsPressed))
-    footer.addSubview(details)
-    NSLayoutConstraint.activate([
-      details.trailingAnchor.constraint(equalTo: footer.trailingAnchor),
-      details.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
-    ])
-    detailsButton = details
   }
 
   private func fieldRow(_ title: String, field: NSTextField) -> NSStackView {
@@ -494,7 +483,7 @@ final class InstallerView: NSViewController, NSTextFieldDelegate {
 
   private func closePanel() { sheets.close() }
 
-  /// Asks for the password again. A sheet such as Show details may be open
+  /// Asks for the password again. A sheet such as the details may be open
   /// when the command refuses it; the request then waits for that sheet to
   /// close. If the sheet still can't open, the refusal is shown as a failure.
   private func authorizeAgain(repair: Bool, rejection: String?) {
@@ -519,7 +508,7 @@ final class InstallerView: NSViewController, NSTextFieldDelegate {
       RecoveryActions.inRecovery
       ? (model.authorizationOwner?.username ?? "the volume owner") : NSUserName()
     var explanation =
-      rejection.map { $0 + " Enter it again, or Cancel and open Show details." }
+      rejection.map { $0 + " Enter it again, or Cancel and choose Utilities → Show Details." }
       ?? "Enter password for " + owner + "."
     if !repair && model.authorizationUsesSourceOwner {
       explanation += " Use your existing macOS owner’s password to set up Omarchy."
@@ -580,7 +569,28 @@ final class InstallerView: NSViewController, NSTextFieldDelegate {
     closePanel()
   }
 
-  @objc private func detailsPressed() {
+  /// Utilities → Show Details. A failure sheet gives way to the details, as
+  /// its own Show details button once did; any other sheet keeps it disabled.
+  @objc func showDetails(_ sender: Any?) {
+    guard canShowDetails else { return }
+    if issueShowing { issueCancelPressed() }
+    presentDetails()
+  }
+
+  private var canShowDetails: Bool {
+    // There is nothing to show before the first attempt has logged anything.
+    guard model.stage != .welcome || !log.text.isEmpty else { return false }
+    return sheets.active == nil || (issueShowing && !issueRepair)
+  }
+
+  func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+    switch menuItem.action {
+    case #selector(showDetails(_:)): return canShowDetails
+    default: return true
+    }
+  }
+
+  private func presentDetails() {
     let viewer = LogTextView(
       text: log.text.isEmpty ? model.operations.joined(separator: "\n") : log.text)
     viewer.translatesAutoresizingMaskIntoConstraints = false
@@ -630,33 +640,36 @@ final class InstallerView: NSViewController, NSTextFieldDelegate {
   private func presentIssue() {
     let issue = model.environmentIssue
     issueRepair = issue?.canRepairStartupSelection == true
-    let primary = RecoveryPrimaryButton(
-      title: issueRepair ? "Set Startup Disk and Shut Down" : "Show details",
-      target: self, action: #selector(issuePrimaryPressed))
-    let cancel = RecoverySecondaryButton(
-      title: issueRepair ? "Cancel" : "OK", target: self,
-      action: #selector(issueCancelPressed))
-    cancel.keyEquivalent = "\u{1b}"
+    let buttons: [NSButton]
+    if issueRepair {
+      let cancel = RecoverySecondaryButton(
+        title: "Cancel", target: self, action: #selector(issueCancelPressed))
+      cancel.keyEquivalent = "\u{1b}"
+      let repair = RecoveryPrimaryButton(
+        title: "Set Startup Disk and Shut Down", target: self,
+        action: #selector(issueRepairPressed))
+      buttons = [cancel, repair]
+    } else {
+      // The details are in Utilities → Show Details, so OK is the only action.
+      let done = RecoveryPrimaryButton(
+        title: "OK", target: self, action: #selector(issueCancelPressed))
+      done.keyEquivalent = "\r"
+      buttons = [done]
+    }
     let panel = RecoverySheet(
       title: issue?.title ?? "Setup could not finish",
       message: issue?.message ?? model.failure ?? "",
-      width: 460, body: NSView(), bodyHeight: 0,
-      buttons: [cancel, primary])
+      width: 460, body: NSView(), bodyHeight: 0, buttons: buttons)
     issueShowing = present(panel)
   }
 
-  @objc private func issuePrimaryPressed() {
-    let repair = issueRepair
+  @objc private func issueRepairPressed() {
     issueShowing = false
     model.environmentIssue = nil
     model.failure = nil
     closePanel()
-    if repair {
-      model.repairRecoveryBoot { [weak self] rejection in
-        self?.authorizeAgain(repair: true, rejection: rejection)
-      }
-    } else {
-      detailsPressed()
+    model.repairRecoveryBoot { [weak self] rejection in
+      self?.authorizeAgain(repair: true, rejection: rejection)
     }
   }
 

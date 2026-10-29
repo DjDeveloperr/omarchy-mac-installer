@@ -45,7 +45,7 @@ import AppKit
     precondition(dismissals == 2)
     precondition(!sheets.present(panel(), on: nil), "presented without a window")
 
-    // A password refused while Show details is open waits for it to close,
+    // A password refused while the details sheet is open waits for it to close,
     // after onDismiss has cleared the old sheet's state.
     var order = [String]()
     sheets.onDismiss = { order.append("dismiss") }
