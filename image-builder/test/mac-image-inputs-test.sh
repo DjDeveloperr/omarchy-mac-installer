@@ -137,6 +137,8 @@ resolve_refuses "an edge build with a tag" "the edge lane takes no release tag" 
 resolve_refuses "a malformed tag" "v4.5.0 is not an rc release tag" --channel rc --release-tag v4.5.0
 resolve_refuses "a revision without a tag" "--mac-revision needs --release-tag" --mac-revision 2
 resolve_refuses "revision 0" "the Mac revision must be 1 to 999" --channel rc --release-tag v4.5.0-rc2 --mac-revision 0
+resolve_refuses "an rc build from a candidate set" "the rc lane builds from its channel's set: use --channel-set" \
+  --channel rc --release-tag v4.5.0-rc2
 resolve_refuses "an rc build from the edge server" "an rc image takes nothing from edge" --channel rc \
   --release-tag v4.5.0-rc2 --omarchy-server 'https://pkgs.omarchy.org/edge/$arch'
 resolve_refuses "an rc build from the edge ALARM mirror" "an rc image takes nothing from edge" --channel rc \

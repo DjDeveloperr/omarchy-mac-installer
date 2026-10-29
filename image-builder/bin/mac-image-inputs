@@ -397,6 +397,9 @@ case $mode in
       valid_server "$value" || usage_error "not an https server URL: $value"
     done
     check_release_servers
+    # A release lane's image is its channel's set; inspection reads that set's fields.
+    [[ -n $channel_mode || $channel == edge ]] ||
+      usage_error "the $channel lane builds from its channel's set: use --channel-set, not --candidates"
     resolve "${positionals[0]}"
     load_record "${positionals[0]}"
     cat "${positionals[0]}"
