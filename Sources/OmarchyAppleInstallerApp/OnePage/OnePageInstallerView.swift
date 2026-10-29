@@ -949,47 +949,25 @@ private struct DiskSplitPanel: View {
 
 // MARK: - The install bar
 
-/// Stage count and verified activity describe progress without inventing a
-/// percentage for operations whose duration is unknown.
+/// The current phase, one estimated bar and the time left. Verified activity
+/// stays one click away.
 private struct InstallPanel: View {
   let progress: InstallProgressDisplay
   @State private var estimate = InstallationProgressEstimate(
     expectedSeconds: InstallationTimingHistory.expectedSeconds)
 
-  private var stageLabel: String {
-    let index = progress.stageIndex
-    if progress.stageLabels.indices.contains(index) {
-      return progress.phaseTitle
-    }
-    return progress.phaseTitle
-  }
-
   var body: some View {
     Panel {
       VStack(alignment: .leading, spacing: 12) {
-        HStack(alignment: .firstTextBaseline) {
-          Text(stageLabel)
-            .font(OmarchyTheme.heading)
-            .lineLimit(1)
-            .truncationMode(.tail)
-          Spacer(minLength: 8)
-          TimelineView(.periodic(from: progress.startedAt, by: 1)) { context in
-            Text(elapsed(at: context.date))
-              .font(OmarchyTheme.detail)
-              .foregroundStyle(OmarchyTheme.secondaryText)
-          }
-          Text(
-            "Step \(min(progress.stageIndex + 1, progress.stageLabels.count)) of \(progress.stageLabels.count)"
-          )
-          .font(OmarchyTheme.body)
-        }
+        Text(progress.phaseTitle)
+          .font(OmarchyTheme.heading)
+          .lineLimit(1)
+          .truncationMode(.tail)
         TimelineView(.periodic(from: progress.startedAt, by: 1)) { context in
           let elapsed = max(0, context.date.timeIntervalSince(progress.startedAt))
           VStack(alignment: .leading, spacing: 6) {
             ProgressTrack(fraction: estimate.fraction, height: 18)
-            HStack {
-              Text("Estimated progress · \(Int(estimate.fraction * 100))%")
-              Spacer()
+            Group {
               if let minutes = estimate.remainingMinutes(elapsed: elapsed) {
                 Text("About \(minutes) min remaining")
               } else {
@@ -1017,11 +995,6 @@ private struct InstallPanel: View {
       }
       .padding(.vertical, 4)
     }
-  }
-
-  private func elapsed(at date: Date) -> String {
-    let seconds = max(0, Int(date.timeIntervalSince(progress.startedAt)))
-    return String(format: "%d:%02d", seconds / 60, seconds % 60)
   }
 }
 

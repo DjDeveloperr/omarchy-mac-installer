@@ -317,26 +317,20 @@
 
   public struct InstallProgressDisplay: Equatable, Sendable {
     public let phaseTitle: String
-    public let stageIndex: Int
     public let stageFractions: [Double]
-    public let stageLabels: [String]
     public let feed: [JournalFeedLine]
     public let degraded: Bool
     public let startedAt: Date
 
     public init(
       phaseTitle: String,
-      stageIndex: Int,
       stageFractions: [Double],
-      stageLabels: [String],
       feed: [JournalFeedLine],
       degraded: Bool,
       startedAt: Date
     ) {
       self.phaseTitle = phaseTitle
-      self.stageIndex = stageIndex
       self.stageFractions = stageFractions
-      self.stageLabels = stageLabels
       self.feed = feed
       self.degraded = degraded
       self.startedAt = startedAt

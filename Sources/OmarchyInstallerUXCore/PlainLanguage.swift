@@ -208,10 +208,6 @@
     public static let installDegraded =
       "Live progress isn’t available. The installer will check the installation record when complete."
     public static let installVerifyingOwner = "Checking your macOS account…"
-    public static let installStageLabels = [
-      "Preparing disk space", "Installing boot files",
-      "Preparing final setup",
-    ]
 
     public static func installPhaseTitle(forPhase phase: String?) -> String {
       switch phase {
