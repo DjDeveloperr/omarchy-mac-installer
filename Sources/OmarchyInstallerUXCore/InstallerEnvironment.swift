@@ -586,7 +586,6 @@
     /// Returns true when the machine is actually going down; the preview
     /// environment and tests return false so nothing powers off.
     func requestShutdown() -> Bool
-    func setEncryptLinuxDisk(_ encrypt: Bool)
     func prefetchPayload(
       progress: @escaping @Sendable (PayloadPrefetchState) -> Void
     ) async throws
@@ -619,7 +618,6 @@
     public func requestShutdown() -> Bool { false }
     public var payloadPrefetchRequired: Bool { false }
     public var payloadPrefetchState: PayloadPrefetchState { .verified }
-    public func setEncryptLinuxDisk(_ encrypt: Bool) {}
     public func prefetchPayload(
       progress: @escaping @Sendable (PayloadPrefetchState) -> Void
     ) async throws {

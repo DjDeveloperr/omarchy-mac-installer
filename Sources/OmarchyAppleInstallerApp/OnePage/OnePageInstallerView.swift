@@ -229,15 +229,8 @@ struct OnePageInstallerView: View {
         state: session.prefetchState,
         onRetry: session.canRetryPrefetch ? { session.retryPrefetch() } : nil
       )
-      if session.allowsEncryption {
-        EncryptDiskToggle(
-          isOn: session.encryptLinuxDisk,
-          enabled: !session.isBusy && !session.isEditingSize,
-          onChange: { session.setEncryptLinuxDisk($0) }
-        )
-      } else {
-        Text("Private M3 test: Linux will be installed without disk encryption.")
-          .font(OmarchyTheme.body).foregroundStyle(OmarchyTheme.caution)
+      if !session.allowsEncryption {
+        plainInstallCaution
       }
       if let notice = session.allocationNotice {
         Text(notice).font(OmarchyTheme.body).foregroundStyle(OmarchyTheme.caution)
@@ -251,15 +244,8 @@ struct OnePageInstallerView: View {
         state: session.prefetchState,
         onRetry: session.canRetryPrefetch ? { session.retryPrefetch() } : nil
       )
-      if session.allowsEncryption {
-        EncryptDiskToggle(
-          isOn: session.encryptLinuxDisk,
-          enabled: false,
-          onChange: { _ in }
-        )
-      } else {
-        Text("Private M3 test: Linux will be installed without disk encryption.")
-          .font(OmarchyTheme.body).foregroundStyle(OmarchyTheme.caution)
+      if !session.allowsEncryption {
+        plainInstallCaution
       }
       if !helper.isReady {
         helperNote
@@ -504,6 +490,13 @@ struct OnePageInstallerView: View {
     .padding(.top, 4)
   }
 
+  /// The private plain-install test build never encrypts; every other build
+  /// always does, so there is nothing to choose.
+  private var plainInstallCaution: some View {
+    Text("Private M3 test: Linux will be installed without disk encryption.")
+      .font(OmarchyTheme.body).foregroundStyle(OmarchyTheme.caution)
+  }
+
   private var helperNote: some View {
     HStack(spacing: 10) {
       Image(systemName: "lock.shield")
@@ -677,7 +670,7 @@ struct OnePageInstallerView: View {
   }
 }
 
-// MARK: - Prefetch strip and encryption
+// MARK: - Prefetch strip
 
 private struct PrefetchStrip: View {
   let state: PayloadPrefetchState
@@ -739,33 +732,6 @@ private struct PrefetchStrip: View {
     default:
       nil
     }
-  }
-}
-
-private struct EncryptDiskToggle: View {
-  let isOn: Bool
-  let enabled: Bool
-  let onChange: (Bool) -> Void
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 6) {
-      Toggle(
-        PlainLanguage.encryptLinuxDiskTitle,
-        isOn: Binding(
-          get: { isOn },
-          set: { value in onChange(value) }
-        )
-      )
-      .toggleStyle(.checkbox)
-      .controlSize(.large)
-      .tint(OmarchyTheme.accent)
-      .disabled(!enabled)
-      // One help paragraph: the password, and that nothing else unlocks the disk.
-      Text(PlainLanguage.encryptLinuxDiskPassword + " " + PlainLanguage.encryptLinuxDiskNoRecovery)
-        .omarchyHelpText()
-    }
-    .padding(.horizontal, 4)
-    .padding(.top, 4)
   }
 }
 

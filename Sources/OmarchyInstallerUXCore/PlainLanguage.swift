@@ -95,11 +95,6 @@
     public static let installHoldAcknowledgement = "Tick the backup box above to continue."
     public static let installHoldDownload = "Install unlocks once the download is verified."
     public static let downloadingPackagesTitle = "Downloading Omarchy"
-    public static let encryptLinuxDiskTitle = "Encrypt the Omarchy disk"
-    public static let encryptLinuxDiskPassword =
-      "The Omarchy password you create at first boot will unlock the encrypted disk after installation."
-    public static let encryptLinuxDiskNoRecovery =
-      "There is no separate recovery key, so keep the password somewhere safe."
     public static let encryptionChoiceNotRecorded =
       "The encryption choice wasn’t saved, so Omarchy will encrypt its disk at first boot."
     public static let encryptionOptOutRecorded =

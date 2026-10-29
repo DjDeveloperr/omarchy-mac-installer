@@ -22,7 +22,6 @@ final class LiveInstallerEnvironment: InstallerEnvironment, @unchecked Sendable 
   private var reusableAssets: PreparedInstallerAssets?
   private var releaseConfiguration: InstallerReleaseConfiguration?
   private let buildProfile = InstallerBuildProfile.current
-  private var encryptLinuxDisk = true
   private var selectedLane = ReleaseChannel.stable.rawValue
   private let prefetch = PayloadPrefetchOrchestrator()
   private var plannedPayload: StagedInstallerArtifact?
@@ -445,10 +444,6 @@ final class LiveInstallerEnvironment: InstallerEnvironment, @unchecked Sendable 
     } catch {
       return false
     }
-  }
-
-  func setEncryptLinuxDisk(_ encrypt: Bool) {
-    lock.withLock { encryptLinuxDisk = buildProfile.allowsEncryption ? encrypt : false }
   }
 
   func cancelPayloadPrefetch() {

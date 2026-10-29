@@ -243,56 +243,38 @@
       XCTAssertEqual(session.channelAvailability, current)
     }
 
-    func testPrivateLimineProfileSubmitsExplicitEncryptionChoice() async throws {
-      for encrypt in [false, true] {
-        let environment = MockInstallerEnvironment()
-        let profile = InstallerBuildProfile.resolve(infoDictionary: [
-          "OmarchyPrivateLimineTest": true
-        ])
-        let session = InstallerSession(
-          environment: environment, allowsEncryption: profile.allowsEncryption)
-        XCTAssertTrue(session.encryptLinuxDisk)
-        await session.inspect()
-        await session.continueToPlan()
-        session.continueToPlanReview()
-        session.setEncryptLinuxDisk(encrypt)
-        XCTAssertEqual(environment.storedEncryptLinuxDisk, encrypt)
-        session.setAcknowledged(true)
-        session.approve()
-        session.presentInstallCredentials()
-        await session.submit(try authorization())
-        XCTAssertEqual(environment.lastEncryptLinuxDisk, encrypt)
-      }
-    }
-
-    func testPlainOnlyProfileCannotEnableEncryptionOrResetIntoIt() async throws {
+    func testPrivateLimineProfileAlwaysSubmitsAnEncryptedInstallation() async throws {
       let environment = MockInstallerEnvironment()
-      let session = InstallerSession(environment: environment, allowsEncryption: false)
-      XCTAssertFalse(session.encryptLinuxDisk)
-      XCTAssertFalse(environment.storedEncryptLinuxDisk)
+      let profile = InstallerBuildProfile.resolve(infoDictionary: [
+        "OmarchyPrivateLimineTest": true
+      ])
+      let session = InstallerSession(
+        environment: environment, allowsEncryption: profile.allowsEncryption)
+      XCTAssertTrue(session.allowsEncryption)
       await session.inspect()
       await session.continueToPlan()
       session.continueToPlanReview()
-      session.setEncryptLinuxDisk(true)
-      XCTAssertFalse(session.encryptLinuxDisk)
-      XCTAssertFalse(environment.storedEncryptLinuxDisk)
+      session.setAcknowledged(true)
+      session.approve()
+      session.presentInstallCredentials()
+      await session.submit(try authorization())
+      XCTAssertEqual(environment.lastEncryptLinuxDisk, true)
+    }
+
+    func testPlainOnlyProfileSubmitsAPlainInstallationAfterReinspection() async throws {
+      let environment = MockInstallerEnvironment()
+      let session = InstallerSession(environment: environment, allowsEncryption: false)
+      await session.inspect()
+      await session.continueToPlan()
+      session.continueToPlanReview()
+      await session.inspect()
+      await session.continueToPlan()
+      session.continueToPlanReview()
       session.setAcknowledged(true)
       session.approve()
       session.presentInstallCredentials()
       await session.submit(try authorization())
       XCTAssertEqual(environment.lastEncryptLinuxDisk, false)
-    }
-
-    func testPlainOnlyProfileReinspectKeepsPlainState() async {
-      let environment = MockInstallerEnvironment()
-      let session = InstallerSession(environment: environment, allowsEncryption: false)
-      await session.inspect()
-      await session.continueToPlan()
-      session.continueToPlanReview()
-      session.setEncryptLinuxDisk(true)
-      await session.inspect()
-      XCTAssertFalse(session.encryptLinuxDisk)
-      XCTAssertFalse(environment.storedEncryptLinuxDisk)
     }
 
     func testMissingLiveInstallationCannotReachShutdownAfterCompletion() async throws {
@@ -1662,34 +1644,18 @@
       }
     }
 
-    func testReinspectResetsDisplayedAndStoredEncryptionChoice() async {
+    func testStandardInstallAlwaysSubmitsAnEncryptedInstallation() async throws {
       let environment = MockInstallerEnvironment()
       let session = InstallerSession(environment: environment)
+      XCTAssertTrue(session.allowsEncryption)
       await session.inspect()
       await session.continueToPlan()
       session.continueToPlanReview()
-      session.setEncryptLinuxDisk(false)
-      XCTAssertFalse(session.encryptLinuxDisk)
-      XCTAssertFalse(environment.storedEncryptLinuxDisk)
-
-      await session.inspect()
-
-      XCTAssertTrue(session.encryptLinuxDisk)
-      XCTAssertTrue(environment.storedEncryptLinuxDisk)
-    }
-
-    func testInstallReadsEncryptionChoiceFromTheSession() async throws {
-      let environment = MockInstallerEnvironment()
-      let session = InstallerSession(environment: environment)
-      await session.inspect()
-      await session.continueToPlan()
-      session.continueToPlanReview()
-      session.setEncryptLinuxDisk(false)
       session.setAcknowledged(true)
       session.approve()
       session.presentInstallCredentials()
       await session.submit(try authorization())
-      XCTAssertEqual(environment.lastEncryptLinuxDisk, false)
+      XCTAssertEqual(environment.lastEncryptLinuxDisk, true)
     }
 
     func testAwaitingRecoveryRendersTheHandoffWarning() async throws {
@@ -1722,25 +1688,27 @@
       XCTAssertEqual(handoff.warning, PlainLanguage.encryptionChoiceNotRecorded)
     }
 
-    func testRecoveryRetrySubmitStillUsesTheSessionEncryptionChoice() async throws {
-      let environment = MockInstallerEnvironment()
-      environment.executeResults = [
-        .failure(EngineXPCSubmissionError.recoveryAuthorizationFailed),
-        .success(MockInstallerEnvironment.recoveryCompletion),
-      ]
-      let session = InstallerSession(environment: environment)
-      await session.inspect()
-      await session.continueToPlan()
-      session.continueToPlanReview()
-      session.setEncryptLinuxDisk(false)
-      session.setAcknowledged(true)
-      session.approve()
-      session.presentInstallCredentials()
-      await session.submit(try authorization())
-      session.presentRecoveryRetryCredentials()
-      await session.submit(try authorization())
-      XCTAssertEqual(environment.lastOperation, .retryRecoveryAuthorization)
-      XCTAssertEqual(environment.lastEncryptLinuxDisk, false)
+    func testRecoveryRetrySubmitKeepsTheBuildEncryptionSetting() async throws {
+      for allowsEncryption in [true, false] {
+        let environment = MockInstallerEnvironment()
+        environment.executeResults = [
+          .failure(EngineXPCSubmissionError.recoveryAuthorizationFailed),
+          .success(MockInstallerEnvironment.recoveryCompletion),
+        ]
+        let session = InstallerSession(
+          environment: environment, allowsEncryption: allowsEncryption)
+        await session.inspect()
+        await session.continueToPlan()
+        session.continueToPlanReview()
+        session.setAcknowledged(true)
+        session.approve()
+        session.presentInstallCredentials()
+        await session.submit(try authorization())
+        session.presentRecoveryRetryCredentials()
+        await session.submit(try authorization())
+        XCTAssertEqual(environment.lastOperation, .retryRecoveryAuthorization)
+        XCTAssertEqual(environment.lastEncryptLinuxDisk, allowsEncryption)
+      }
     }
   }
 
@@ -1819,7 +1787,6 @@
     private(set) var prepareCount = 0
     private(set) var lastOperation: InstallOperationKind?
     private(set) var lastEncryptLinuxDisk: Bool?
-    private(set) var storedEncryptLinuxDisk = true
     private var approved = false
 
     var hasApprovedPlan: Bool { approved }
@@ -1915,10 +1882,6 @@
     func requestShutdown() -> Bool {
       requestShutdownCount += 1
       return shutdownAccepted
-    }
-
-    func setEncryptLinuxDisk(_ encrypt: Bool) {
-      storedEncryptLinuxDisk = encrypt
     }
 
     func prefetchPayload(
