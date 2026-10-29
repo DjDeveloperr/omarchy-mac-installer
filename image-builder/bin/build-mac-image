@@ -1748,7 +1748,6 @@ interrupted() {
 
 container_main() {
   (($# == 0)) || usage_error "--in-container takes no arguments"
-  bash "$ROOT/bin/mac-image-inputs" check /inputs >/dev/null
   lane=$(field omarchy_channel)
   if [[ -d $lab_access_dir ]]; then
     [[ $lane == edge ]] || fail "a lab image is built for the edge lane only"
@@ -1768,6 +1767,9 @@ build_payload() {
   step() { printf '[%4ds] %s\n' "$((SECONDS - started))" "$1"; }
   step "preparing the toolchain from Arch Linux ARM"
   prepare_toolchain
+  # The host checked /inputs before starting the container; checking again needs
+  # the toolchain's python3 (channel_set.py lane), so it waits for it.
+  bash "$ROOT/bin/mac-image-inputs" check /inputs >/dev/null || fail "/inputs is not the checked inputs record"
   step "publishing $(set_name) as [omarchy-candidates]"
   read_repository_order
   step "repository order: omarchy-candidates ${repository_order[*]}"
