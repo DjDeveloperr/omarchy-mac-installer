@@ -206,7 +206,7 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
     release = json.loads(args.release.read_text())
     found = kind(release.get("tag_name", ""))
     if found is None:
-        print(f"::notice::{release.get('tag_name')} is not an app or engine release; no pins move")
+        print(f"::notice::{release.get('tag_name')} is not an app or engine release; no pins move", file=sys.stderr)
         print("changed=false")
         return 0
     old = json.loads((root / CONFIG).read_text())
@@ -217,7 +217,7 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
             pin = engine_pin(release, args.tag_commit, json.loads(catalog.SOURCE_LOCK.read_text()))
         new = bump(old, pin)
         if new == old:
-            print(f"::notice::{CONFIG} already pins {found} {pin['version']} or a later one")
+            print(f"::notice::{CONFIG} already pins {found} {pin['version']} or a later one", file=sys.stderr)
             print("changed=false")
             return 0
         check(new)

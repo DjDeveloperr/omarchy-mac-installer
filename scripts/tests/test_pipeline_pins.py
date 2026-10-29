@@ -182,7 +182,11 @@ class Main(unittest.TestCase):
         with redirect_stdout(out), redirect_stderr(err):
             status = pins.main(["--release", str(path), "--tag-commit", commit, "--body", str(self.root / "body.md")],
                                root=self.root)
-        outputs = dict(line.split("=", 1) for line in out.getvalue().splitlines() if not line.startswith("::"))
+        # The workflow tees stdout into $GITHUB_OUTPUT: every line must be a key=value output.
+        lines = out.getvalue().splitlines()
+        for line in lines:
+            self.assertRegex(line, r"^[a-z]+=", f"stdout carries a line $GITHUB_OUTPUT refuses: {line}")
+        outputs = dict(line.split("=", 1) for line in lines)
         return status, outputs, out.getvalue() + err.getvalue(), (self.root / pins.CONFIG).read_text()
 
     def newer(self) -> str:
