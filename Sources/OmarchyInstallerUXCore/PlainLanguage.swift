@@ -280,10 +280,7 @@
       }
       func enterRecovery() {
         append("Shut down this Mac", "Save your work first.")
-        append(
-          "Hold the power button",
-          "When this Mac is off, press and hold the power button until “Loading startup options” appears."
-        )
+        append("Hold the power button", "Hold until “Loading startup options” appears.")
       }
       func authenticate() {
         append(

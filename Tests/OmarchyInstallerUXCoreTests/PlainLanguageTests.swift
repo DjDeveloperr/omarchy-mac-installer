@@ -363,6 +363,8 @@
       XCTAssertEqual(steps.count, 3)
       XCTAssertEqual(steps.map(\.number), [1, 2, 3])
       XCTAssertTrue(steps.allSatisfy { !($0.detail ?? "").isEmpty })
+      XCTAssertEqual(steps[1].title, "Hold the power button")
+      XCTAssertEqual(steps[1].detail, "Hold until “Loading startup options” appears.")
 
       let unknown = PlainLanguage.recoverySteps(for: ["somethingNew"])
       XCTAssertEqual(unknown.count, 1)
