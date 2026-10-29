@@ -1621,7 +1621,7 @@ write_installer_data() {
     --arg volume_id "$ESP_VOLUME_ID" \
     --arg recovery_app_manifest "$(field recovery_app_manifest_sha256)" \
     --args '{os_list: [{
-      name: "Omarchy MX Mac", default_os_name: "Omarchy", omarchy_target: "apple-silicon-full-os",
+      name: "Omarchy", default_os_name: "Omarchy", omarchy_target: "apple-silicon-full-os",
       boot_object: "m1n1.bin", next_object: "m1n1/boot.bin", package: $package, icon: "omarchy-volume.icns",
       supported_fw: $ARGS.positional,
       partitions: [
