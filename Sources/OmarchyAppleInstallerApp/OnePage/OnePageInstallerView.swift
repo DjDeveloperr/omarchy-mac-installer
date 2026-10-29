@@ -47,6 +47,12 @@ struct OnePageInstallerView: View {
     self.onSessionAvailable = onSessionAvailable
   }
 
+  /// The window fits its content between these heights. A phase shorter than
+  /// the minimum, such as the first screen, keeps its content at the top and
+  /// its buttons at the bottom; a taller one scrolls past the maximum.
+  private static let minimumContentHeight: CGFloat = 400
+  private static let maximumContentHeight: CGFloat = 680
+
   var body: some View {
     ScrollView {
       VStack(spacing: 0) {
@@ -57,11 +63,12 @@ struct OnePageInstallerView: View {
         header.padding(.bottom, 20)
         VStack(alignment: .leading, spacing: 14) { stage }
           .frame(maxWidth: 560)
+        Spacer(minLength: 0)
         HStack(spacing: 16) { actions }
           .padding(.top, 24)
           .padding(.bottom, 24)
       }
-      .frame(maxWidth: .infinity)
+      .frame(maxWidth: .infinity, minHeight: Self.minimumContentHeight, alignment: .top)
       .padding(.horizontal, 40)
       .background {
         GeometryReader { geometry in
@@ -69,7 +76,9 @@ struct OnePageInstallerView: View {
         }
       }
     }
-    .frame(height: min(contentHeight, 680))
+    .frame(
+      height: min(max(contentHeight, Self.minimumContentHeight), Self.maximumContentHeight)
+    )
     .onPreferenceChange(InstallerContentHeight.self) { height in
       if height > 0 { contentHeight = height }
     }
