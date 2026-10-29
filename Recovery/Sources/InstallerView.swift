@@ -21,7 +21,6 @@ final class InstallerView: NSViewController, NSTextFieldDelegate, NSMenuItemVali
   private var accountConfirmationField: NSSecureTextField?
   private var accountButton: NSButton?
   private var skipButton: NSButton?
-  private var offerAccountButton: NSButton?
   private var issueShowing = false
   private var issueRepair = false
   private var authorizationRepair = false
@@ -30,6 +29,9 @@ final class InstallerView: NSViewController, NSTextFieldDelegate, NSMenuItemVali
   private var detailsViewer: LogTextView?
   private var copyButton: NSButton?
   private var copyingLog = false
+  /// Modifiers held in the key window; they pick the finished screen's action.
+  private var heldModifiers: NSEvent.ModifierFlags = []
+  private var modifierMonitor: Any?
 
   init(model: InstallerModel) {
     self.model = model
@@ -49,6 +51,7 @@ final class InstallerView: NSViewController, NSTextFieldDelegate, NSMenuItemVali
   deinit {
     model.onChange = nil
     log.onChange = nil
+    if let modifierMonitor { NSEvent.removeMonitor(modifierMonitor) }
   }
 
   override func loadView() {
@@ -98,6 +101,41 @@ final class InstallerView: NSViewController, NSTextFieldDelegate, NSMenuItemVali
     refresh()
   }
 
+  override func viewDidAppear() {
+    super.viewDidAppear()
+    guard modifierMonitor == nil, let window = view.window else { return }
+    modifierMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) {
+      [weak self] event in
+      self?.track(event.modifierFlags)
+      return event
+    }
+    let center = NotificationCenter.default
+    center.addObserver(
+      self, selector: #selector(windowBecameKey), name: NSWindow.didBecomeKeyNotification,
+      object: window)
+    center.addObserver(
+      self, selector: #selector(windowResignedKey), name: NSWindow.didResignKeyNotification,
+      object: window)
+    track(NSEvent.modifierFlags)
+  }
+
+  @objc private func windowBecameKey() { track(NSEvent.modifierFlags) }
+  @objc private func windowResignedKey() { track([]) }
+
+  /// Only keys held while this window is key count, so Shift can't stick
+  /// after the window loses focus or a sheet opens over it.
+  private func track(_ modifiers: NSEvent.ModifierFlags) {
+    let held = view.window?.isKeyWindow == true ? modifiers : []
+    guard held != heldModifiers else { return }
+    heldModifiers = held
+    refresh()
+  }
+
+  private var completionAction: CompletionAction {
+    CompletionAction.current(
+      modifiers: heldModifiers, accountAvailable: model.canShowRecoveryAccountForm)
+  }
+
   private func refresh() {
     if !Thread.isMainThread {
       DispatchQueue.main.async { [weak self] in self?.refresh() }
@@ -118,7 +156,14 @@ final class InstallerView: NSViewController, NSTextFieldDelegate, NSMenuItemVali
     primaryButton?.isEnabled =
       !model.checkingEnvironment && !model.restartingCompletedSetup
       && !model.restartingWithoutAccount
-    offerAccountButton?.isEnabled = !model.restartingWithoutAccount
+    if model.stage == .complete, let restart = primaryButton {
+      let action = completionAction
+      // RecoveryPrimaryButton shows its title in capitals.
+      let title = action.title.uppercased()
+      if restart.title != title { restart.title = title }
+      restart.action =
+        action == .restart ? #selector(restartPressed) : #selector(showRecoveryAccountForm(_:))
+    }
     debugButton?.title = model.debugEnabled ? "Disable Debug" : "Enable Debug"
     proxyButton?.title = model.proxyEnabled ? "Disable Proxy" : "Enable Proxy"
     accountButton?.title =
@@ -190,7 +235,7 @@ final class InstallerView: NSViewController, NSTextFieldDelegate, NSMenuItemVali
     accountConfirmationField = nil
     accountButton = nil
     skipButton = nil
-    offerAccountButton = nil
+    heldModifiers = view.window?.isKeyWindow == true ? NSEvent.modifierFlags : []
 
     switch model.stage {
     case .welcome: buildWelcome()
@@ -297,7 +342,7 @@ final class InstallerView: NSViewController, NSTextFieldDelegate, NSMenuItemVali
 
   private func buildFooter() {
     let center = NSStackView()
-    let stacked = model.stage == .account || (model.stage == .complete && model.accountOffered)
+    let stacked = model.stage == .account
     center.orientation = stacked ? .vertical : .horizontal
     center.spacing = stacked ? 6 : 12
     center.alignment = stacked ? .centerX : .centerY
@@ -338,14 +383,6 @@ final class InstallerView: NSViewController, NSTextFieldDelegate, NSMenuItemVali
         title: "Restart", target: self, action: #selector(restartPressed))
       center.addArrangedSubview(restart)
       primaryButton = restart
-      if model.accountOffered {
-        let offer = RecoveryTextButton(
-          title: "Create a recovery account", target: self,
-          action: #selector(offerAccountPressed))
-        offer.font = OmarchyTheme.detail
-        center.addArrangedSubview(offer)
-        offerAccountButton = offer
-      }
     }
     footer.addSubview(center)
     NSLayoutConstraint.activate([
@@ -464,7 +501,11 @@ final class InstallerView: NSViewController, NSTextFieldDelegate, NSMenuItemVali
     accountPasswordField?.stringValue = ""
     accountConfirmationField?.stringValue = ""
   }
-  @objc private func offerAccountPressed() { model.showRecoveryAccountForm() }
+  /// Shift-modified Restart and Utilities → Create Recovery Account….
+  @objc func showRecoveryAccountForm(_ sender: Any?) {
+    guard sheets.active == nil else { return }
+    model.showRecoveryAccountForm()
+  }
   @objc private func restartPressed() {
     // Restarting without the optional account records the deferral, so a
     // later Recovery session can still offer it.
@@ -586,6 +627,8 @@ final class InstallerView: NSViewController, NSTextFieldDelegate, NSMenuItemVali
   func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
     switch menuItem.action {
     case #selector(showDetails(_:)): return canShowDetails
+    case #selector(showRecoveryAccountForm(_:)):
+      return model.canShowRecoveryAccountForm && sheets.active == nil
     default: return true
     }
   }

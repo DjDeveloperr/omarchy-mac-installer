@@ -34,8 +34,8 @@ final class InstallerModel {
   var restartingCompletedSetup = false { didSet { changed() } }
   var accountNeedsAuthorization = false { didSet { changed() } }
   /// The recovery account has not been started and stays optional: the
-  /// finished screen restarts straight away and only offers the account form
-  /// when the person asks for it.
+  /// finished screen restarts straight away and only opens the account form
+  /// when the person holds Shift or chooses Utilities → Create Recovery Account….
   var accountOffered = false { didSet { changed() } }
   var previewNotice: (title: String, message: String)? { didSet { changed() } }
   private var checkingAccount = false
@@ -60,8 +60,13 @@ final class InstallerModel {
     stage = accountNeedsAuthorization ? .account : .complete
   }
 
+  /// The finished screen can still open the optional account form.
+  var canShowRecoveryAccountForm: Bool {
+    stage == .complete && accountOffered && !restartingWithoutAccount
+  }
+
   func showRecoveryAccountForm() {
-    guard stage == .complete, accountOffered, !restartingWithoutAccount else { return }
+    guard canShowRecoveryAccountForm else { return }
     stage = .account
   }
 
@@ -562,6 +567,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       withTitle: "Show Details", action: #selector(InstallerView.showDetails(_:)),
       keyEquivalent: "")
     details.target = controller
+    let account = utilities.addItem(
+      withTitle: "Create Recovery Account…",
+      action: #selector(InstallerView.showRecoveryAccountForm(_:)), keyEquivalent: "")
+    account.target = controller
 
     let windows = submenu("Window")
     windows.addItem(
