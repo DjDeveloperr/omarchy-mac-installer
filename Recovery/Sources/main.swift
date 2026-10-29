@@ -407,7 +407,7 @@ final class InstallerModel {
     if RecoveryActions.isPreview {
       previewNotice = (
         "Choose your startup disk",
-        "In Recovery, this opens Startup Disk. Select \(DestinationVolume.name), click Restart, and authorize your recovery account when asked."
+        "In Recovery, this opens Startup Disk. Select \(RecoveryActions.volumeName), click Restart, and authorize your recovery account when asked."
       )
       return
     }
@@ -442,25 +442,6 @@ final class InstallerModel {
     operations = []
     stage = .welcome
   }
-}
-
-enum DestinationVolume {
-  static let url = RecoveryActions.volume
-  static let name = RecoveryActions.volumeName
-  static let icon: NSImage = {
-    // Read the actual custom volume icon without synchronously asking
-    // LaunchServices/IconServices while Recovery is launching this app.
-    if let image = NSImage(contentsOf: url.appendingPathComponent(".VolumeIcon.icns")) {
-      return image
-    }
-    if let bundled = Bundle.main.url(forResource: "OmarchyVolumeIcon", withExtension: "png"),
-      let image = NSImage(contentsOf: bundled)
-    {
-      return image
-    }
-    return NSImage(systemSymbolName: "internaldrive", accessibilityDescription: "Startup volume")
-      ?? NSImage(size: NSSize(width: 96, height: 96))
-  }()
 }
 
 // AppKit owns the window and sheets, including their titlebar and background.
@@ -501,7 +482,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     window.backgroundColor = .clear
     window.hasShadow = true
     window.isMovableByWindowBackground = true
-    NSApp.applicationIconImage = DestinationVolume.icon
     LaunchTrace.mark("window.creatingContent")
     let controller = InstallerView(model: model)
     window.contentViewController = controller

@@ -217,23 +217,11 @@ final class InstallerView: NSViewController, NSTextFieldDelegate {
           ? "Use the saved recovery files to repair your\nstartup software."
           : "The final step installs the startup software for your\nselected Omarchy volume.",
         size: 13))
-    let icon = NSImageView(image: DestinationVolume.icon)
-    icon.imageScaling = .scaleProportionallyUpOrDown
-    icon.translatesAutoresizingMaskIntoConstraints = false
-    icon.widthAnchor.constraint(equalToConstant: 96).isActive = true
-    icon.heightAnchor.constraint(equalToConstant: 96).isActive = true
-    stack.setCustomSpacing(54, after: stack.arrangedSubviews[1])
-    stack.addArrangedSubview(icon)
-    stack.addArrangedSubview(label(DestinationVolume.name, size: 14))
     place(stack)
   }
 
   private func buildInstalling() {
     let stack = vertical(spacing: 15)
-    stack.addArrangedSubview(
-      label(
-        (model.recoveryInterface ? "Restoring " : "Setting up ") + DestinationVolume.name,
-        size: 14))
     let progress = NSProgressIndicator()
     progress.isIndeterminate = false
     progress.minValue = 0
@@ -294,23 +282,11 @@ final class InstallerView: NSViewController, NSTextFieldDelegate {
 
   private func buildComplete() {
     let stack = vertical(spacing: 13)
-    stack.addArrangedSubview(
-      label(
-        model.accountNeedsAuthorization
-          ? DestinationVolume.name + " is ready for authorization."
-          : DestinationVolume.name + " is ready to start.", size: 15))
-    stack.setCustomSpacing(40, after: stack.arrangedSubviews[0])
-    let icon = NSImageView(image: DestinationVolume.icon)
-    icon.imageScaling = .scaleProportionallyUpOrDown
-    icon.translatesAutoresizingMaskIntoConstraints = false
-    icon.widthAnchor.constraint(equalToConstant: 96).isActive = true
-    icon.heightAnchor.constraint(equalToConstant: 96).isActive = true
-    stack.addArrangedSubview(icon)
-    stack.setCustomSpacing(40, after: icon)
     if model.accountNeedsAuthorization {
       stack.addArrangedSubview(
         label(
-          "Select “" + DestinationVolume.name + "”, click “Restart…”, then “Authorize Users…”.",
+          "Select “" + RecoveryActions.volumeName
+            + "”, click “Restart…”, then “Authorize Users…”.",
           size: 12))
       stack.addArrangedSubview(
         label(

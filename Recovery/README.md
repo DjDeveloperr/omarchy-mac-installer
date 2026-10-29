@@ -49,7 +49,7 @@ Account preparation now invokes the existing conditional finalizer before the St
 
 The first-stage engine reads back the selected APFS volume group after `bless`. The macOS shutdown handoff also verifies that the target group remains selected. A successful process exit without the expected selection cannot complete the handoff.
 
-The welcome screen retains a small text attribution without an Aurora logo. The Omarchy banner and Kanagawa volume artwork are independent. AppKit owns the outer rounding with hidden title bar and standard window controls; Command-Q quits.
+The welcome screen retains a small text attribution without an Aurora logo. The interface shows the Omarchy banner but neither the volume icon nor the volume name; only instructions that name the volume to select (Startup Disk) mention it. The app bundles no icon, so AppKit's About panel and alerts use the generic application icon. The volume's own icon on disk and in the startup picker is unchanged. AppKit owns the outer rounding with hidden title bar and standard window controls; Command-Q quits.
 
 ## Per-install firmware recovery baseline
 
