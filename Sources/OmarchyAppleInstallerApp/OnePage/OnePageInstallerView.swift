@@ -889,8 +889,6 @@ private struct DiskSplitPanel: View {
             )
             .omarchyHelpText()
           }
-          Text("Omarchy will use the space selected above.")
-            .omarchyHelpText()
           if isBusy {
             // A released divider re-plans through the engine, which takes a
             // moment; say so instead of leaving the bar and the tick inert.
