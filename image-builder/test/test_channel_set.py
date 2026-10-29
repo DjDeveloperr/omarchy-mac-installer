@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Channel mode takes only the pinned edge database's archives, each signed by the Omarchy package key."""
+"""Channel mode takes only the pinned database's archives for an enabled lane, each signed by the Omarchy package key."""
 import json
 from pathlib import Path
 import shutil
@@ -14,6 +14,9 @@ import fixtures  # noqa: E402
 ROOT = fixtures.ROOT
 channel_set = fixtures.load("channel_set", "builder/channel_set.py")
 candidate_set = fixtures.candidate_set
+# What edge has always served for each runtime role.
+EDGE_RUNTIME = {"omarchy": "omarchy-dev", "omarchy-settings": "omarchy-settings-dev", "omarchy-mac": "omarchy-mac",
+                "omarchy-mac-boot": "omarchy-mac-boot"}
 
 
 class ChannelSetTest(unittest.TestCase):
@@ -74,11 +77,12 @@ class ChannelSetTest(unittest.TestCase):
 
     def test_the_channel_takes_the_aurora_stack_for_every_mac(self):
         entries = {}
-        for role, name in fixtures.POLICY["channel"]["runtime_packages"].items():
+        policy, channel = channel_set.load_policy()
+        for role, name in channel["runtime_packages"].items():
             entries[name] = {"NAME": [name], "ARCH": ["aarch64"], "PROVIDES": [role]}
         for name in fixtures.POLICY["boot_packages"] + fixtures.POLICY["support_packages"]:
             entries[name] = {"NAME": [name], "ARCH": ["aarch64"]}
-        chosen = channel_set.resolve(entries, fixtures.POLICY, fixtures.POLICY["channel"])
+        chosen = channel_set.resolve(entries, policy, channel)
         self.assertEqual({entry["NAME"][0] for _, _, entry in chosen}, set(entries))
         self.assertEqual(sum(group == "support" for _, group, _ in chosen), len(fixtures.POLICY["support_packages"]))
         for name in ("m1n1-aurora", "uboot-aurora", "mesa-aurora", "vulkan-aurora", "aurora-bless", "speakerguardd"):
@@ -199,7 +203,49 @@ class ChannelSetTest(unittest.TestCase):
 
     def test_only_the_policys_lanes_are_built(self):
         database, sha256 = self.snapshot()
-        self.refused("channel mode does not build stable", database, sha256, "stable")
+        for lane in ("rc", "stable"):
+            with self.subTest(lane=lane):
+                self.refused(f"lane {lane} is not enabled", database, sha256, lane)
+                self.assertFalse((self.work / "set").exists(), "a refused lane freezes nothing")
+                with self.assertRaisesRegex(ValueError, f"lane {lane} is not enabled"):
+                    channel_set.files(database, lane, self.trust)
+
+    def test_a_lane_outside_edge_rc_and_stable_is_refused(self):
+        database, sha256 = self.snapshot()
+        self.refused("unknown lane beta", database, sha256, "beta")
+
+    def test_each_lane_takes_its_runtime_from_its_own_policy_entry(self):
+        # A policy with a second lane serving the clean runtime: the edge database's -dev packages fill
+        # only edge's roles, and the other lane refuses them.
+        policy = json.loads((self.trust / "policy.json").read_text())
+        clean = {role: role for role in policy["channel"]["lanes"]["edge"]["runtime_packages"]}
+        policy["channel"]["lanes"]["rc"] = {"runtime_packages": clean}
+        trust = self.work / "two-lanes"
+        shutil.copytree(self.trust, trust)
+        (trust / "policy.json").write_text(json.dumps(policy))
+        database, sha256 = self.snapshot()
+        with self.assertRaisesRegex(ValueError, "the channel database does not list omarchy$"):
+            channel_set.snapshot(database, sha256, "rc", self.work / "edge/packages", self.work / "set", trust)
+        summary = channel_set.snapshot(database, sha256, "edge", self.work / "edge/packages", self.work / "edge-set",
+                                       trust)
+        names = {p["role"]: p["name"] for p in summary["packages"] if "role" in p}
+        self.assertEqual(names["omarchy"], "omarchy-dev")
+        self.assertEqual(names["omarchy-settings"], "omarchy-settings-dev")
+
+    def test_the_edge_set_records_exactly_what_it_did_before_lanes(self):
+        database, sha256 = self.snapshot()
+        summary = self.freeze(database, sha256)
+        manifest = json.loads((self.work / "set/manifest.json").read_text())
+        self.assertEqual(set(manifest), {"schema", "kind", "channel", "repository", "database_sha256", "signer",
+                                         "packages"})
+        self.assertEqual((manifest["schema"], manifest["kind"], manifest["channel"], manifest["repository"]),
+                         (1, "channel", "edge", "omarchy"))
+        self.assertEqual(set(summary), {"schema", "kind", "set", "candidate_only", "channel", "source_commit",
+                                        "signer", "database_sha256", "manifest_sha256", "set_sha256", "packages"})
+        self.assertEqual(summary["set"], f"omarchy-edge-{sha256[:12]}")
+        roles = {p["name"]: p.get("role") for p in summary["packages"] if p["group"] == "runtime"}
+        self.assertEqual(roles, {"omarchy-dev": "omarchy", "omarchy-settings-dev": "omarchy-settings",
+                                 "omarchy-mac": "omarchy-mac", "omarchy-mac-boot": "omarchy-mac-boot"})
 
     def test_the_candidate_import_never_accepts_the_channel_key(self):
         receipt = fixtures.make_set(self.work / "set-dir", self.candidate, key_signer=self.channel)
@@ -240,8 +286,55 @@ class ChannelTrustTest(unittest.TestCase):
         self.assertEqual(channel["primary_fingerprint"], fingerprint, "the channel key is the image's repository key")
         self.assertEqual(channel["signing_fingerprint"], fingerprint)
         self.assertNotEqual(policy["primary_fingerprint"], fingerprint, "the candidate test key is another key")
-        self.assertEqual(channel["runtime_packages"]["omarchy"], "omarchy-dev")
-        self.assertEqual(channel["lanes"], ["edge"])
+        self.assertEqual(channel["runtime_packages"], EDGE_RUNTIME)
+        self.assertEqual(channel["lane"], "edge", "edge is the default lane")
+
+    def test_the_policy_enables_edge_alone_with_the_dev_runtime(self):
+        lanes = json.loads((ROOT / "builder/candidate-trust/policy.json").read_text())["channel"]["lanes"]
+        self.assertEqual(lanes, {"edge": {"runtime_packages": EDGE_RUNTIME}})
+
+    def test_a_lane_names_its_install_contract_inputs(self):
+        self.assertEqual(channel_set.lane_inputs("edge"), {
+            "OMARCHY_MIRROR": "edge",
+            "OMARCHY_RUNTIME_PACKAGE": "omarchy-dev",
+            "OMARCHY_SETTINGS_PACKAGE": "omarchy-settings-dev",
+            "OMARCHY_IMAGE_REF": "edge",
+        })
+        result = self.lane("edge")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "OMARCHY_MIRROR=edge\nOMARCHY_RUNTIME_PACKAGE=omarchy-dev\n"
+                                        "OMARCHY_SETTINGS_PACKAGE=omarchy-settings-dev\nOMARCHY_IMAGE_REF=edge\n")
+
+    def test_rc_and_stable_are_refused_until_enabled(self):
+        for lane in ("rc", "stable"):
+            with self.subTest(lane=lane):
+                with self.assertRaisesRegex(ValueError, f"^lane {lane} is not enabled$"):
+                    channel_set.lane_inputs(lane)
+                result = self.lane(lane)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(result.stderr, f"channel_set: lane {lane} is not enabled\n")
+        self.assertIn("unknown lane beta", self.lane("beta").stderr)
+
+    def test_a_malformed_lane_table_is_refused(self):
+        policy = json.loads((ROOT / "builder/candidate-trust/policy.json").read_text())
+        for defect, lanes in (("the list of lane names lanes were", ["edge"]),
+                              ("no lane", {}),
+                              ("an unknown lane", {"beta": {"runtime_packages": EDGE_RUNTIME}}),
+                              ("a lane without its runtime", {"edge": {}}),
+                              ("a runtime missing a role", {"edge": {"runtime_packages": {"omarchy": "omarchy-dev"}}}),
+                              ("a lane with an extra input", {"edge": {"runtime_packages": EDGE_RUNTIME,
+                                                                       "mirror": "rc"}})):
+            with self.subTest(defect=defect), tempfile.TemporaryDirectory() as directory:
+                trust = Path(directory) / "trust"
+                shutil.copytree(ROOT / "builder/candidate-trust", trust)
+                (trust / "policy.json").write_text(json.dumps(dict(policy, channel=dict(policy["channel"], lanes=lanes))))
+                with self.assertRaises(ValueError):
+                    channel_set.load_policy(trust)
+
+    def lane(self, lane: str) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, str(ROOT / "builder/channel_set.py"), "lane", "--lane", lane],
+                              capture_output=True, text=True)
 
 
 if __name__ == "__main__":
