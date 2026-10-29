@@ -1074,3 +1074,12 @@ pass "base and Apple runtime requests use the reviewed Mesa, Vulkan and bless pa
   [[ $(<"$scratch/runtime-transaction") == "-S omarchy-candidates/omarchy-dev hyprland omarchy-candidates/mesa-aurora omarchy-candidates/vulkan-aurora" ]]
 ) || fail "the runtime transaction does not carry the reviewed Mesa"
 pass "the runtime installs the reviewed Mesa and Vulkan"
+
+# The container starts without python3; the inputs check (channel_set.py lane)
+# runs only once the toolchain is in place.
+! declare -f container_main | grep -q 'mac-image-inputs" check' ||
+  fail "container_main checks /inputs before the toolchain has python3"
+declare -f build_payload | awk '/prepare_toolchain/ { toolchain = NR } /mac-image-inputs" check/ { check = NR }
+  END { exit !(toolchain && check > toolchain) }' ||
+  fail "build_payload checks /inputs after prepare_toolchain"
+pass "the in-container inputs check waits for the toolchain's python3"
